@@ -48,14 +48,17 @@ export default function AdminUsersPage() {
       if (!res.ok) throw new Error("Failed to load users");
       return res.json();
     },
-    enabled: status === "authenticated",
+    enabled: status === "authenticated" && session?.user?.role === "ADMIN",
   });
 
   useEffect(() => {
     if (status === "authenticated" && session?.user?.role !== "ADMIN") {
       router.push("/dashboard");
     }
-  }, [status, session, router]);
+    if (error?.message === "无权访问") {
+      router.push("/dashboard");
+    }
+  }, [status, session, error, router]);
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, payload }: { id: string; payload: Record<string, unknown> }) => {
@@ -113,6 +116,10 @@ export default function AdminUsersPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-16 bg-muted animate-pulse rounded" />
           ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-lg border bg-card p-12 text-center">
+          <p className="text-destructive">加载失败：{error.message}</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border bg-card p-12 text-center">
