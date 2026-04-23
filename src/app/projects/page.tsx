@@ -142,11 +142,9 @@ export default function ProjectsPage() {
           <p className="text-muted-foreground">管理您的科研项目</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              新建项目
-            </Button>
+          <DialogTrigger render={<Button />}>
+            <Plus className="mr-2 h-4 w-4" />
+            新建项目
           </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>

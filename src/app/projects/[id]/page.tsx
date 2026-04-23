@@ -414,10 +414,8 @@ export default function ProjectDetailPage() {
                 删除
               </Button>
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                <DialogTrigger>
-                  <Button variant="outline" size="sm" onClick={() => setEditForm({ ...project })}>
-                    编辑项目
-                  </Button>
+                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => setEditForm({ ...project })} />}>
+                  编辑项目
                 </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
               <DialogHeader>
@@ -786,8 +784,9 @@ export default function ProjectDetailPage() {
             <h3 className="font-medium">项目工单</h3>
             {!project.deleted && (
               <Dialog open={ticketOpen} onOpenChange={setTicketOpen}>
-                <DialogTrigger>
-                  <Button size="sm"><Plus className="mr-1 h-3 w-3" />新建工单</Button>
+                <DialogTrigger render={<Button size="sm" />}>
+                  <Plus className="mr-1 h-3 w-3" />
+                  新建工单
                 </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
                 <DialogHeader><DialogTitle>新建工单</DialogTitle></DialogHeader>
@@ -873,10 +872,8 @@ export default function ProjectDetailPage() {
                           </div>
                           {!project.deleted && (
                             <DropdownMenu>
-                              <DropdownMenuTrigger>
-                                <Button variant="ghost" size="icon" className="shrink-0">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
+                              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="shrink-0" />}>
+                                <MoreHorizontal className="h-4 w-4" />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 {ticket.status !== "IN_PROGRESS" && (

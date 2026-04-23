@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -44,15 +44,18 @@ export default function AdminUsersPage() {
     queryKey: ["admin-users"],
     queryFn: async () => {
       const res = await fetch("/api/users");
-      if (res.status === 403) {
-        router.push("/dashboard");
-        throw new Error("无权访问");
-      }
+      if (res.status === 403) throw new Error("无权访问");
       if (!res.ok) throw new Error("Failed to load users");
       return res.json();
     },
     enabled: status === "authenticated",
   });
+
+  useEffect(() => {
+    if (status === "authenticated" && session?.user?.role !== "ADMIN") {
+      router.push("/dashboard");
+    }
+  }, [status, session, router]);
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, payload }: { id: string; payload: Record<string, unknown> }) => {
@@ -73,12 +76,6 @@ export default function AdminUsersPage() {
     },
     onError: (err: Error) => toast.error(err.message),
   });
-
-  // Redirect non-admin users
-  if (status === "authenticated" && session?.user?.role !== "ADMIN") {
-    router.push("/dashboard");
-    return null;
-  }
 
   if (status === "loading") return null;
   if (!session || session.user.role !== "ADMIN") return null;
