@@ -17,10 +17,15 @@ export async function GET(
 
   const existing = await prisma.ticket.findUnique({
     where: { id },
+    include: { project: { select: { deleted: true } } },
   });
 
   if (!existing) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  }
+
+  if (existing.project?.deleted) {
+    return NextResponse.json({ error: "项目已删除" }, { status: 400 });
   }
 
   try {
@@ -55,10 +60,15 @@ export async function POST(
 
   const existing = await prisma.ticket.findUnique({
     where: { id },
+    include: { project: { select: { deleted: true } } },
   });
 
   if (!existing) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  }
+
+  if (existing.project?.deleted) {
+    return NextResponse.json({ error: "项目已删除，无法回复工单" }, { status: 400 });
   }
 
   try {

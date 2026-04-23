@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { validateUserInput, checkEmailConflict } from "@/lib/validation";
 
 export async function PUT(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -15,10 +16,23 @@ export async function PUT(req: NextRequest) {
     const existing = await prisma.user.findUnique({ where: { id: session.user.id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    // Validation
+    const validation = validateUserInput({ name, email });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: validation.status });
+    }
+
+    if (email !== undefined) {
+      const conflict = await checkEmailConflict(email, session.user.id);
+      if (conflict.conflict) {
+        return NextResponse.json({ error: conflict.error }, { status: conflict.status });
+      }
+    }
+
     const data: Record<string, unknown> = {};
 
     // Update basic info
-    if (name !== undefined) data.name = name;
+    if (name !== undefined) data.name = name.trim();
     if (email !== undefined) data.email = email.trim().toLowerCase();
 
     // Update password

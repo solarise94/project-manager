@@ -13,6 +13,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
+  const project = await prisma.project.findUnique({ where: { id } });
+  if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (project.deleted) return NextResponse.json({ error: "项目已删除，无法上传文件" }, { status: 400 });
+
   try {
     await assertProjectMember(id, session.user.id);
   } catch {
