@@ -732,59 +732,62 @@ export default function ProjectDetailPage() {
           </Card>
 
           {/* Comment Input */}
-          <div className="flex gap-2">
-            <Textarea
-              placeholder="发表评论..."
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              className="min-h-[60px] resize-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  if (comment.trim()) commentMutation.mutate(comment);
-                }
-              }}
-            />
-            <div className="flex flex-col gap-1 shrink-0">
-              <input
-                type="file"
-                ref={commentFileInputRef}
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) commentUploadMutation.mutate(file);
-                  e.target.value = "";
+          {!project.deleted && (
+            <div className="flex gap-2">
+              <Textarea
+                placeholder="发表评论..."
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                className="min-h-[60px] resize-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    if (comment.trim()) commentMutation.mutate(comment);
+                  }
                 }}
               />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => commentFileInputRef.current?.click()}
-                disabled={commentUploadMutation.isPending}
-              >
-                {commentUploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-              </Button>
-              <Button
-                size="icon"
-                className="shrink-0 h-auto flex-1"
-                disabled={!comment.trim() || commentMutation.isPending}
-                onClick={() => commentMutation.mutate(comment)}
-              >
-                {commentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
+              <div className="flex flex-col gap-1 shrink-0">
+                <input
+                  type="file"
+                  ref={commentFileInputRef}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) commentUploadMutation.mutate(file);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => commentFileInputRef.current?.click()}
+                  disabled={commentUploadMutation.isPending}
+                >
+                  {commentUploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                </Button>
+                <Button
+                  size="icon"
+                  className="shrink-0 h-auto flex-1"
+                  disabled={!comment.trim() || commentMutation.isPending}
+                  onClick={() => commentMutation.mutate(comment)}
+                >
+                  {commentMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
         </TabsContent>
 
         {/* Tickets Tab */}
         <TabsContent value="tickets" className="space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="font-medium">项目工单</h3>
-            <Dialog open={ticketOpen} onOpenChange={setTicketOpen}>
-              <DialogTrigger>
-                <Button size="sm"><Plus className="mr-1 h-3 w-3" />新建工单</Button>
-              </DialogTrigger>
+            {!project.deleted && (
+              <Dialog open={ticketOpen} onOpenChange={setTicketOpen}>
+                <DialogTrigger>
+                  <Button size="sm"><Plus className="mr-1 h-3 w-3" />新建工单</Button>
+                </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
                 <DialogHeader><DialogTitle>新建工单</DialogTitle></DialogHeader>
                 <form onSubmit={(e) => { e.preventDefault(); ticketMutation.mutate(ticketForm); }} className="space-y-4">
@@ -823,6 +826,7 @@ export default function ProjectDetailPage() {
                 </form>
               </DialogContent>
             </Dialog>
+            )}
           </div>
 
           <div
@@ -924,32 +928,35 @@ export default function ProjectDetailPage() {
         {/* Files Tab */}
         <TabsContent value="files" className="space-y-4">
           <div
-            className={`space-y-4 ${isDraggingFiles ? "border-primary border-2 border-dashed rounded-lg p-4" : ""}`}
-            onDragOver={(e) => { e.preventDefault(); setIsDraggingFiles(true); }}
+            className={`space-y-4 ${isDraggingFiles && !project.deleted ? "border-primary border-2 border-dashed rounded-lg p-4" : ""}`}
+            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingFiles(true); } }}
             onDragLeave={() => setIsDraggingFiles(false)}
             onDrop={(e) => {
               e.preventDefault();
               setIsDraggingFiles(false);
+              if (project.deleted) return;
               const file = e.dataTransfer.files?.[0];
               if (file) uploadMutation.mutate(file);
             }}
           >
             <div className="flex justify-between items-center">
               <h3 className="font-medium">项目文件</h3>
-              <label className="cursor-pointer inline-flex">
-                <input
-                  type="file"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) uploadMutation.mutate(file);
-                    e.target.value = "";
-                  }}
-                />
-                <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3">
-                  <Upload className="mr-1 h-3 w-3" />上传文件
-                </span>
-              </label>
+              {!project.deleted && (
+                <label className="cursor-pointer inline-flex">
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) uploadMutation.mutate(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground h-8 px-3">
+                    <Upload className="mr-1 h-3 w-3" />上传文件
+                  </span>
+                </label>
+              )}
             </div>
 
             {isDraggingFiles ? (
