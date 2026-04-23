@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember } from "@/lib/permissions";
+import { assertProjectMember, isProjectOwner } from "@/lib/permissions";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -10,14 +10,22 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id } = await params;
 
-  try {
-    await assertProjectMember(id, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const project = await prisma.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Deleted projects: only ADMIN or owner can access timeline
+  if (project.deleted) {
+    const isOwner = await isProjectOwner(id, session.user.id);
+    if (!isOwner && session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } else {
+    try {
+      await assertProjectMember(id, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   const [activities, comments, attachments, statusHistory] = await Promise.all([
     prisma.activityLog.findMany({

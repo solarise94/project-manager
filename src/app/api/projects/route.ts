@@ -23,7 +23,12 @@ export async function GET(req: NextRequest) {
     id: { in: projectIds },
   };
 
-  if (!includeDeleted || includeDeleted !== "true") {
+  if (includeDeleted === "true") {
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    where.deleted = true;
+  } else {
     where.deleted = false;
   }
 

@@ -15,8 +15,9 @@ export async function GET(req: NextRequest) {
   const userProjectIds = await getUserProjectIds(session.user.id);
   if (userProjectIds.length === 0) return NextResponse.json({ tickets: [] });
 
-  const where: { projectId: { in: string[] } | string; status?: string } = {
+  const where: { projectId: { in: string[] } | string; status?: string; project?: { deleted: boolean } } = {
     projectId: projectId && userProjectIds.includes(projectId) ? projectId : { in: userProjectIds },
+    project: { deleted: false },
   };
   if (status) where.status = status;
 

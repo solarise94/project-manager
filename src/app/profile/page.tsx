@@ -11,15 +11,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
-export default function ProfilePage() {
-  const { data: session, update } = useSession();
-  const user = session?.user;
-
-  const [name, setName] = useState(user?.name || "");
-  const [email, setEmail] = useState(user?.email || "");
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+function BasicInfoForm({
+  initialName,
+  initialEmail,
+}: {
+  initialName: string;
+  initialEmail: string;
+}) {
+  const { update } = useSession();
+  const [name, setName] = useState(initialName);
+  const [email, setEmail] = useState(initialEmail);
 
   const profileMutation = useMutation({
     mutationFn: async (payload: { name?: string; email?: string }) => {
@@ -39,8 +40,54 @@ export default function ProfilePage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const canSave =
+    name.trim() &&
+    email.trim() &&
+    (name !== initialName || email !== initialEmail);
+
+  return (
+    <CardContent className="space-y-4">
+      <div className="space-y-2">
+        <Label>昵称</Label>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="您的昵称"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label>邮箱</Label>
+        <Input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="your@email.com"
+        />
+      </div>
+      <Button
+        className="w-full"
+        disabled={!canSave || profileMutation.isPending}
+        onClick={() =>
+          profileMutation.mutate({ name: name.trim(), email: email.trim() })
+        }
+      >
+        <Save className="mr-2 h-4 w-4" />
+        {profileMutation.isPending ? "保存中..." : "保存基本信息"}
+      </Button>
+    </CardContent>
+  );
+}
+
+function PasswordForm() {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const passwordMutation = useMutation({
-    mutationFn: async (payload: { currentPassword: string; newPassword: string }) => {
+    mutationFn: async (payload: {
+      currentPassword: string;
+      newPassword: string;
+    }) => {
       const res = await fetch("/api/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -59,10 +106,67 @@ export default function ProfilePage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  if (!user) return null;
+  const canSave =
+    currentPassword &&
+    newPassword &&
+    confirmPassword &&
+    newPassword === confirmPassword;
 
-  const canSaveProfile = name.trim() && email.trim() && (name !== user.name || email !== user.email);
-  const canSavePassword = currentPassword && newPassword && confirmPassword && newPassword === confirmPassword;
+  return (
+    <CardContent className="space-y-4">
+      <div className="space-y-2">
+        <Label>当前密码</Label>
+        <Input
+          type="password"
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+          placeholder="输入当前密码"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label>新密码</Label>
+        <Input
+          type="password"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          placeholder="输入新密码"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label>确认新密码</Label>
+        <Input
+          type="password"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          placeholder="再次输入新密码"
+        />
+        {newPassword &&
+          confirmPassword &&
+          newPassword !== confirmPassword && (
+            <p className="text-xs text-red-500">
+              两次输入的密码不一致
+            </p>
+          )}
+      </div>
+      <Button
+        className="w-full"
+        disabled={!canSave || passwordMutation.isPending}
+        onClick={() =>
+          passwordMutation.mutate({ currentPassword, newPassword })
+        }
+      >
+        <Lock className="mr-2 h-4 w-4" />
+        {passwordMutation.isPending ? "修改中..." : "修改密码"}
+      </Button>
+    </CardContent>
+  );
+}
+
+export default function ProfilePage() {
+  const { data: session } = useSession();
+  const user = session?.user;
+
+  if (!user) return null;
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -93,33 +197,11 @@ export default function ProfilePage() {
             基本信息
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>昵称</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="您的昵称"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>邮箱</Label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@email.com"
-            />
-          </div>
-          <Button
-            className="w-full"
-            disabled={!canSaveProfile || profileMutation.isPending}
-            onClick={() => profileMutation.mutate({ name: name.trim(), email: email.trim() })}
-          >
-            <Save className="mr-2 h-4 w-4" />
-            {profileMutation.isPending ? "保存中..." : "保存基本信息"}
-          </Button>
-        </CardContent>
+        <BasicInfoForm
+          key={user.id + user.name + user.email}
+          initialName={user.name || ""}
+          initialEmail={user.email || ""}
+        />
       </Card>
 
       {/* Change Password */}
@@ -130,49 +212,14 @@ export default function ProfilePage() {
             修改密码
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>当前密码</Label>
-            <Input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="输入当前密码"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>新密码</Label>
-            <Input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="输入新密码"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>确认新密码</Label>
-            <Input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="再次输入新密码"
-            />
-            {newPassword && confirmPassword && newPassword !== confirmPassword && (
-              <p className="text-xs text-red-500">两次输入的密码不一致</p>
-            )}
-          </div>
-          <Button
-            className="w-full"
-            disabled={!canSavePassword || passwordMutation.isPending}
-            onClick={() => passwordMutation.mutate({ currentPassword, newPassword })}
-          >
-            <Lock className="mr-2 h-4 w-4" />
-            {passwordMutation.isPending ? "修改中..." : "修改密码"}
-          </Button>
-        </CardContent>
+        <PasswordForm />
       </Card>
 
-      <Button variant="destructive" className="w-full" onClick={() => signOut({ callbackUrl: "/login" })}>
+      <Button
+        variant="destructive"
+        className="w-full"
+        onClick={() => signOut({ callbackUrl: "/login" })}
+      >
         <LogOut className="mr-2 h-4 w-4" />
         退出登录
       </Button>

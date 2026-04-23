@@ -287,6 +287,7 @@ export default function ProjectsPage() {
                   <SelectContent>
                     <SelectItem value="NOT_STARTED">未开始</SelectItem>
                     <SelectItem value="IN_PROGRESS">进行中</SelectItem>
+                    <SelectItem value="COMPLETED">已完成</SelectItem>
                     <SelectItem value="ON_HOLD">暂停</SelectItem>
                   </SelectContent>
                 </Select>

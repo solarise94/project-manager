@@ -27,6 +27,7 @@ export async function GET() {
 
   const projectIdFilter = { in: projectIds };
   const baseProjectWhere = { id: projectIdFilter, deleted: false };
+  const baseTicketWhere = { projectId: projectIdFilter, project: { deleted: false } };
 
   const [
     totalProjects,
@@ -39,26 +40,28 @@ export async function GET() {
     prisma.project.count({ where: baseProjectWhere }),
     prisma.project.count({ where: { ...baseProjectWhere, status: "IN_PROGRESS" } }),
     prisma.project.count({ where: { ...baseProjectWhere, status: "COMPLETED" } }),
-    prisma.ticket.count({ where: { projectId: projectIdFilter, status: { not: "CLOSED" } } }),
-    prisma.project.count({ where: { id: projectIdFilter, createdAt: { gte: weekAgo } } }),
-    prisma.ticket.count({ where: { projectId: projectIdFilter, createdAt: { gte: weekAgo } } }),
+    prisma.ticket.count({ where: { ...baseTicketWhere, status: { not: "CLOSED" } } }),
+    prisma.project.count({ where: { ...baseProjectWhere, createdAt: { gte: weekAgo } } }),
+    prisma.ticket.count({ where: { ...baseTicketWhere, createdAt: { gte: weekAgo } } }),
   ]);
 
   const statusDistribution = await prisma.project.groupBy({
     by: ["status"],
-    where: { id: projectIdFilter },
+    where: baseProjectWhere,
     _count: { status: true },
   });
 
-  // SQLite parameterized raw query for ticket trend (filtered by user's projects)
+  // SQLite parameterized raw query for ticket trend (filtered by user's non-deleted projects)
   const projectIdList = projectIds.map(() => "?").join(",");
   const ticketTrend = await prisma.$queryRawUnsafe(
-    `SELECT date(createdAt) as date, COUNT(*) as count
+    `SELECT date(Ticket.createdAt) as date, COUNT(*) as count
      FROM Ticket
-     WHERE projectId IN (${projectIdList})
-       AND createdAt >= datetime('now', '-7 days')
-     GROUP BY date(createdAt)
-     ORDER BY date(createdAt)`,
+     JOIN Project ON Ticket.projectId = Project.id
+     WHERE Ticket.projectId IN (${projectIdList})
+       AND Project.deleted = 0
+       AND Ticket.createdAt >= datetime('now', '-7 days')
+     GROUP BY date(Ticket.createdAt)
+     ORDER BY date(Ticket.createdAt)`,
     ...projectIds
   );
 
