@@ -1,0 +1,67 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { assertProjectMember } from "@/lib/permissions";
+import { writeFile } from "fs/promises";
+import { mkdir } from "fs/promises";
+import path from "path";
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+
+  try {
+    await assertProjectMember(id, session.user.id);
+  } catch {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  try {
+    const formData = await req.formData();
+    const file = formData.get("file") as File;
+    if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+
+    const bytes = await file.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+
+    const uploadDir = path.join(process.cwd(), "public", "uploads", id);
+    await mkdir(uploadDir, { recursive: true });
+
+    const timestamp = Date.now();
+    const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const filename = `${timestamp}_${safeName}`;
+    const filePath = path.join(uploadDir, filename);
+
+    await writeFile(filePath, buffer);
+
+    const url = `/uploads/${id}/${filename}`;
+
+    const attachment = await prisma.attachment.create({
+      data: {
+        filename: file.name,
+        url,
+        size: file.size,
+        mimeType: file.type,
+        projectId: id,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        type: "FILE_UPLOADED",
+        content: `上传了文件 "${file.name}"`,
+        metadata: JSON.stringify({ filename: file.name, url, size: file.size }),
+        projectId: id,
+        userId: session.user.id,
+      },
+    });
+
+    return NextResponse.json({ attachment }, { status: 201 });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Failed to upload file" }, { status: 500 });
+  }
+}

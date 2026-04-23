@@ -1,0 +1,167 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Bell, Check, CheckCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { NotificationItem } from "@/lib/types";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { formatDistanceToNow } from "date-fns";
+import { zhCN } from "date-fns/locale";
+import { cn } from "@/lib/utils";
+
+const TYPE_ICONS: Record<string, React.ElementType> = {
+  REMINDER: Clock,
+  TICKET: Ticket,
+  COMMENT: MessageSquare,
+  STATUS: Activity,
+  SYSTEM: AlertCircle,
+};
+
+const TYPE_COLORS: Record<string, string> = {
+  REMINDER: "text-amber-500",
+  TICKET: "text-blue-500",
+  COMMENT: "text-green-500",
+  STATUS: "text-purple-500",
+  SYSTEM: "text-slate-500",
+};
+
+export function NotificationCenter() {
+  const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { data, isLoading } = useQuery<{ notifications: NotificationItem[]; unreadCount: number }>({
+    queryKey: ["notifications"],
+    queryFn: async () => {
+      const res = await fetch("/api/notifications?limit=10");
+      if (!res.ok) throw new Error("Failed to load notifications");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/notifications/${id}`, { method: "PATCH" });
+      if (!res.ok) throw new Error("Failed to mark as read");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
+  const markAllReadMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/notifications/read-all", { method: "PATCH" });
+      if (!res.ok) throw new Error("Failed to mark all as read");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
+  const notifications = data?.notifications || [];
+  const unreadCount = data?.unreadCount || 0;
+
+  return (
+    <div className="relative">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="relative"
+        onClick={() => setOpen(!open)}
+      >
+        <Bell className="h-5 w-5" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-medium flex items-center justify-center">
+            {unreadCount > 99 ? "99+" : unreadCount}
+          </span>
+        )}
+      </Button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <Card className="absolute right-0 top-full mt-2 w-[360px] max-w-[calc(100vw-2rem)] z-50 shadow-lg">
+            <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+              <span className="text-sm font-semibold">通知中心</span>
+              {unreadCount > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => markAllReadMutation.mutate()}
+                  disabled={markAllReadMutation.isPending}
+                >
+                  <CheckCheck className="mr-1 h-3 w-3" />
+                  全部已读
+                </Button>
+              )}
+            </CardHeader>
+            <Separator />
+            <CardContent className="p-0">
+              {isLoading ? (
+                <div className="p-4 text-center text-sm text-muted-foreground">加载中...</div>
+              ) : notifications.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  <Bell className="mx-auto h-8 w-8 mb-2 opacity-40" />
+                  暂无通知
+                </div>
+              ) : (
+                <ScrollArea className="h-[320px]">
+                  <div className="divide-y">
+                    {notifications.map((n) => {
+                      const Icon = TYPE_ICONS[n.type] || AlertCircle;
+                      return (
+                        <div
+                          key={n.id}
+                          className={cn(
+                            "flex gap-3 p-3 hover:bg-muted/50 transition-colors cursor-pointer",
+                            !n.read && "bg-muted/30"
+                          )}
+                          onClick={() => {
+                            if (!n.read) markReadMutation.mutate(n.id);
+                            if (n.link) window.location.href = n.link;
+                          }}
+                        >
+                          <div className={cn("mt-0.5 shrink-0", TYPE_COLORS[n.type] || "text-slate-500")}>
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className={cn("text-sm", !n.read && "font-medium")}>{n.title}</p>
+                              {!n.read && (
+                                <span className="h-2 w-2 rounded-full bg-primary shrink-0 mt-1.5" />
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{n.content}</p>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true, locale: zhCN })}
+                            </p>
+                          </div>
+                          {!n.read && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 hover:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markReadMutation.mutate(n.id);
+                              }}
+                            >
+                              <Check className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
