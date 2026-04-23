@@ -14,8 +14,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json();
     const { status, priority, assigneeId, reminderDate } = body;
 
-    const existing = await prisma.ticket.findUnique({ where: { id } });
+    const existing = await prisma.ticket.findUnique({
+      where: { id },
+      include: { project: { select: { deleted: true } } },
+    });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (existing.project?.deleted) {
+      return NextResponse.json({ error: "项目已删除，无法修改工单" }, { status: 400 });
+    }
 
     try {
       await assertProjectMember(existing.projectId, session.user.id);

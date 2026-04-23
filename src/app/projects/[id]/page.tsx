@@ -684,19 +684,25 @@ export default function ProjectDetailPage() {
                             )}
                             <span className="text-sm text-muted-foreground">{item.content}</span>
                             {isTicketEvent && ticket && (
-                              <Select
-                                value={ticket.status}
-                                onValueChange={(newStatus) => { if (newStatus) updateTicketMutation.mutate({ ticketId: ticket.id, status: newStatus }); }}
-                              >
-                                <SelectTrigger className="h-7 text-xs w-auto min-w-[80px]">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="OPEN">打开</SelectItem>
-                                  <SelectItem value="IN_PROGRESS">处理中</SelectItem>
-                                  <SelectItem value="CLOSED">已关闭</SelectItem>
-                                </SelectContent>
-                              </Select>
+                              project.deleted ? (
+                                <Badge variant="secondary" className="text-xs">
+                                  {ticket.status === "OPEN" ? "打开" : ticket.status === "IN_PROGRESS" ? "处理中" : "已关闭"}
+                                </Badge>
+                              ) : (
+                                <Select
+                                  value={ticket.status}
+                                  onValueChange={(newStatus) => { if (newStatus) updateTicketMutation.mutate({ ticketId: ticket.id, status: newStatus }); }}
+                                >
+                                  <SelectTrigger className="h-7 text-xs w-auto min-w-[80px]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="OPEN">打开</SelectItem>
+                                    <SelectItem value="IN_PROGRESS">处理中</SelectItem>
+                                    <SelectItem value="CLOSED">已关闭</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              )
                             )}
                           </div>
                           {isComment && (
@@ -859,42 +865,46 @@ export default function ProjectDetailPage() {
                               </p>
                             )}
                           </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger>
-                              <Button variant="ghost" size="icon" className="shrink-0">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              {ticket.status !== "IN_PROGRESS" && (
-                                <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "IN_PROGRESS" })}>
-                                  标记为处理中
-                                </DropdownMenuItem>
-                              )}
-                              {ticket.status !== "CLOSED" && (
-                                <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "CLOSED" })}>
-                                  标记为已关闭
-                                </DropdownMenuItem>
-                              )}
-                              {ticket.status !== "OPEN" && (
-                                <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "OPEN" })}>
-                                  重新打开
-                                </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {!project.deleted && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger>
+                                <Button variant="ghost" size="icon" className="shrink-0">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {ticket.status !== "IN_PROGRESS" && (
+                                  <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "IN_PROGRESS" })}>
+                                    标记为处理中
+                                  </DropdownMenuItem>
+                                )}
+                                {ticket.status !== "CLOSED" && (
+                                  <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "CLOSED" })}>
+                                    标记为已关闭
+                                  </DropdownMenuItem>
+                                )}
+                                {ticket.status !== "OPEN" && (
+                                  <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "OPEN" })}>
+                                    重新打开
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="mt-2 text-xs"
-                          onClick={() => setExpandedTicket(isExpanded ? null : ticket.id)}
-                        >
-                          {isExpanded ? "收起回复" : "回复"}
-                        </Button>
+                        {!project.deleted && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="mt-2 text-xs"
+                            onClick={() => setExpandedTicket(isExpanded ? null : ticket.id)}
+                          >
+                            {isExpanded ? "收起回复" : "回复"}
+                          </Button>
+                        )}
 
-                        {isExpanded && (
+                        {isExpanded && !project.deleted && (
                           <TicketReplies
                             ticketId={ticket.id}
                             replyContent={replyContent}

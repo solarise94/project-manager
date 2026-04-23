@@ -40,14 +40,18 @@ export default function AdminUsersPage() {
   const [editUser, setEditUser] = useState<UserItem | null>(null);
   const [editForm, setEditForm] = useState({ name: "", email: "", role: "USER", password: "" });
 
-  const { data, isLoading } = useQuery<{ users: UserItem[] }>({
+  const { data, isLoading, error } = useQuery<{ users: UserItem[] }>({
     queryKey: ["admin-users"],
     queryFn: async () => {
       const res = await fetch("/api/users");
+      if (res.status === 403) {
+        router.push("/dashboard");
+        throw new Error("无权访问");
+      }
       if (!res.ok) throw new Error("Failed to load users");
       return res.json();
     },
-    enabled: status === "authenticated" && session?.user?.role === "ADMIN",
+    enabled: status === "authenticated",
   });
 
   const updateMutation = useMutation({
@@ -78,6 +82,7 @@ export default function AdminUsersPage() {
 
   if (status === "loading") return null;
   if (!session || session.user.role !== "ADMIN") return null;
+  if (error?.message === "无权访问") return null;
 
   const users = data?.users || [];
   const filtered = users.filter(
