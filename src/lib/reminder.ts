@@ -32,13 +32,13 @@ export async function checkAndSendReminders() {
           },
         },
         include: {
-          user: { select: { email: true, name: true, id: true } },
+          user: { select: { email: true, name: true, id: true, emailOnReminder: true } },
         },
         orderBy: { createdAt: "asc" },
       });
 
       const creator = activity?.user;
-      if (creator?.email) {
+      if (creator?.email && creator?.emailOnReminder) {
         await sendReminderEmail({
           to: creator.email,
           ticketTitle: ticket.title,

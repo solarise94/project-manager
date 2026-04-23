@@ -122,7 +122,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
       const owner = await prisma.projectMember.findFirst({
         where: { projectId: id, role: "OWNER" },
-        include: { user: { select: { id: true, email: true } } },
+        include: { user: { select: { id: true, email: true, name: true, emailOnStatusChange: true } } },
       });
 
       if (owner) {
@@ -135,6 +135,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             link: `/projects/${id}`,
           },
         });
+        if (owner.user.email && owner.user.emailOnStatusChange) {
+          const { sendMail } = await import("@/lib/mail");
+          await sendMail({
+            to: owner.user.email,
+            subject: `【SciManage】项目状态变更: ${existing.name}`,
+            text: `您好 ${owner.user.name || ""}，\n\n项目 "${existing.name}" 状态已从 "${existing.status}" 变更为 "${status}"。\n\n---\nSciManage`,
+            html: `<p>您好 <strong>${owner.user.name || ""}</strong>，</p>
+<p>项目 <strong>"${existing.name}"</strong> 状态已从 <strong>"${existing.status}"</strong> 变更为 <strong>"${status}"</strong>。</p>
+<hr />
+<p style="color:#999;font-size:12px;">SciManage</p>`,
+          }).catch(() => {});
+        }
       }
     }
 

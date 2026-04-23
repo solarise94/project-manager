@@ -107,5 +107,40 @@ export async function POST(
     },
   });
 
+  // Notify ticket creator
+  const creatorActivity = await prisma.activityLog.findFirst({
+    where: {
+      type: "TICKET_CREATED",
+      projectId: existing.projectId,
+      metadata: { contains: id },
+    },
+    include: { user: { select: { id: true, email: true, name: true, emailOnTicketReply: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  const creator = creatorActivity?.user;
+  if (creator && creator.id !== session.user.id) {
+    await prisma.notification.create({
+      data: {
+        userId: creator.id,
+        title: `工单回复: ${existing.title}`,
+        content: `有人回复了工单 "${existing.title}"`,
+        type: "TICKET_REPLY",
+        link: `/projects/${existing.projectId}`,
+      },
+    });
+    if (creator.email && creator.emailOnTicketReply) {
+      const { sendMail } = await import("@/lib/mail");
+      await sendMail({
+        to: creator.email,
+        subject: `【SciManage】工单回复: ${existing.title}`,
+        text: `您好 ${creator.name || ""}，\n\n有人回复了工单 "${existing.title}"。\n\n---\nSciManage`,
+        html: `<p>您好 <strong>${creator.name || ""}</strong>，</p>
+<p>有人回复了工单 <strong>"${existing.title}"</strong>。</p>
+<hr />
+<p style="color:#999;font-size:12px;">SciManage</p>`,
+      }).catch(() => {});
+    }
+  }
+
   return NextResponse.json({ reply }, { status: 201 });
 }

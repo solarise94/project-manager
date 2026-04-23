@@ -5,13 +5,35 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { validateUserInput, checkEmailConflict } from "@/lib/validation";
 
+export async function GET() {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      emailOnReminder: true,
+      emailOnStatusChange: true,
+      emailOnTicketReply: true,
+      emailOnComment: true,
+    },
+  });
+
+  if (!user) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ user });
+}
+
 export async function PUT(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
     const body = await req.json();
-    const { name, email, currentPassword, newPassword } = body;
+    const { name, email, currentPassword, newPassword, emailOnReminder, emailOnStatusChange, emailOnTicketReply, emailOnComment } = body;
 
     const existing = await prisma.user.findUnique({ where: { id: session.user.id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -34,6 +56,12 @@ export async function PUT(req: NextRequest) {
     // Update basic info
     if (name !== undefined) data.name = name.trim();
     if (email !== undefined) data.email = email.trim().toLowerCase();
+
+    // Update notification preferences
+    if (emailOnReminder !== undefined) data.emailOnReminder = Boolean(emailOnReminder);
+    if (emailOnStatusChange !== undefined) data.emailOnStatusChange = Boolean(emailOnStatusChange);
+    if (emailOnTicketReply !== undefined) data.emailOnTicketReply = Boolean(emailOnTicketReply);
+    if (emailOnComment !== undefined) data.emailOnComment = Boolean(emailOnComment);
 
     // Update password
     if (newPassword && newPassword.trim()) {
@@ -58,6 +86,10 @@ export async function PUT(req: NextRequest) {
         name: updated.name,
         email: updated.email,
         role: updated.role,
+        emailOnReminder: updated.emailOnReminder,
+        emailOnStatusChange: updated.emailOnStatusChange,
+        emailOnTicketReply: updated.emailOnTicketReply,
+        emailOnComment: updated.emailOnComment,
       },
     });
   } catch (error) {

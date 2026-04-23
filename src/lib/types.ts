@@ -1,3 +1,10 @@
+export interface NotificationPrefs {
+  emailOnReminder: boolean;
+  emailOnStatusChange: boolean;
+  emailOnTicketReply: boolean;
+  emailOnComment: boolean;
+}
+
 export interface ProjectItem {
   id: string;
   name: string;

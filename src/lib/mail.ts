@@ -55,6 +55,35 @@ export async function getTransporter(): Promise<nodemailer.Transporter> {
   return transporter;
 }
 
+export function smtpEnabled(): boolean {
+  const host = process.env.SMTP_HOST;
+  const port = process.env.SMTP_PORT;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  return !!(host && port && user && pass);
+}
+
+export interface SendMailOptions {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+}
+
+export async function sendMail(options: SendMailOptions) {
+  const transport = await getTransporter();
+  const fromAddr = process.env.SMTP_FROM || '"SciManage" <reminder@scimanage.com>';
+  const info = await transport.sendMail({
+    from: fromAddr,
+    to: options.to,
+    subject: options.subject,
+    text: options.text,
+    html: options.html,
+  });
+  console.log("[SMTP] Email sent:", info.messageId);
+  return { messageId: info.messageId };
+}
+
 export async function sendReminderEmail({
   to,
   ticketTitle,

@@ -14,6 +14,10 @@ model User {
   password   String
   avatar     String?
   role       String        @default("USER")
+  emailOnReminder     Boolean @default(true)
+  emailOnStatusChange Boolean @default(true)
+  emailOnTicketReply  Boolean @default(true)
+  emailOnComment      Boolean @default(true)
   createdAt  DateTime      @default(now())
   projects   ProjectMember[]
   comments   Comment[]
