@@ -17,6 +17,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DB="${TARGET_DIR}/dev.db"
 NEXTAUTH_SECRET_VALUE="sci-project-manage-secret-key-2024-change-in-production"
 EXISTING_ENV_FILE="${TARGET_DIR}/.env"
+SERVICE_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}"
+NODE_BIN="$(command -v node)"
 SMTP_HOST_VALUE="${SMTP_HOST:-}"
 SMTP_PORT_VALUE="${SMTP_PORT:-}"
 SMTP_USER_VALUE="${SMTP_USER:-}"
@@ -25,25 +27,25 @@ SMTP_FROM_VALUE="${SMTP_FROM:-}"
 
 cd "${REPO_DIR}"
 
-echo "[1/5] Building production bundle..."
+echo "[1/8] Building production bundle..."
 npm run build
 
-echo "[2/5] Preparing runtime directory..."
+echo "[2/8] Preparing runtime directory..."
 mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/.next/static" "${TARGET_DIR}/public"
 
-echo "[3/5] Syncing standalone output..."
+echo "[3/8] Syncing standalone output..."
 rsync -a --delete --exclude=".env" --exclude="dev.db" "${REPO_DIR}/.next/standalone/" "${TARGET_DIR}/"
 rsync -a --delete "${REPO_DIR}/.next/static/" "${TARGET_DIR}/.next/static/"
 rsync -a --delete "${REPO_DIR}/public/" "${TARGET_DIR}/public/"
 
 if [[ ! -f "${RUNTIME_DB}" ]]; then
-  echo "[4/5] Bootstrapping runtime database..."
+  echo "[4/8] Bootstrapping runtime database..."
   cp "${BOOTSTRAP_DB}" "${RUNTIME_DB}"
 else
-  echo "[4/5] Keeping existing runtime database..."
+  echo "[4/8] Keeping existing runtime database..."
 fi
 
-echo "[4/5] Syncing database schema..."
+echo "[5/8] Syncing database schema..."
 cd "${REPO_DIR}"
 DATABASE_URL="file:${RUNTIME_DB}" npx prisma db push --accept-data-loss > /dev/null 2>&1 || echo "  Warning: schema sync may have issues (non-fatal)"
 
@@ -73,7 +75,7 @@ fi
 
 SMTP_FROM_VALUE="${SMTP_FROM_VALUE:-SciManage <reminder@scimanage.com>}"
 
-echo "[4/5] Writing runtime .env..."
+echo "[6/8] Writing runtime .env..."
 cat > "${TARGET_DIR}/.env" <<EOF
 DATABASE_URL="file:${RUNTIME_DB}"
 NEXTAUTH_URL="${NEXTAUTH_URL_VALUE}"
@@ -89,7 +91,27 @@ PORT="${PORT}"
 HOSTNAME="${BIND_HOST}"
 EOF
 
-echo "[5/5] Restarting ${SERVICE_NAME}..."
+echo "[7/8] Writing ${SERVICE_NAME} unit..."
+mkdir -p "$(dirname "${SERVICE_FILE}")"
+cat > "${SERVICE_FILE}" <<EOF
+[Unit]
+Description=Task Manager Next.js App
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${TARGET_DIR}
+Environment=NODE_ENV=production
+EnvironmentFile=${TARGET_DIR}/.env
+ExecStart=${NODE_BIN} ${TARGET_DIR}/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+echo "[8/8] Restarting ${SERVICE_NAME}..."
 systemctl --user daemon-reload
 systemctl --user restart "${SERVICE_NAME}"
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
