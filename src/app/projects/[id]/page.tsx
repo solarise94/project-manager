@@ -641,12 +641,12 @@ export default function ProjectDetailPage() {
         <TabsContent value="timeline" className="space-y-4">
           <Card
             className={!project.deleted && isDraggingTimeline ? "border-primary border-2 border-dashed" : ""}
-            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingTimeline(true); } }}
+            onDragOver={(e) => { e.preventDefault(); if (!project.deleted) setIsDraggingTimeline(true); }}
             onDragLeave={() => setIsDraggingTimeline(false)}
             onDrop={(e) => {
-              if (project.deleted) return;
               e.preventDefault();
               setIsDraggingTimeline(false);
+              if (project.deleted) return;
               const file = e.dataTransfer.files?.[0];
               if (file) uploadMutation.mutate(file);
             }}
@@ -832,12 +832,12 @@ export default function ProjectDetailPage() {
 
           <div
             className={!project.deleted && isDraggingTickets ? "border-primary border-2 border-dashed rounded-lg p-2" : ""}
-            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingTickets(true); } }}
+            onDragOver={(e) => { e.preventDefault(); if (!project.deleted) setIsDraggingTickets(true); }}
             onDragLeave={() => setIsDraggingTickets(false)}
             onDrop={(e) => {
-              if (project.deleted) return;
               e.preventDefault();
               setIsDraggingTickets(false);
+              if (project.deleted) return;
               const file = e.dataTransfer.files?.[0];
               if (file) uploadMutation.mutate(file);
             }}
@@ -931,7 +931,7 @@ export default function ProjectDetailPage() {
         <TabsContent value="files" className="space-y-4">
           <div
             className={`space-y-4 ${isDraggingFiles && !project.deleted ? "border-primary border-2 border-dashed rounded-lg p-4" : ""}`}
-            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingFiles(true); } }}
+            onDragOver={(e) => { e.preventDefault(); if (!project.deleted) setIsDraggingFiles(true); }}
             onDragLeave={() => setIsDraggingFiles(false)}
             onDrop={(e) => {
               e.preventDefault();
