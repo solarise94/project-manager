@@ -640,10 +640,11 @@ export default function ProjectDetailPage() {
         {/* Timeline Tab */}
         <TabsContent value="timeline" className="space-y-4">
           <Card
-            className={isDraggingTimeline ? "border-primary border-2 border-dashed" : ""}
-            onDragOver={(e) => { e.preventDefault(); setIsDraggingTimeline(true); }}
+            className={!project.deleted && isDraggingTimeline ? "border-primary border-2 border-dashed" : ""}
+            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingTimeline(true); } }}
             onDragLeave={() => setIsDraggingTimeline(false)}
             onDrop={(e) => {
+              if (project.deleted) return;
               e.preventDefault();
               setIsDraggingTimeline(false);
               const file = e.dataTransfer.files?.[0];
@@ -830,10 +831,11 @@ export default function ProjectDetailPage() {
           </div>
 
           <div
-            className={isDraggingTickets ? "border-primary border-2 border-dashed rounded-lg p-2" : ""}
-            onDragOver={(e) => { e.preventDefault(); setIsDraggingTickets(true); }}
+            className={!project.deleted && isDraggingTickets ? "border-primary border-2 border-dashed rounded-lg p-2" : ""}
+            onDragOver={(e) => { if (!project.deleted) { e.preventDefault(); setIsDraggingTickets(true); } }}
             onDragLeave={() => setIsDraggingTickets(false)}
             onDrop={(e) => {
+              if (project.deleted) return;
               e.preventDefault();
               setIsDraggingTickets(false);
               const file = e.dataTransfer.files?.[0];
