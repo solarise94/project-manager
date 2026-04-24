@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, User, Users } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Ticket, User, Users, Handshake, Contact } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSession } from "next-auth/react";
 
@@ -18,8 +18,12 @@ export function MobileNav() {
   const { data: session } = useSession();
 
   const navItems = [...baseNavItems];
+  if (session?.user?.role !== "REPRESENTATIVE") {
+    navItems.splice(3, 0, { href: "/customers", label: "客户", icon: Contact });
+  }
   if (session?.user?.role === "ADMIN") {
-    navItems.splice(3, 0, { href: "/admin/users", label: "用户", icon: Users });
+    navItems.splice(navItems.length - 1, 0, { href: "/admin/users", label: "用户", icon: Users });
+    navItems.splice(navItems.length - 1, 0, { href: "/admin/representatives", label: "代表", icon: Handshake });
   }
 
   return (

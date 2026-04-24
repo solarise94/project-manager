@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getUserProjectIds } from "@/lib/permissions";
+import { getUserProjectIds, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
@@ -16,8 +16,14 @@ export async function GET(req: NextRequest) {
   const archived = searchParams.get("archived");
   const includeDeleted = searchParams.get("includeDeleted");
 
-  const projectIds = await getUserProjectIds(session.user.id);
-  if (projectIds.length === 0) return NextResponse.json({ projects: [] });
+  let projectIds: string[];
+  if (isRepresentative(session.user.role)) {
+    projectIds = await getRepresentativeProjectIds(session.user.id);
+    if (projectIds.length === 0) return NextResponse.json({ projects: [] });
+  } else {
+    projectIds = await getUserProjectIds(session.user.id);
+    if (projectIds.length === 0) return NextResponse.json({ projects: [] });
+  }
 
   const where: Prisma.ProjectWhereInput = {
     id: { in: projectIds },
@@ -83,6 +89,12 @@ export async function GET(req: NextRequest) {
           },
         },
       },
+      rep: {
+        select: { id: true, name: true, email: true },
+      },
+      cust: {
+        select: { id: true, name: true, customerCode: true, organization: true },
+      },
       _count: {
         select: { tickets: true, comments: true },
       },
@@ -94,6 +106,24 @@ export async function GET(req: NextRequest) {
     ],
   });
 
+  if (isRepresentative(session.user.role)) {
+    const pids = projects.map((p) => p.id);
+    const myTickets = await prisma.ticket.groupBy({
+      by: ["projectId"],
+      where: { projectId: { in: pids }, createdBy: session.user.id },
+      _count: { id: true },
+    });
+    const ticketMap = new Map(myTickets.map((t) => [t.projectId, t._count.id]));
+    const result = projects.map((p) => ({
+      ...p,
+      _count: {
+        tickets: ticketMap.get(p.id) || 0,
+        comments: 0,
+      },
+    }));
+    return NextResponse.json({ projects: result as typeof projects });
+  }
+
   return NextResponse.json({ projects });
 }
 
@@ -101,18 +131,42 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, status, startDate, endDate } = body;
+    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, startDate, endDate } = body;
+
+    // Derive representative text from DB when representativeId is provided
+    let repName: string | null = null;
+    if (representativeId) {
+      const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
+      repName = rep?.name || null;
+    }
+
+    // Derive client/organization from customer when customerId is provided
+    let custClient: string | null = null;
+    let custOrg: string | null = null;
+    if (customerId) {
+      const cust = await prisma.customer.findUnique({ where: { id: customerId } });
+      if (cust) {
+        custClient = cust.name;
+        custOrg = cust.organization;
+      }
+    }
 
     const project = await prisma.project.create({
       data: {
         name,
         description,
         orderNumber,
-        organization,
-        client,
-        representative,
+        organization: customerId ? (custOrg || null) : (organization || null),
+        client: custClient || client || null,
+        representative: repName !== null ? repName : representative || null,
+        representativeId: representativeId || null,
+        customerId: customerId || null,
         status: status || "NOT_STARTED",
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
@@ -133,6 +187,29 @@ export async function POST(req: NextRequest) {
         userId: session.user.id,
       },
     });
+
+    // Notify new representative if assigned
+    if (project.representativeId) {
+      const rep = await prisma.representative.findUnique({
+        where: { id: project.representativeId, archived: false },
+      });
+      if (rep?.email) {
+        const { notifyRepresentative } = await import("@/lib/representative-link");
+        const result = await notifyRepresentative(rep.email, `/projects/${project.id}`, [
+          {
+            subject: `【SciManage】您已被指定为项目代表: ${project.name}`,
+            text: `您好 ${rep.name || ""}，\n\n您已被指定为项目 "${project.name}" 的代表。\n\n---\nSciManage`,
+            html: `<p>您好 <strong>${rep.name || ""}</strong>，</p>
+<p>您已被指定为项目 <strong>"${project.name}"</strong> 的代表。</p>
+<hr />
+<p style="color:#999;font-size:12px;">SciManage</p>`,
+          },
+        ]);
+        if (!result.ok) {
+          console.error("Failed to notify representative for new project", result.results);
+        }
+      }
+    }
 
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {

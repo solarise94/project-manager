@@ -29,6 +29,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { parseSmartFill } from "@/lib/smart-fill";
+import { RepresentativeSelect } from "@/components/representative-select";
+import { CustomerSelect } from "@/components/customer-select";
 import { Wand2, ChevronDown, ChevronUp } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; variant: "default" | "secondary" | "outline" | "destructive"; color: string }> = {
@@ -43,6 +45,7 @@ export default function ProjectsPage() {
   const { status, data: session } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = session?.user?.role === "ADMIN";
+  const isRepresentative = session?.user?.role === "REPRESENTATIVE";
   const [view, setView] = useState<"board" | "list">("board");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("NOT_STARTED,IN_PROGRESS");
@@ -58,6 +61,8 @@ export default function ProjectsPage() {
     organization: "",
     client: "",
     representative: "",
+    representativeId: "",
+    customerId: "",
     status: "NOT_STARTED",
     startDate: "",
     endDate: "",
@@ -93,7 +98,7 @@ export default function ProjectsPage() {
     onSuccess: () => {
       toast.success("项目创建成功");
       setOpen(false);
-      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", status: "NOT_STARTED", startDate: "", endDate: "" });
+      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "" });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
     },
@@ -141,11 +146,12 @@ export default function ProjectsPage() {
           <h1 className="text-2xl font-bold tracking-tight">项目</h1>
           <p className="text-muted-foreground">管理您的科研项目</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="mr-2 h-4 w-4" />
-            新建项目
-          </DialogTrigger>
+        {!isRepresentative && (
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger render={<Button />}>
+              <Plus className="mr-2 h-4 w-4" />
+              新建项目
+            </DialogTrigger>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>新建项目</DialogTitle>
@@ -243,18 +249,20 @@ export default function ProjectsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>客户</Label>
-                  <Input
-                    value={form.client}
-                    onChange={(e) => setForm({ ...form, client: e.target.value })}
-                    placeholder="客户名称"
+                  <CustomerSelect
+                    value={form.customerId}
+                    displayValue={form.client}
+                    onChange={(id, name, org) => {
+                      setForm({ ...form, customerId: id || "", client: name, organization: org || "" });
+                    }}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>代表</Label>
-                  <Input
-                    value={form.representative}
-                    onChange={(e) => setForm({ ...form, representative: e.target.value })}
-                    placeholder="项目负责人/代表"
+                  <RepresentativeSelect
+                    value={form.representativeId}
+                    displayValue={form.representative}
+                    onChange={(id, name) => setForm({ ...form, representativeId: id || "", representative: name })}
                   />
                 </div>
               </div>
@@ -295,7 +303,8 @@ export default function ProjectsPage() {
               </Button>
             </form>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -404,8 +413,8 @@ export default function ProjectsPage() {
                         )}
                         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           {project.organization && <span>{project.organization}</span>}
-                          {project.client && <span>客户: {project.client}</span>}
-                          {project.representative && <span>代表: {project.representative}</span>}
+                          {(project.cust?.name || project.client) && <span>客户: {project.cust?.name ?? project.client}</span>}
+                          {(project.rep?.name || project.representative) && <span>代表: {project.rep?.name ?? project.representative}</span>}
                         </div>
                         <Progress value={project.progress} className="h-1.5" />
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -462,7 +471,7 @@ export default function ProjectsPage() {
                     {project.orderNumber && <span>订单: {project.orderNumber}</span>}
                     {project.organization && <span>{project.organization}</span>}
                     {project.client && <span>客户: {project.client}</span>}
-                    {project.representative && <span>代表: {project.representative}</span>}
+                    {(project.rep?.name || project.representative) && <span>代表: {project.rep?.name ?? project.representative}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-sm text-muted-foreground shrink-0">

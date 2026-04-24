@@ -39,6 +39,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { RepresentativeSelect } from "@/components/representative-select";
+import { CustomerSelect } from "@/components/customer-select";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
@@ -72,6 +74,7 @@ export default function ProjectDetailPage() {
   const [comment, setComment] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }>>({});
+  const [repTouched, setRepTouched] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
@@ -314,6 +317,7 @@ export default function ProjectDetailPage() {
   const tickets = ticketsData?.tickets || [];
   const attachments = timeline.filter((t) => t.kind === "attachment");
   const isOwner = project.members?.some((m) => m.user.id === session?.user?.id && m.role === "OWNER");
+  const isRep = session?.user?.role === "REPRESENTATIVE";
 
   function renderCommentContent(content: string) {
     const images: string[] = [];
@@ -393,7 +397,7 @@ export default function ProjectDetailPage() {
             </div>
             <p className="text-muted-foreground">{project.description || "暂无描述"}</p>
           </div>
-          {isOwner && !project.deleted && (
+          {isOwner && !project.deleted && !isRep && (
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -414,7 +418,7 @@ export default function ProjectDetailPage() {
                 删除
               </Button>
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => setEditForm({ ...project })} />}>
+                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setRepTouched(false); }} />}>
                   编辑项目
                 </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
@@ -424,18 +428,23 @@ export default function ProjectDetailPage() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  updateMutation.mutate({
+                  const payload: Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }> = {
                     name: editForm.name,
                     description: editForm.description,
                     orderNumber: editForm.orderNumber,
                     organization: editForm.organization,
                     client: editForm.client,
-                    representative: editForm.representative,
+                    customerId: editForm.customerId,
                     status: editForm.status,
                     progress: editForm.progress,
                     startDate: editForm.startDate,
                     endDate: editForm.endDate,
-                  });
+                  };
+                  if (repTouched) {
+                    payload.representative = editForm.representative;
+                    payload.representativeId = editForm.representativeId;
+                  }
+                  updateMutation.mutate(payload);
                 }}
                 className="space-y-4"
               >
@@ -478,11 +487,21 @@ export default function ProjectDetailPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">客户</label>
-                    <Input value={editForm.client || ""} onChange={(e) => setEditForm({ ...editForm, client: e.target.value })} />
+                    <CustomerSelect
+                      value={editForm.customerId || ""}
+                      displayValue={editForm.client || ""}
+                      onChange={(id, name, org) => {
+                        setEditForm({ ...editForm, customerId: id || "", client: name, organization: org || "" });
+                      }}
+                    />
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">代表</label>
-                    <Input value={editForm.representative || ""} onChange={(e) => setEditForm({ ...editForm, representative: e.target.value })} />
+                    <RepresentativeSelect
+                      value={editForm.representativeId || ""}
+                      displayValue={editForm.representative || ""}
+                      onChange={(id, name) => { setEditForm({ ...editForm, representativeId: id || "", representative: name }); setRepTouched(true); }}
+                    />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -590,8 +609,8 @@ export default function ProjectDetailPage() {
             <span className="bg-muted px-2 py-0.5 rounded text-xs font-medium">订单: {project.orderNumber}</span>
           )}
           {project.organization && <span>{project.organization}</span>}
-          {project.client && <span>客户: {project.client}</span>}
-          {project.representative && <span>代表: {project.representative}</span>}
+          {(project.cust?.name || project.client) && <span>客户: {project.cust?.name ?? project.client}</span>}
+          {(project.rep?.name || project.representative) && <span>代表: {project.rep?.name ?? project.representative}</span>}
           {project.startDate && (
             <span>开始: {new Date(project.startDate).toLocaleDateString("zh-CN")}</span>
           )}
@@ -731,7 +750,7 @@ export default function ProjectDetailPage() {
           </Card>
 
           {/* Comment Input */}
-          {!project.deleted && (
+          {!project.deleted && !isRep && (
             <div className="flex gap-2">
               <Textarea
                 placeholder="发表评论..."
@@ -876,17 +895,17 @@ export default function ProjectDetailPage() {
                                 <MoreHorizontal className="h-4 w-4" />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                {ticket.status !== "IN_PROGRESS" && (
+                                {!isRep && ticket.status !== "IN_PROGRESS" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "IN_PROGRESS" })}>
                                     标记为处理中
                                   </DropdownMenuItem>
                                 )}
-                                {ticket.status !== "CLOSED" && (
+                                {!isRep && ticket.status !== "CLOSED" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "CLOSED" })}>
                                     标记为已关闭
                                   </DropdownMenuItem>
                                 )}
-                                {ticket.status !== "OPEN" && (
+                                {!isRep && ticket.status !== "OPEN" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "OPEN" })}>
                                     重新打开
                                   </DropdownMenuItem>
@@ -903,7 +922,7 @@ export default function ProjectDetailPage() {
                             className="mt-2 text-xs"
                             onClick={() => setExpandedTicket(isExpanded ? null : ticket.id)}
                           >
-                            {isExpanded ? "收起回复" : "回复"}
+                            {isExpanded ? "收起回复" : "查看回复"}
                           </Button>
                         )}
 
@@ -913,6 +932,7 @@ export default function ProjectDetailPage() {
                             replyContent={replyContent}
                             setReplyContent={setReplyContent}
                             replyMutation={replyMutation}
+                            readOnly={isRep}
                           />
                         )}
                       </CardContent>
@@ -1008,6 +1028,7 @@ function TicketReplies({
   replyContent,
   setReplyContent,
   replyMutation,
+  readOnly,
 }: {
   ticketId: string;
   replyContent: Record<string, string>;
@@ -1016,6 +1037,7 @@ function TicketReplies({
     mutate: (vars: { ticketId: string; content: string }) => void;
     isPending: boolean;
   };
+  readOnly?: boolean;
 }) {
   const { data: repliesData } = useQuery<{ replies: TicketReplyItem[] }>({
     queryKey: ["ticket-replies", ticketId],
@@ -1049,28 +1071,30 @@ function TicketReplies({
           ))}
         </div>
       )}
-      <div className="flex gap-2">
-        <Textarea
-          placeholder="回复..."
-          value={content}
-          onChange={(e) => setReplyContent((prev) => ({ ...prev, [ticketId]: e.target.value }))}
-          className="min-h-[50px] resize-none text-sm"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              if (content.trim()) replyMutation.mutate({ ticketId, content });
-            }
-          }}
-        />
-        <Button
-          size="icon"
-          className="shrink-0 h-auto"
-          disabled={!content.trim() || replyMutation.isPending}
-          onClick={() => replyMutation.mutate({ ticketId, content })}
-        >
-          {replyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-        </Button>
-      </div>
+      {!readOnly && (
+        <div className="flex gap-2">
+          <Textarea
+            placeholder="回复..."
+            value={content}
+            onChange={(e) => setReplyContent((prev) => ({ ...prev, [ticketId]: e.target.value }))}
+            className="min-h-[50px] resize-none text-sm"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                if (content.trim()) replyMutation.mutate({ ticketId, content });
+              }
+            }}
+          />
+          <Button
+            size="icon"
+            className="shrink-0 h-auto"
+            disabled={!content.trim() || replyMutation.isPending}
+            onClick={() => replyMutation.mutate({ ticketId, content })}
+          >
+            {replyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

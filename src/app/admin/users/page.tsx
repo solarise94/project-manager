@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, Save, Users, Shield, User } from "lucide-react";
+import { Search, Save, Users, Shield, User, Handshake } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,32 @@ interface UserItem {
   email: string;
   role: string;
   createdAt: string;
+}
+
+function getRoleMeta(role: string) {
+  switch (role) {
+    case "ADMIN":
+      return {
+        label: "管理员",
+        icon: Shield,
+        variant: "default" as const,
+        className: "",
+      };
+    case "REPRESENTATIVE":
+      return {
+        label: "代表",
+        icon: Handshake,
+        variant: "outline" as const,
+        className: "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-50",
+      };
+    default:
+      return {
+        label: "用户",
+        icon: User,
+        variant: "secondary" as const,
+        className: "",
+      };
+  }
 }
 
 export default function AdminUsersPage() {
@@ -98,7 +124,7 @@ export default function AdminUsersPage() {
           <Users className="h-6 w-6" />
           用户管理
         </h1>
-        <p className="text-muted-foreground">管理系统中的所有用户</p>
+        <p className="text-muted-foreground">管理系统中的所有用户与代表账号</p>
       </div>
 
       <div className="relative max-w-md">
@@ -142,7 +168,11 @@ export default function AdminUsersPage() {
                 <tr key={user.id} className="hover:bg-muted/50">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center shrink-0">
+                      <div className={`h-8 w-8 rounded-full text-xs flex items-center justify-center shrink-0 ${
+                        user.role === "REPRESENTATIVE"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-primary text-primary-foreground"
+                      }`}>
                         {user.name?.slice(0, 2)?.toUpperCase() || "U"}
                       </div>
                       <span className="font-medium">{user.name}</span>
@@ -150,17 +180,18 @@ export default function AdminUsersPage() {
                   </td>
                   <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{user.email}</td>
                   <td className="px-4 py-3">
-                    <Badge variant={user.role === "ADMIN" ? "default" : "secondary"} className="text-xs">
-                      {user.role === "ADMIN" ? (
-                        <span className="flex items-center gap-1">
-                          <Shield className="h-3 w-3" />管理员
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1">
-                          <User className="h-3 w-3" />用户
-                        </span>
-                      )}
-                    </Badge>
+                    {(() => {
+                      const roleMeta = getRoleMeta(user.role);
+                      const RoleIcon = roleMeta.icon;
+                      return (
+                        <Badge variant={roleMeta.variant} className={`text-xs ${roleMeta.className}`}>
+                          <span className="flex items-center gap-1">
+                            <RoleIcon className="h-3 w-3" />
+                            {roleMeta.label}
+                          </span>
+                        </Badge>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
                     {new Date(user.createdAt).toLocaleDateString("zh-CN")}
@@ -191,64 +222,90 @@ export default function AdminUsersPage() {
             <DialogTitle>编辑用户</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>昵称</Label>
-              <Input
-                value={editForm.name}
-                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>邮箱</Label>
-              <Input
-                type="email"
-                value={editForm.email}
-                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>角色</Label>
-              <Select
-                value={editForm.role}
-                onValueChange={(v) => setEditForm({ ...editForm, role: v || "USER" })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="USER">用户</SelectItem>
-                  <SelectItem value="ADMIN">管理员</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>新密码（留空则不修改）</Label>
-              <Input
-                type="password"
-                value={editForm.password}
-                onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                placeholder="输入新密码"
-              />
-            </div>
-            <Button
-              className="w-full"
-              disabled={updateMutation.isPending}
-              onClick={() => {
-                if (!editUser) return;
-                const payload: Record<string, unknown> = {
-                  name: editForm.name.trim(),
-                  email: editForm.email.trim(),
-                  role: editForm.role,
-                };
-                if (editForm.password.trim()) {
-                  payload.password = editForm.password.trim();
-                }
-                updateMutation.mutate({ id: editUser.id, payload });
-              }}
-            >
-              <Save className="mr-2 h-4 w-4" />
-              {updateMutation.isPending ? "保存中..." : "保存更改"}
-            </Button>
+            {editUser?.role === "REPRESENTATIVE" ? (
+              <>
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-50">
+                    <span className="flex items-center gap-1">
+                      <Handshake className="h-3 w-3" />
+                      代表
+                    </span>
+                  </Badge>
+                  <p className="text-xs text-muted-foreground">
+                    代表账号的昵称、邮箱和密码由&ldquo;代表管理&rdquo;统一维护，此处仅展示信息。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>昵称</Label>
+                  <Input value={editForm.name} disabled />
+                </div>
+                <div className="space-y-2">
+                  <Label>邮箱</Label>
+                  <Input value={editForm.email} disabled />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>昵称</Label>
+                  <Input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>邮箱</Label>
+                  <Input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>角色</Label>
+                  <Select
+                    value={editForm.role}
+                    onValueChange={(v) => setEditForm({ ...editForm, role: v || "USER" })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USER">用户</SelectItem>
+                      <SelectItem value="ADMIN">管理员</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>新密码（留空则不修改）</Label>
+                  <Input
+                    type="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    placeholder="输入新密码"
+                  />
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={updateMutation.isPending}
+                  onClick={() => {
+                    if (!editUser) return;
+                    const payload: Record<string, unknown> = {
+                      name: editForm.name.trim(),
+                      email: editForm.email.trim(),
+                      role: editForm.role,
+                    };
+                    if (editForm.password.trim()) {
+                      payload.password = editForm.password.trim();
+                    }
+                    updateMutation.mutate({ id: editUser.id, payload });
+                  }}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  {updateMutation.isPending ? "保存中..." : "保存更改"}
+                </Button>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

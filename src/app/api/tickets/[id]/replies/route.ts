@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember } from "@/lib/permissions";
+import { assertProjectMember, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 
 export async function GET(
   request: NextRequest,
@@ -26,6 +26,26 @@ export async function GET(
 
   if (existing.project?.deleted) {
     return NextResponse.json({ error: "项目已删除" }, { status: 400 });
+  }
+
+  if (isRepresentative(session.user.role)) {
+    const repProjectIds = await getRepresentativeProjectIds(session.user.id);
+    if (!repProjectIds.includes(existing.projectId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (existing.createdBy !== session.user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const replies = await prisma.ticketReply.findMany({
+      where: { ticketId: id },
+      include: {
+        author: {
+          select: { id: true, name: true, avatar: true },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    return NextResponse.json({ replies });
   }
 
   try {
@@ -71,6 +91,10 @@ export async function POST(
     return NextResponse.json({ error: "项目已删除，无法回复工单" }, { status: 400 });
   }
 
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     await assertProjectMember(existing.projectId, session.user.id);
   } catch {
@@ -114,11 +138,11 @@ export async function POST(
       projectId: existing.projectId,
       metadata: { contains: id },
     },
-    include: { user: { select: { id: true, email: true, name: true, emailOnTicketReply: true } } },
+    include: { user: { select: { id: true, email: true, name: true, emailOnTicketReply: true, role: true } } },
     orderBy: { createdAt: "asc" },
   });
   const creator = creatorActivity?.user;
-  if (creator && creator.id !== session.user.id) {
+  if (creator && creator.id !== session.user.id && creator.role !== "REPRESENTATIVE") {
     await prisma.notification.create({
       data: {
         userId: creator.id,

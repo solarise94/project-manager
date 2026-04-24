@@ -27,6 +27,13 @@ function getSafeCallbackUrl(callbackUrl: string | null) {
   return "/dashboard";
 }
 
+function formatLockTime(iso: string): string {
+  const diff = new Date(iso).getTime() - Date.now();
+  if (diff <= 0) return "即将解锁";
+  const mins = Math.ceil(diff / 60000);
+  return `${mins} 分钟`;
+}
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = getSafeCallbackUrl(searchParams.get("callbackUrl"));
@@ -49,7 +56,19 @@ function LoginForm() {
     setLoading(false);
 
     if (result?.error) {
-      toast.error("登录失败", { description: "邮箱或密码错误" });
+      if (result.error.startsWith("LOCKED:")) {
+        const lockedUntil = result.error.replace("LOCKED:", "");
+        toast.error("账号已锁定", {
+          description: `登录失败次数过多，请 ${formatLockTime(lockedUntil)} 后再试`,
+        });
+      } else if (result.error.startsWith("INVALID:")) {
+        const remaining = parseInt(result.error.replace("INVALID:", ""), 10);
+        toast.error("登录失败", {
+          description: `邮箱或密码错误，剩余 ${Math.max(0, remaining)} 次尝试机会`,
+        });
+      } else {
+        toast.error("登录失败", { description: "邮箱或密码错误" });
+      }
     } else {
       toast.success("登录成功", { description: "欢迎回来！" });
 
@@ -97,6 +116,11 @@ function LoginForm() {
         {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
         登录
       </Button>
+      <div className="text-center">
+        <a href="/login/representative" className="text-sm text-primary hover:underline">
+          我是代表，使用 Magic Link 登录
+        </a>
+      </div>
     </form>
   );
 }

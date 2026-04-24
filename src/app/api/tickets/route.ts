@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, getUserProjectIds, isProjectOwner } from "@/lib/permissions";
+import { assertProjectMember, getUserProjectIds, isProjectOwner, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -16,6 +16,31 @@ export async function GET(req: NextRequest) {
   if (projectId) {
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     if (!project) return NextResponse.json({ tickets: [] });
+
+    if (isRepresentative(session.user.role)) {
+      if (project.deleted) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const repProjectIds = await getRepresentativeProjectIds(session.user.id);
+      if (!repProjectIds.includes(projectId)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      // Representatives can only see tickets they created
+      const where: { projectId: string; createdBy: string; status?: string } = {
+        projectId,
+        createdBy: session.user.id,
+      };
+      if (status) where.status = status;
+      const tickets = await prisma.ticket.findMany({
+        where,
+        include: {
+          project: { select: { id: true, name: true } },
+          assignee: { select: { id: true, name: true, avatar: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      return NextResponse.json({ tickets });
+    }
 
     // For deleted projects, only owner or admin can view tickets
     if (project.deleted) {
@@ -47,6 +72,26 @@ export async function GET(req: NextRequest) {
   }
 
   // No projectId: return tickets from all user's non-deleted projects
+  if (isRepresentative(session.user.role)) {
+    const repProjectIds = await getRepresentativeProjectIds(session.user.id);
+    if (repProjectIds.length === 0) return NextResponse.json({ tickets: [] });
+    const where: { projectId: { in: string[] }; createdBy: string; status?: string; project?: { deleted: boolean } } = {
+      projectId: { in: repProjectIds },
+      createdBy: session.user.id,
+      project: { deleted: false },
+    };
+    if (status) where.status = status;
+    const tickets = await prisma.ticket.findMany({
+      where,
+      include: {
+        project: { select: { id: true, name: true } },
+        assignee: { select: { id: true, name: true, avatar: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json({ tickets });
+  }
+
   const userProjectIds = await getUserProjectIds(session.user.id);
   if (userProjectIds.length === 0) return NextResponse.json({ tickets: [] });
 
@@ -80,10 +125,20 @@ export async function POST(req: NextRequest) {
     if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     if (project.deleted) return NextResponse.json({ error: "项目已删除，无法创建工单" }, { status: 400 });
 
-    try {
-      await assertProjectMember(projectId, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (isRepresentative(session.user.role)) {
+      if (project.deleted) {
+        return NextResponse.json({ error: "项目已删除，无法创建工单" }, { status: 400 });
+      }
+      const repProjectIds = await getRepresentativeProjectIds(session.user.id);
+      if (!repProjectIds.includes(projectId)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    } else {
+      try {
+        await assertProjectMember(projectId, session.user.id);
+      } catch {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const ticket = await prisma.ticket.create({
@@ -93,6 +148,7 @@ export async function POST(req: NextRequest) {
         priority: priority || "MEDIUM",
         projectId,
         assigneeId: assigneeId || null,
+        createdBy: session.user.id,
         reminderDate: reminderDate ? new Date(reminderDate) : null,
         reminderSent: false,
       },

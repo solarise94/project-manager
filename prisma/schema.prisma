@@ -24,32 +24,155 @@ model User {
   tickets    Ticket[]
   replies    TicketReply[]
   activities ActivityLog[]
+  reviewsCreated OrganizationReviewTask[] @relation("ReviewCreatedBy")
+  reviewsReviewed OrganizationReviewTask[] @relation("ReviewReviewedBy")
+  devLogs  DevLog[]
+}
+
+model Representative {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  token          String?   @unique // Magic Link token
+  tokenExpiresAt DateTime?
+  archived       Boolean   @default(false)
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  projects       Project[]
+}
+
+model Organization {
+  id              String               @id @default(cuid())
+  orgCode         String               @unique
+  canonicalName   String
+  normalizedName  String
+  address         String?
+  archived        Boolean              @default(false)
+  deleted         Boolean              @default(false)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  aliases         OrganizationAlias[]
+  sites           OrganizationSite[]
+  customers       Customer[]
+  reviewTasks     OrganizationReviewTask[]
+}
+
+model OrganizationAlias {
+  id              String       @id @default(cuid())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId  String
+  alias           String
+  normalizedAlias String
+  aliasType       String       @default("COMMON") // COMMON, ABBREVIATION, FORMER_NAME
+  approved        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+
+  @@index([normalizedAlias])
+}
+
+model OrganizationSite {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId    String
+  siteName          String
+  normalizedSiteName String
+  address           String?
+  archived          Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  customers         Customer[]
+  reviewTasks       OrganizationReviewTask[]
+
+  @@unique([organizationId, normalizedSiteName])
+  @@index([normalizedSiteName])
+}
+
+model Customer {
+  id                   String             @id @default(cuid())
+  customerCode         String             @unique
+  name                 String
+  principal            String?
+  email                String?
+  wechat               String?
+  organization         String?
+  address              String?
+  miniProgramId        String?
+  organizationId       String?
+  org                  Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationSiteId   String?
+  orgSite              OrganizationSite?  @relation(fields: [organizationSiteId], references: [id], onDelete: SetNull)
+  organizationRawInput String?
+  archived             Boolean            @default(false)
+  archivedAt           DateTime?
+  deleted              Boolean            @default(false)
+  deletedAt            DateTime?
+  mergedIntoId         String?
+  mergedInto           Customer?          @relation("CustomerMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom           Customer[]         @relation("CustomerMerge")
+  projects             Project[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+model OrganizationReviewTask {
+  id                       String            @id @default(cuid())
+  rawInput                 String
+  normalizedInput          String
+  suggestedOrganizationId  String?
+  suggestedOrg             Organization?     @relation(fields: [suggestedOrganizationId], references: [id], onDelete: SetNull)
+  suggestedSiteId          String?
+  suggestedSite            OrganizationSite? @relation(fields: [suggestedSiteId], references: [id], onDelete: SetNull)
+  suggestedCanonicalName   String?
+  suggestedAddress         String?
+  confidence               Float?
+  status                   String            @default("PENDING") // PENDING, APPROVED, REJECTED
+  sourceType               String            // CUSTOMER_CREATE, CUSTOMER_EDIT, SMART_FILL
+  sourceId                 String
+  createdById              String?
+  createdByUser            User?             @relation("ReviewCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedById             String?
+  reviewedByUser           User?             @relation("ReviewReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote               String?
+  resolutionSource         String?           // DB_EXACT, DB_CANDIDATE, LLM_DB_CANDIDATE, MANUAL_NEW, TAVILY_MINIMAX_DRAFT
+  suggestedAliasesJson     String?
+  suggestedSitesJson       String?
+  evidenceJson             String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  reviewedAt               DateTime?
+
+  @@index([status])
+  @@index([sourceType, sourceId])
 }
 
 model Project {
-  id             String          @id @default(cuid())
-  name           String
-  description    String?
-  orderNumber    String?
-  organization   String?
-  client         String?
-  representative String?
-  status         String          @default("NOT_STARTED")
-  progress       Int             @default(0)
-  startDate      DateTime?
-  endDate        DateTime?
-  archived       Boolean         @default(false)
-  deleted        Boolean         @default(false)
-  deletedAt      DateTime?
-  deletedReason  String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  members        ProjectMember[]
-  statusHistory  StatusHistory[]
-  tickets        Ticket[]
-  comments       Comment[]
-  attachments    Attachment[]
-  activities     ActivityLog[]
+  id               String          @id @default(cuid())
+  name             String
+  description      String?
+  orderNumber      String?
+  organization     String?
+  client           String?
+  representative   String?
+  representativeId String?
+  rep              Representative? @relation(fields: [representativeId], references: [id], onDelete: SetNull)
+  customerId       String?
+  cust             Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status           String          @default("NOT_STARTED")
+  progress         Int             @default(0)
+  startDate        DateTime?
+  endDate          DateTime?
+  archived         Boolean         @default(false)
+  deleted          Boolean         @default(false)
+  deletedAt        DateTime?
+  deletedReason    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  members          ProjectMember[]
+  statusHistory    StatusHistory[]
+  tickets          Ticket[]
+  comments         Comment[]
+  attachments      Attachment[]
+  activities       ActivityLog[]
 }
 
 model ProjectMember {
@@ -87,6 +210,7 @@ model Ticket {
   projectId     String
   assignee      User?         @relation(fields: [assigneeId], references: [id])
   assigneeId    String?
+  createdBy     String?       // User ID who created this ticket
   replies       TicketReply[]
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -124,15 +248,15 @@ model Attachment {
 }
 
 model ActivityLog {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   type      String
   content   String
   metadata  String?
-  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId    String?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 }
 
 model Notification {
@@ -144,4 +268,29 @@ model Notification {
   read      Boolean  @default(false)
   link      String?
   createdAt DateTime @default(now())
+}
+
+model FailedLoginAttempt {
+  id          String    @id @default(cuid())
+  identifier  String    @unique // email or "ip:email"
+  attempts    Int       @default(0)
+  lastAttempt DateTime  @default(now())
+  lockedUntil DateTime?
+}
+
+model DevLog {
+  id          String    @id @default(cuid())
+  version     String?
+  title       String
+  content     String
+  status      String    @default("DRAFT") // DRAFT, PUBLISHED, ARCHIVED
+  type        String    @default("UPDATE") // UPDATE, FIX, RELEASE, NOTICE
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, publishedAt])
+  @@index([createdAt])
 }

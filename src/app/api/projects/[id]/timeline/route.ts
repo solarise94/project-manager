@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, isProjectOwner } from "@/lib/permissions";
+import { assertProjectMember, isProjectOwner, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -12,6 +12,37 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const project = await prisma.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Representatives can access their own associated non-deleted projects
+  const isRep = isRepresentative(session.user.role);
+  if (isRep) {
+    if (project.deleted) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const repProjectIds = await getRepresentativeProjectIds(session.user.id);
+    if (!repProjectIds.includes(id)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    // Representative timeline: only status/progress changes
+    const activities = await prisma.activityLog.findMany({
+      where: {
+        projectId: id,
+        type: { in: ["STATUS_CHANGED", "PROGRESS_UPDATED", "PROJECT_CREATED", "PROJECT_UPDATED"] },
+      },
+      include: { user: { select: { id: true, name: true, avatar: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    const timeline = activities.map((a) => ({
+      id: a.id,
+      type: a.type,
+      content: a.content,
+      metadata: a.metadata,
+      createdAt: a.createdAt,
+      user: a.user,
+      kind: "activity" as const,
+    }));
+    return NextResponse.json({ timeline });
+  }
 
   // Deleted projects: only ADMIN or owner can access timeline
   if (project.deleted) {

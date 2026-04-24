@@ -5,6 +5,29 @@ export interface NotificationPrefs {
   emailOnComment: boolean;
 }
 
+export interface CustomerItem {
+  id: string;
+  customerCode: string;
+  name: string;
+  principal?: string | null;
+  email?: string | null;
+  wechat?: string | null;
+  organization?: string | null;
+  address?: string | null;
+  miniProgramId?: string | null;
+  organizationId?: string | null;
+  organizationSiteId?: string | null;
+  organizationRawInput?: string | null;
+  archived: boolean;
+  archivedAt?: string | null;
+  deleted: boolean;
+  deletedAt?: string | null;
+  mergedIntoId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { projects: number };
+}
+
 export interface ProjectItem {
   id: string;
   name: string;
@@ -13,6 +36,8 @@ export interface ProjectItem {
   organization?: string | null | undefined;
   client?: string | null | undefined;
   representative?: string | null | undefined;
+  representativeId?: string | null | undefined;
+  customerId?: string | null | undefined;
   status: string;
   progress: number;
   startDate?: string | null | undefined;
@@ -26,6 +51,8 @@ export interface ProjectItem {
     role: string;
   }>;
   _count?: { tickets: number; comments: number; attachments?: number };
+  rep?: { id: string; name: string; email: string } | null;
+  cust?: { id: string; name: string; customerCode: string; organization?: string | null } | null;
 }
 
 export interface TicketItem {

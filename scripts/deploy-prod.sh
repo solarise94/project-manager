@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Production runtime:
+# - code -> /home/solarise/task-manager
+# - db   -> /home/solarise/task-manager-data/prod/dev.db
+# - external access through https://task.solarise94.fun:39090
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 "${REPO_DIR}/scripts/deploy-standalone.sh" \
@@ -9,4 +14,6 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   "31080" \
   "0.0.0.0" \
   "https://task.solarise94.fun:39090" \
-  "${REPO_DIR}/prisma/dev.db"
+  "/home/solarise/task-manager-data/prod/dev.db" \
+  "${REPO_DIR}/prisma/dev.db" \
+  "fail"

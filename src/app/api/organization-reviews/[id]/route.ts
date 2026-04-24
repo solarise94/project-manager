@@ -1,0 +1,253 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { normalizeOrgName } from "@/lib/organization-normalize";
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const currentUser = await prisma.user.findUnique({ where: { id: session.user.id }, select: { role: true } });
+  if (!currentUser || currentUser.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const { id } = await params;
+
+  try {
+    const task = await prisma.organizationReviewTask.findUnique({ where: { id } });
+    if (!task) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+    if (task.status !== "PENDING") {
+      return NextResponse.json({ error: "该任务已处理，不可重复审批" }, { status: 400 });
+    }
+
+    const body = await req.json();
+    const { action } = body; // "approve" | "reject" | "approveAndCreate"
+
+    if (action === "reject") {
+      await prisma.organizationReviewTask.update({
+        where: { id },
+        data: {
+          status: "REJECTED",
+          reviewedById: session.user.id,
+          reviewedAt: new Date(),
+          reviewNote: body.reviewNote || null,
+        },
+      });
+      return NextResponse.json({ status: "REJECTED" });
+    }
+
+    if (action === "approve") {
+      const { organizationId, organizationSiteId, reviewNote } = body;
+      if (!organizationId) {
+        return NextResponse.json({ error: "审批通过需要指定机构" }, { status: 400 });
+      }
+
+      const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+      if (!org || org.deleted || org.archived) {
+        return NextResponse.json({ error: "目标机构不存在或已归档" }, { status: 400 });
+      }
+
+      if (organizationSiteId) {
+        const site = await prisma.organizationSite.findUnique({ where: { id: organizationSiteId } });
+        if (!site || site.organizationId !== organizationId) {
+          return NextResponse.json({ error: "院区不属于指定机构" }, { status: 400 });
+        }
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.organizationReviewTask.update({
+          where: { id },
+          data: {
+            status: "APPROVED",
+            suggestedOrganizationId: organizationId,
+            suggestedSiteId: organizationSiteId || null,
+            reviewedById: session.user.id,
+            reviewedAt: new Date(),
+            reviewNote: reviewNote || null,
+            resolutionSource: "DB_CANDIDATE",
+          },
+        });
+
+        // Auto-create alias from rawInput so the same text resolves as exact next time
+        const normalizedAlias = normalizeOrgName(task.rawInput);
+        if (normalizedAlias && normalizedAlias !== org.normalizedName) {
+          const existingAlias = await tx.organizationAlias.findFirst({
+            where: { organizationId, normalizedAlias },
+          });
+          if (!existingAlias) {
+            await tx.organizationAlias.create({
+              data: {
+                organizationId,
+                alias: task.rawInput.trim(),
+                normalizedAlias,
+                approved: true,
+              },
+            });
+          }
+        }
+
+        // Write back to source entity
+        if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+          const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
+          if (!customer || customer.deleted) {
+            throw new Error("来源客户已删除");
+          }
+          await tx.customer.update({
+            where: { id: task.sourceId },
+            data: {
+              organizationId,
+              organizationSiteId: organizationSiteId || null,
+              organization: org.canonicalName,
+            },
+          });
+        }
+      });
+
+      return NextResponse.json({ status: "APPROVED" });
+    }
+
+    if (action === "approveAndCreate") {
+      const { canonicalName, address, aliases, sites, siteName, siteAddress, reviewNote, bindSiteName } = body;
+      if (!canonicalName?.trim()) {
+        return NextResponse.json({ error: "标准名称为必填项" }, { status: 400 });
+      }
+
+      const normalizedName = normalizeOrgName(canonicalName.trim());
+      const existing = await prisma.organization.findFirst({
+        where: { normalizedName, deleted: false },
+      });
+      if (existing) {
+        return NextResponse.json({ error: `已存在同名机构: ${existing.canonicalName}` }, { status: 409 });
+      }
+
+      // Generate org code
+      const count = await prisma.organization.count();
+      let orgCode = "";
+      for (let i = 0; i < 10; i++) {
+        const code = `ORG-${String(count + 1 + i).padStart(5, "0")}`;
+        const exists = await prisma.organization.findUnique({ where: { orgCode: code }, select: { id: true } });
+        if (!exists) { orgCode = code; break; }
+      }
+      if (!orgCode) orgCode = `ORG-${String(Date.now() % 100000).padStart(5, "0")}`;
+
+      // Merge sites array with legacy siteName/siteAddress, deduplicate by normalized name
+      const allSites: Array<{ siteName: string; address?: string }> = [];
+      const seenSiteNames = new Set<string>();
+      if (Array.isArray(sites)) {
+        for (const s of sites) {
+          if (s.siteName?.trim()) {
+            const norm = normalizeOrgName(s.siteName.trim());
+            if (!seenSiteNames.has(norm)) {
+              seenSiteNames.add(norm);
+              allSites.push({ siteName: s.siteName.trim(), address: s.address?.trim() });
+            }
+          }
+        }
+      }
+      if (siteName?.trim()) {
+        const norm = normalizeOrgName(siteName.trim());
+        if (!seenSiteNames.has(norm)) {
+          seenSiteNames.add(norm);
+          allSites.push({ siteName: siteName.trim(), address: siteAddress?.trim() });
+        }
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const newOrg = await tx.organization.create({
+          data: {
+            orgCode,
+            canonicalName: canonicalName.trim(),
+            normalizedName,
+            address: address?.trim() || null,
+            aliases: aliases?.length ? {
+              create: (aliases as string[]).filter(Boolean).map((a: string) => ({
+                alias: a.trim(),
+                normalizedAlias: normalizeOrgName(a.trim()),
+              })),
+            } : undefined,
+          },
+        });
+
+        // Create all sites
+        const createdSiteIds: string[] = [];
+        for (const s of allSites) {
+          const site = await tx.organizationSite.create({
+            data: {
+              organizationId: newOrg.id,
+              siteName: s.siteName,
+              normalizedSiteName: normalizeOrgName(s.siteName),
+              address: s.address || null,
+            },
+          });
+          createdSiteIds.push(site.id);
+        }
+        // Determine which site to bind by name match
+        let bindSiteId: string | null = null;
+        if (bindSiteName && createdSiteIds.length > 0) {
+          const normalizedBind = normalizeOrgName(bindSiteName);
+          const matchedSite = await tx.organizationSite.findFirst({
+            where: {
+              organizationId: newOrg.id,
+              normalizedSiteName: normalizedBind,
+            },
+            select: { id: true },
+          });
+          bindSiteId = matchedSite?.id || null;
+        }
+
+        await tx.organizationReviewTask.update({
+          where: { id },
+          data: {
+            status: "APPROVED",
+            suggestedOrganizationId: newOrg.id,
+            suggestedSiteId: bindSiteId,
+            suggestedCanonicalName: newOrg.canonicalName,
+            reviewedById: session.user.id,
+            reviewedAt: new Date(),
+            reviewNote: reviewNote || null,
+            resolutionSource: "MANUAL_NEW",
+          },
+        });
+
+        // Auto-create alias from rawInput if it differs from canonicalName and wasn't already in aliases
+        const normalizedRaw = normalizeOrgName(task.rawInput);
+        if (normalizedRaw && normalizedRaw !== normalizedName) {
+          const aliasNorms = (aliases as string[] || []).map((a: string) => normalizeOrgName(a.trim()));
+          if (!aliasNorms.includes(normalizedRaw)) {
+            await tx.organizationAlias.create({
+              data: {
+                organizationId: newOrg.id,
+                alias: task.rawInput.trim(),
+                normalizedAlias: normalizedRaw,
+                approved: true,
+              },
+            });
+          }
+        }
+
+        // Write back to source entity
+        if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+          const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
+          if (!customer || customer.deleted) {
+            throw new Error("来源客户已删除");
+          }
+          await tx.customer.update({
+            where: { id: task.sourceId },
+            data: {
+              organizationId: newOrg.id,
+              organizationSiteId: bindSiteId,
+              organization: newOrg.canonicalName,
+            },
+          });
+        }
+      });
+
+      return NextResponse.json({ status: "APPROVED", orgCode });
+    }
+
+    return NextResponse.json({ error: "无效的操作" }, { status: 400 });
+  } catch (error) {
+    console.error(error);
+    const message = error instanceof Error ? error.message : "审批失败";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

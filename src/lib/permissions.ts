@@ -35,3 +35,27 @@ export async function getUserProjectIds(userId: string): Promise<string[]> {
   });
   return memberships.map((m) => m.projectId);
 }
+
+export function isRepresentative(role?: string | null): boolean {
+  return role === "REPRESENTATIVE";
+}
+
+export async function getRepresentativeProjectIds(userId: string): Promise<string[]> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+  if (!user?.email) return [];
+
+  const rep = await prisma.representative.findUnique({
+    where: { email: user.email },
+    select: { id: true, archived: true },
+  });
+  if (!rep || rep.archived) return [];
+
+  const projects = await prisma.project.findMany({
+    where: { representativeId: rep.id, deleted: false },
+    select: { id: true },
+  });
+  return projects.map((p) => p.id);
+}

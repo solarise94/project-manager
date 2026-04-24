@@ -5,6 +5,7 @@ import { Providers } from "@/components/providers";
 import { Sidebar } from "@/components/sidebar";
 import { Header } from "@/components/header";
 import { MobileNav } from "@/components/mobile-nav";
+import { RuntimeDebugPanel } from "@/components/runtime-debug-panel";
 import { ensureSchedulerStarted } from "@/lib/reminder";
 
 // Only start scheduler in development; production should use external cron
@@ -51,6 +52,7 @@ export default function RootLayout({
             </main>
             <MobileNav />
           </div>
+          <RuntimeDebugPanel />
         </Providers>
       </body>
     </html>

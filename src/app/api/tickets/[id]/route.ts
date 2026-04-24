@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember } from "@/lib/permissions";
+import { assertProjectMember, isRepresentative } from "@/lib/permissions";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -22,6 +22,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (existing.project?.deleted) {
       return NextResponse.json({ error: "项目已删除，无法修改工单" }, { status: 400 });
+    }
+
+    if (isRepresentative(session.user.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     try {
@@ -58,6 +62,33 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           userId: session.user.id,
         },
       });
+
+      // Notify project representative of ticket status change
+      const project = await prisma.project.findUnique({
+        where: { id: existing.projectId },
+        select: { representativeId: true, name: true },
+      });
+      if (project?.representativeId) {
+        const rep = await prisma.representative.findUnique({
+          where: { id: project.representativeId, archived: false },
+        });
+        if (rep?.email) {
+          const { notifyRepresentative } = await import("@/lib/representative-link");
+          const result = await notifyRepresentative(rep.email, `/projects/${existing.projectId}`, [
+            {
+              subject: `【SciManage】工单状态变更: ${existing.title}`,
+              text: `您好 ${rep.name || ""}，\n\n工单 "${existing.title}"（项目: ${project.name}）状态已更新为 "${status}"。\n\n---\nSciManage`,
+              html: `<p>您好 <strong>${rep.name || ""}</strong>，</p>
+<p>工单 <strong>"${existing.title}"</strong>（项目: ${project.name}）状态已更新为 <strong>"${status}"</strong>。</p>
+<hr />
+<p style="color:#999;font-size:12px;">SciManage</p>`,
+            },
+          ]);
+          if (!result.ok) {
+            console.error("Failed to notify representative of ticket status change", result.results);
+          }
+        }
+      }
     }
 
     return NextResponse.json({ ticket: updated });

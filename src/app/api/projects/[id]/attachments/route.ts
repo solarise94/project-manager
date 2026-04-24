@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember } from "@/lib/permissions";
+import { assertProjectMember, isRepresentative } from "@/lib/permissions";
 import { writeFile } from "fs/promises";
 import { mkdir } from "fs/promises";
 import path from "path";
@@ -10,6 +10,10 @@ import path from "path";
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden: representatives cannot upload files" }, { status: 403 });
+  }
 
   const { id } = await params;
 

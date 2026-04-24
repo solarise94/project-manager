@@ -27,6 +27,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    // Representative accounts are managed exclusively via /admin/representatives
+    if (existing.role === "REPRESENTATIVE") {
+      return NextResponse.json(
+        { error: "代表账号请在「代表管理」中维护" },
+        { status: 403 },
+      );
+    }
+
     // Validation
     const validation = validateUserInput({ name, email });
     if (!validation.valid) {

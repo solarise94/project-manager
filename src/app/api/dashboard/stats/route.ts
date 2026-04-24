@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getUserProjectIds } from "@/lib/permissions";
+import { getUserProjectIds, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -11,7 +11,12 @@ export async function GET() {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const projectIds = await getUserProjectIds(session.user.id);
+  let projectIds: string[];
+  if (isRepresentative(session.user.role)) {
+    projectIds = await getRepresentativeProjectIds(session.user.id);
+  } else {
+    projectIds = await getUserProjectIds(session.user.id);
+  }
   if (projectIds.length === 0) {
     return NextResponse.json({
       totalProjects: 0,
@@ -27,7 +32,9 @@ export async function GET() {
 
   const projectIdFilter = { in: projectIds };
   const baseProjectWhere = { id: projectIdFilter, deleted: false };
-  const baseTicketWhere = { projectId: projectIdFilter, project: { deleted: false } };
+  const baseTicketWhere = isRepresentative(session.user.role)
+    ? { projectId: projectIdFilter, project: { deleted: false }, createdBy: session.user.id }
+    : { projectId: projectIdFilter, project: { deleted: false } };
 
   const [
     totalProjects,
@@ -53,17 +60,33 @@ export async function GET() {
 
   // SQLite parameterized raw query for ticket trend (filtered by user's non-deleted projects)
   const projectIdList = projectIds.map(() => "?").join(",");
-  const ticketTrend = await prisma.$queryRawUnsafe(
-    `SELECT date(Ticket.createdAt) as date, COUNT(*) as count
-     FROM Ticket
-     JOIN Project ON Ticket.projectId = Project.id
-     WHERE Ticket.projectId IN (${projectIdList})
-       AND Project.deleted = 0
-       AND Ticket.createdAt >= datetime('now', '-7 days')
-     GROUP BY date(Ticket.createdAt)
-     ORDER BY date(Ticket.createdAt)`,
-    ...projectIds
-  );
+  let ticketTrend;
+  if (isRepresentative(session.user.role)) {
+    ticketTrend = await prisma.$queryRawUnsafe(
+      `SELECT date(Ticket.createdAt) as date, COUNT(*) as count
+       FROM Ticket
+       JOIN Project ON Ticket.projectId = Project.id
+       WHERE Ticket.projectId IN (${projectIdList})
+         AND Project.deleted = 0
+         AND Ticket.createdBy = ?
+         AND Ticket.createdAt >= datetime('now', '-7 days')
+       GROUP BY date(Ticket.createdAt)
+       ORDER BY date(Ticket.createdAt)`,
+      ...projectIds, session.user.id
+    );
+  } else {
+    ticketTrend = await prisma.$queryRawUnsafe(
+      `SELECT date(Ticket.createdAt) as date, COUNT(*) as count
+       FROM Ticket
+       JOIN Project ON Ticket.projectId = Project.id
+       WHERE Ticket.projectId IN (${projectIdList})
+         AND Project.deleted = 0
+         AND Ticket.createdAt >= datetime('now', '-7 days')
+       GROUP BY date(Ticket.createdAt)
+       ORDER BY date(Ticket.createdAt)`,
+      ...projectIds
+    );
+  }
 
   return NextResponse.json({
     totalProjects,
