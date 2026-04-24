@@ -50,7 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!isOwner && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-  } else {
+  } else if (session.user.role !== "ADMIN") {
     try {
       await assertProjectMember(id, session.user.id);
     } catch {
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       metadata: a.metadata,
       createdAt: a.createdAt,
       user: a.user,
-      kind: "activity" as const,
+      kind: (a.type === "PLUGIN_MESSAGE" ? "plugin" : "activity") as "plugin" | "activity",
     })),
     ...comments.map((c) => ({
       id: c.id,

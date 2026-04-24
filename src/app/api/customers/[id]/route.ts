@@ -4,6 +4,32 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
 
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+
+  const customer = await prisma.customer.findUnique({
+    where: { id, deleted: false },
+    select: {
+      id: true, name: true, customerCode: true, organization: true,
+      organizationId: true, organizationSiteId: true, email: true,
+      wechat: true, address: true, principal: true,
+    },
+  });
+
+  if (!customer) {
+    return NextResponse.json({ error: "客户不存在" }, { status: 404 });
+  }
+
+  return NextResponse.json({ customer });
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,9 +66,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (organizationSiteId !== undefined) data.organizationSiteId = organizationSiteId || null;
     if (organizationRawInput !== undefined) data.organizationRawInput = organizationRawInput || null;
 
-    // Validate organizationSiteId belongs to organizationId
+    // Validate organizationId exists and is active
     const effectiveOrgId = (organizationId !== undefined ? organizationId : existing.organizationId) || null;
-    const effectiveSiteId = (organizationSiteId !== undefined ? organizationSiteId : existing.organizationSiteId) || null;
+    if (effectiveOrgId && organizationId !== undefined && organizationId) {
+      const org = await prisma.organization.findUnique({
+        where: { id: effectiveOrgId },
+        select: { id: true, deleted: true, archived: true },
+      });
+      if (!org || org.deleted) {
+        return NextResponse.json({ error: "指定的单位不存在" }, { status: 400 });
+      }
+      if (org.archived) {
+        return NextResponse.json({ error: "指定的单位已归档，无法关联" }, { status: 400 });
+      }
+    }
+
+    // Auto-clear siteId when orgId is absent (prevent orphaned FK)
+    if (!effectiveOrgId) {
+      data.organizationSiteId = null;
+    }
+
+    // Validate organizationSiteId belongs to organizationId
+    const effectiveSiteId = !effectiveOrgId ? null : (organizationSiteId !== undefined ? organizationSiteId : existing.organizationSiteId) || null;
     if (effectiveSiteId && effectiveOrgId) {
       const site = await prisma.organizationSite.findUnique({ where: { id: effectiveSiteId }, select: { organizationId: true } });
       if (!site || site.organizationId !== effectiveOrgId) {

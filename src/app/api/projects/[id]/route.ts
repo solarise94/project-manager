@@ -24,7 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         select: { id: true, name: true, email: true },
       },
       cust: {
-        select: { id: true, name: true, customerCode: true, organization: true },
+        select: { id: true, name: true, customerCode: true, organization: true, organizationId: true },
       },
       _count: {
         select: { tickets: true, comments: true, attachments: true },
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!isOwner && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-  } else {
+  } else if (session.user.role !== "ADMIN") {
     try {
       await assertProjectMember(id, session.user.id);
     } catch {
@@ -84,16 +84,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Forbidden: representatives cannot modify projects" }, { status: 403 });
   }
 
-  try {
-    await assertProjectMember(id, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  try {
-    await assertProjectOwner(id, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+  // ADMIN can edit any project; non-admin must be project owner
+  if (session.user.role !== "ADMIN") {
+    try {
+      await assertProjectOwner(id, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+    }
   }
 
   try {
@@ -115,7 +112,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (endDate !== undefined) data.endDate = endDate ? new Date(endDate) : null;
     if (archived !== undefined) data.archived = archived;
 
-    // customerId drives client/organization snapshots — same pattern as representativeId
+    // customerId drives client snapshot; organization only overridden if customer has one
     if (customerId !== undefined) {
       if (customerId) {
         const cust = await prisma.customer.findUnique({ where: { id: customerId } });
@@ -124,8 +121,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         data.customerId = customerId;
         data.client = cust.name;
-        // Always sync organization from customer master data when switching customer
-        data.organization = cust.organization || null;
+        // Only override organization if customer has one; otherwise keep user-supplied value
+        if (cust.organization) {
+          data.organization = cust.organization;
+        }
       } else {
         data.customerId = null;
         data.client = null;
@@ -331,10 +330,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ error: "Forbidden: representatives cannot delete projects" }, { status: 403 });
   }
 
-  try {
-    await assertProjectOwner(id, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+  // ADMIN can delete any project; non-admin must be project owner
+  if (session.user.role !== "ADMIN") {
+    try {
+      await assertProjectOwner(id, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
+    }
   }
 
   try {

@@ -59,3 +59,39 @@ export async function getRepresentativeProjectIds(userId: string): Promise<strin
   });
   return projects.map((p) => p.id);
 }
+
+/**
+ * Assert that a user can read full project context (including tickets, comments, timeline).
+ * Rules aligned with project detail / timeline API:
+ * - Project not found → throws "NOT_FOUND"
+ * - Deleted project → only ADMIN or project OWNER allowed, otherwise "FORBIDDEN"
+ * - Active project → must be a project member, otherwise "FORBIDDEN"
+ * - REPRESENTATIVE should NOT use this — they get a separate, scoped view.
+ */
+export async function assertProjectContextReadable(
+  projectId: string,
+  userId: string,
+  role: string,
+) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, deleted: true },
+  });
+
+  if (!project) {
+    throw new Error("NOT_FOUND");
+  }
+
+  if (project.deleted) {
+    const owner = await isProjectOwner(projectId, userId);
+    if (!owner && role !== "ADMIN") {
+      throw new Error("FORBIDDEN");
+    }
+    return project;
+  }
+
+  if (role !== "ADMIN") {
+    await assertProjectMember(projectId, userId);
+  }
+  return project;
+}

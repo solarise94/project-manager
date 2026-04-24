@@ -27,12 +27,13 @@ interface CustOption {
   customerCode: string;
   name: string;
   organization: string | null;
+  organizationId: string | null;
 }
 
 interface CustomerSelectProps {
   value: string;
   displayValue?: string;
-  onChange: (id: string | null, name: string, organization?: string | null) => void;
+  onChange: (id: string | null, name: string, organization?: string | null, organizationId?: string | null) => void;
 }
 
 export function CustomerSelect({ value, displayValue, onChange }: CustomerSelectProps) {
@@ -66,7 +67,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
     },
     onSuccess: (customer) => {
       toast.success(`客户 "${customer.name}" 已创建`);
-      onChange(customer.id, customer.name, customer.organization);
+      onChange(customer.id, customer.name, customer.organization, customer.organizationId);
       setQuickName("");
       setShowQuickAdd(false);
       setOpen(false);
@@ -116,7 +117,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
                 <CommandItem
                   key={c.id}
                   onSelect={() => {
-                    onChange(c.id, c.name, c.organization);
+                    onChange(c.id, c.name, c.organization, c.organizationId);
                     setOpen(false);
                   }}
                 >

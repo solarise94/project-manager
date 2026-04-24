@@ -48,10 +48,12 @@ export async function GET(
     return NextResponse.json({ replies });
   }
 
-  try {
-    await assertProjectMember(existing.projectId, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (session.user.role !== "ADMIN") {
+    try {
+      await assertProjectMember(existing.projectId, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const replies = await prisma.ticketReply.findMany({
@@ -95,10 +97,12 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  try {
-    await assertProjectMember(existing.projectId, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (session.user.role !== "ADMIN") {
+    try {
+      await assertProjectMember(existing.projectId, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const body = await request.json();

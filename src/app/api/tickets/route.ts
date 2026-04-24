@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       if (!isOwner && session.user.role !== "ADMIN") {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-    } else {
+    } else if (session.user.role !== "ADMIN") {
       try {
         await assertProjectMember(projectId, session.user.id);
       } catch {
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ tickets });
   }
 
-  // No projectId: return tickets from all user's non-deleted projects
+  // No projectId: return tickets from all accessible non-deleted projects
   if (isRepresentative(session.user.role)) {
     const repProjectIds = await getRepresentativeProjectIds(session.user.id);
     if (repProjectIds.length === 0) return NextResponse.json({ tickets: [] });
@@ -92,17 +92,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ tickets });
   }
 
-  const userProjectIds = await getUserProjectIds(session.user.id);
-  if (userProjectIds.length === 0) return NextResponse.json({ tickets: [] });
-
-  const where: { projectId: { in: string[] }; status?: string; project?: { deleted: boolean } } = {
-    projectId: { in: userProjectIds },
+  // ADMIN sees all non-deleted project tickets; USER sees only their projects' tickets
+  const isAdmin = session.user.role === "ADMIN";
+  const ticketWhere: { projectId?: { in: string[] }; status?: string; project: { deleted: boolean } } = {
     project: { deleted: false },
   };
-  if (status) where.status = status;
+  if (!isAdmin) {
+    const userProjectIds = await getUserProjectIds(session.user.id);
+    if (userProjectIds.length === 0) return NextResponse.json({ tickets: [] });
+    ticketWhere.projectId = { in: userProjectIds };
+  }
+  if (status) ticketWhere.status = status;
 
   const tickets = await prisma.ticket.findMany({
-    where,
+    where: ticketWhere,
     include: {
       project: { select: { id: true, name: true } },
       assignee: { select: { id: true, name: true, avatar: true } },
@@ -133,7 +136,7 @@ export async function POST(req: NextRequest) {
       if (!repProjectIds.includes(projectId)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-    } else {
+    } else if (session.user.role !== "ADMIN") {
       try {
         await assertProjectMember(projectId, session.user.id);
       } catch {

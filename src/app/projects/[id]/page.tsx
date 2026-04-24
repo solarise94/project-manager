@@ -24,6 +24,7 @@ import {
   Archive,
   Trash2,
   AlertTriangle,
+  Sparkles,
 } from "lucide-react";
 import { ProjectItem, TimelineItem, TicketItem, TicketReplyItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { RepresentativeSelect } from "@/components/representative-select";
 import { CustomerSelect } from "@/components/customer-select";
+import { OrganizationSelect } from "@/components/organization-select";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
@@ -62,6 +64,7 @@ const ACTIVITY_ICONS: Record<string, React.ElementType> = {
   TICKET_CREATED: Ticket,
   TICKET_UPDATED: Ticket,
   MEMBER_ADDED: Circle,
+  PLUGIN_MESSAGE: Sparkles,
 };
 
 export default function ProjectDetailPage() {
@@ -74,6 +77,8 @@ export default function ProjectDetailPage() {
   const [comment, setComment] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState<Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }>>({});
+  const [editOrgId, setEditOrgId] = useState("");
+  const [editCustomerOrgId, setEditCustomerOrgId] = useState<string | null>(null);
   const [repTouched, setRepTouched] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -86,6 +91,7 @@ export default function ProjectDetailPage() {
   const [sliderValue, setSliderValue] = useState<number | undefined>(undefined);
   const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
   const [replyContent, setReplyContent] = useState<Record<string, string>>({});
+  const [pluginRunning, setPluginRunning] = useState(false);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: projectData, isLoading: projectLoading } = useQuery<{ project: ProjectItem }>({
@@ -125,13 +131,41 @@ export default function ProjectDetailPage() {
       if (!res.ok) throw new Error("Failed to update");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("更新成功");
       setEditOpen(false);
       queryClient.invalidateQueries({ queryKey: ["project", projectId] });
       queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+
+      // Post-save: offer to link customer to selected organization
+      // Only if customer has no org (editCustomerOrgId is null) and user selected one
+      const custId = editForm.customerId;
+      const orgId = editOrgId;
+      const orgName = editForm.organization;
+      const custHadOrg = !!editCustomerOrgId;
+
+      if (custId && orgId && orgName && !custHadOrg) {
+        const confirmed = confirm(`是否将单位「${orgName}」同步关联到客户主数据？`);
+        if (confirmed) {
+          try {
+            const linkRes = await fetch(`/api/customers/${custId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ organizationId: orgId, organization: orgName }),
+            });
+            if (linkRes.ok) {
+              toast.success("客户已关联到该单位");
+              queryClient.invalidateQueries({ queryKey: ["customers-list"] });
+            } else {
+              toast.warning("客户关联单位失败，项目已保存成功");
+            }
+          } catch {
+            toast.warning("客户关联单位失败，项目已保存成功");
+          }
+        }
+      }
     },
     onError: () => {
       toast.error("更新失败");
@@ -317,7 +351,33 @@ export default function ProjectDetailPage() {
   const tickets = ticketsData?.tickets || [];
   const attachments = timeline.filter((t) => t.kind === "attachment");
   const isOwner = project.members?.some((m) => m.user.id === session?.user?.id && m.role === "OWNER");
+  const isAdmin = session?.user?.role === "ADMIN";
+  const canManageProject = isOwner || isAdmin;
   const isRep = session?.user?.role === "REPRESENTATIVE";
+
+  async function runTimelinePlugin(pluginKey: string) {
+    setPluginRunning(true);
+    try {
+      const res = await fetch("/api/plugins/timeline/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pluginKey, projectId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "插件执行失败");
+        return;
+      }
+      if (data.published) {
+        toast.success(data.result?.summary || "插件消息已发布");
+        queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
+      }
+    } catch {
+      toast.error("网络错误");
+    } finally {
+      setPluginRunning(false);
+    }
+  }
 
   function renderCommentContent(content: string) {
     const images: string[] = [];
@@ -397,7 +457,7 @@ export default function ProjectDetailPage() {
             </div>
             <p className="text-muted-foreground">{project.description || "暂无描述"}</p>
           </div>
-          {isOwner && !project.deleted && !isRep && (
+          {canManageProject && !project.deleted && !isRep && (
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -418,7 +478,7 @@ export default function ProjectDetailPage() {
                 删除
               </Button>
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setRepTouched(false); }} />}>
+                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); }} />}>
                   编辑项目
                 </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
@@ -481,7 +541,19 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">单位</label>
-                    <Input value={editForm.organization || ""} onChange={(e) => setEditForm({ ...editForm, organization: e.target.value })} />
+                    {isRep ? (
+                      <Input value={editForm.organization || ""} onChange={(e) => setEditForm({ ...editForm, organization: e.target.value })} />
+                    ) : (
+                      <OrganizationSelect
+                        value={editOrgId}
+                        displayValue={editForm.organization || undefined}
+                        disabled={!!editCustomerOrgId}
+                        onChange={(id, name) => {
+                          setEditOrgId(id || "");
+                          setEditForm({ ...editForm, organization: name });
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -490,8 +562,10 @@ export default function ProjectDetailPage() {
                     <CustomerSelect
                       value={editForm.customerId || ""}
                       displayValue={editForm.client || ""}
-                      onChange={(id, name, org) => {
+                      onChange={(id, name, org, orgId) => {
                         setEditForm({ ...editForm, customerId: id || "", client: name, organization: org || "" });
+                        setEditCustomerOrgId(orgId || null);
+                        setEditOrgId(orgId || "");
                       }}
                     />
                   </div>
@@ -585,7 +659,7 @@ export default function ProjectDetailPage() {
             <span>项目进度</span>
             <span className="font-medium">{project.progress}%</span>
           </div>
-          {isOwner && !project.deleted ? (
+          {canManageProject && !project.deleted ? (
             <Slider
               value={[sliderValue !== undefined ? sliderValue : project.progress]}
               max={100}
@@ -682,6 +756,7 @@ export default function ProjectDetailPage() {
                   {timeline.map((item, index) => {
                     const Icon = ACTIVITY_ICONS[item.type] || Activity;
                     const isComment = item.kind === "comment";
+                    const isPlugin = item.kind === "plugin";
                     const isTicketEvent = item.type === "TICKET_CREATED" || item.type === "TICKET_UPDATED";
                     const meta = item.metadata ? JSON.parse(item.metadata) : {};
                     const ticketId = meta.ticketId || meta.ticket?.id;
@@ -697,10 +772,12 @@ export default function ProjectDetailPage() {
                         </div>
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            {item.user && (
+                            {isPlugin ? (
+                              <span className="font-medium text-sm text-muted-foreground">{meta.pluginName || "插件"}</span>
+                            ) : item.user ? (
                               <span className="font-medium text-sm">{item.user.name}</span>
-                            )}
-                            <span className="text-sm text-muted-foreground">{item.content}</span>
+                            ) : null}
+                            {!isPlugin && <span className="text-sm text-muted-foreground">{item.content}</span>}
                             {isTicketEvent && ticket && (
                               project.deleted ? (
                                 <Badge variant="secondary" className="text-xs">
@@ -726,6 +803,32 @@ export default function ProjectDetailPage() {
                           {isComment && (
                             <div className="bg-muted rounded-lg p-3">
                               {renderCommentContent(item.content)}
+                            </div>
+                          )}
+                          {item.kind === "plugin" && (
+                            <div className="bg-muted rounded-lg p-3 space-y-1">
+                              <Badge variant="secondary" className="text-[10px] gap-1">
+                                <Sparkles className="h-2.5 w-2.5" />
+                                {meta.pluginName || "插件"}
+                              </Badge>
+                              <div className="text-sm space-y-1">
+                                {meta.format === "markdown"
+                                  ? item.content.split("\n").map((line: string, li: number) => {
+                                      if (line.trim() === "") return <div key={li} className="h-1" />;
+                                      const isList = line.startsWith("- ");
+                                      const text = isList ? line.slice(2) : line;
+                                      // Split on **bold** markers, render as React elements
+                                      const parts = text.split(/(\*\*.+?\*\*)/g).map((seg, si) => {
+                                        if (seg.startsWith("**") && seg.endsWith("**")) {
+                                          return <strong key={si}>{seg.slice(2, -2)}</strong>;
+                                        }
+                                        return <span key={si}>{seg}</span>;
+                                      });
+                                      return <div key={li} className={isList ? "pl-3" : ""}>{isList && "• "}{parts}</div>;
+                                    })
+                                  : <div className="whitespace-pre-wrap">{renderCommentContent(item.content)}</div>
+                                }
+                              </div>
                             </div>
                           )}
                           {item.kind === "attachment" && item.metadata && (
@@ -783,6 +886,16 @@ export default function ProjectDetailPage() {
                   disabled={commentUploadMutation.isPending}
                 >
                   {commentUploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  title="项目快照"
+                  disabled={pluginRunning}
+                  onClick={() => runTimelinePlugin("project.digest")}
+                >
+                  {pluginRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 </Button>
                 <Button
                   size="icon"

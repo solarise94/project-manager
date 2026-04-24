@@ -28,10 +28,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    try {
-      await assertProjectMember(existing.projectId, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (session.user.role !== "ADMIN") {
+      try {
+        await assertProjectMember(existing.projectId, session.user.id);
+      } catch {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const updateData: Record<string, unknown> = {};

@@ -31,8 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { OrgSearchField } from "@/components/org-search-field";
-import type { OrgMatchSelection } from "@/components/org-search-field";
+import { OrganizationSelect } from "@/components/organization-select";
 import type { CustomerItem } from "@/lib/types";
 
 const emptyForm = {
@@ -46,7 +45,6 @@ const emptyForm = {
   organizationId: "",
   organizationSiteId: "",
   organizationRawInput: "",
-  reviewRequired: false,
 };
 
 export default function CustomersPage() {
@@ -88,11 +86,8 @@ export default function CustomersPage() {
       if (!res.ok) throw new Error(data.error || "创建失败");
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       toast.success("客户创建成功");
-      if (data.reviewTaskCreated) {
-        toast.info("单位未能精确匹配，已提交人工复核");
-      }
       setCreateOpen(false);
       setForm({ ...emptyForm });
       queryClient.invalidateQueries({ queryKey: ["customers"] });
@@ -111,11 +106,8 @@ export default function CustomersPage() {
       if (!res.ok) throw new Error(data.error || "更新失败");
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       toast.success("客户信息已更新");
-      if (data.reviewTaskCreated) {
-        toast.info("单位未能精确匹配，已提交人工复核");
-      }
       setEditOpen(false);
       setEditing(null);
       queryClient.invalidateQueries({ queryKey: ["customers"] });
@@ -305,7 +297,6 @@ export default function CustomersPage() {
                             organizationId: c.organizationId || "",
                             organizationSiteId: c.organizationSiteId || "",
                             organizationRawInput: c.organizationRawInput || "",
-                            reviewRequired: false,
                           });
                           setEditOpen(true);
                         }}>
@@ -378,18 +369,21 @@ export default function CustomersPage() {
             </div>
             <div className="space-y-2">
               <Label>客户单位</Label>
-              <OrgSearchField
-                orgValue={form.organization}
-                onOrgChange={(v) => setForm({ ...form, organization: v, organizationId: "", organizationSiteId: "", organizationRawInput: v, reviewRequired: true })}
-                onMatch={(sel: OrgMatchSelection) => setForm({
-                  ...form,
-                  organization: sel.canonicalName,
-                  address: sel.address ?? "",
-                  organizationId: sel.organizationId || "",
-                  organizationSiteId: sel.organizationSiteId || "",
-                  organizationRawInput: sel.rawInput,
-                  reviewRequired: !sel.organizationId,
-                })}
+              <OrganizationSelect
+                value={form.organizationId}
+                displayValue={form.organization || undefined}
+                onChange={(id, name, address) => {
+                  setForm({
+                    ...form,
+                    organization: name,
+                    organizationId: id || "",
+                    organizationSiteId: "",
+                    organizationRawInput: name,
+                    // When selecting an org, always sync address (even if empty);
+                    // when clearing org selection, keep current address
+                    address: id ? (address || "") : form.address,
+                  });
+                }}
               />
             </div>
             <div className="space-y-2">
@@ -416,11 +410,9 @@ export default function CustomersPage() {
             if (!editing) return;
             const updates: Record<string, string | boolean> = {};
             for (const key of Object.keys(emptyForm) as (keyof typeof emptyForm)[]) {
-              if (key === "reviewRequired") continue;
               const oldVal = key === "name" ? editing.name : (editing[key as keyof CustomerItem] as string) || "";
               if (editForm[key] !== oldVal) updates[key] = editForm[key];
             }
-            if (editForm.reviewRequired) updates.reviewRequired = true;
             if (Object.keys(updates).length === 0) { setEditOpen(false); return; }
             updateMutation.mutate({ id: editing.id, ...updates });
           }} className="space-y-4">
@@ -446,18 +438,19 @@ export default function CustomersPage() {
             </div>
             <div className="space-y-2">
               <Label>客户单位</Label>
-              <OrgSearchField
-                orgValue={editForm.organization}
-                onOrgChange={(v) => setEditForm({ ...editForm, organization: v, organizationId: "", organizationSiteId: "", organizationRawInput: v, reviewRequired: true })}
-                onMatch={(sel: OrgMatchSelection) => setEditForm({
-                  ...editForm,
-                  organization: sel.canonicalName,
-                  address: sel.address ?? "",
-                  organizationId: sel.organizationId || "",
-                  organizationSiteId: sel.organizationSiteId || "",
-                  organizationRawInput: sel.rawInput,
-                  reviewRequired: !sel.organizationId,
-                })}
+              <OrganizationSelect
+                value={editForm.organizationId}
+                displayValue={editForm.organization || undefined}
+                onChange={(id, name, address) => {
+                  setEditForm({
+                    ...editForm,
+                    organization: name,
+                    organizationId: id || "",
+                    organizationSiteId: "",
+                    organizationRawInput: name,
+                    address: id ? (address || "") : editForm.address,
+                  });
+                }}
               />
             </div>
             <div className="space-y-2">

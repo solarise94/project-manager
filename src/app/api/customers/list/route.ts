@@ -18,7 +18,7 @@ export async function GET() {
 
     const customers = await prisma.customer.findMany({
       where: { id: { in: customerIds }, deleted: false, archived: false },
-      select: { id: true, customerCode: true, name: true, organization: true },
+      select: { id: true, customerCode: true, name: true, organization: true, organizationId: true },
       orderBy: { name: "asc" },
     });
     return NextResponse.json({ customers });
@@ -26,7 +26,7 @@ export async function GET() {
 
   const customers = await prisma.customer.findMany({
     where: { deleted: false, archived: false },
-    select: { id: true, customerCode: true, name: true, organization: true },
+    select: { id: true, customerCode: true, name: true, organization: true, organizationId: true },
     orderBy: { name: "asc" },
   });
 

@@ -18,10 +18,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   if (project.deleted) return NextResponse.json({ error: "项目已删除，无法发表评论" }, { status: 400 });
 
-  try {
-    await assertProjectMember(id, session.user.id);
-  } catch {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (session.user.role !== "ADMIN") {
+    try {
+      await assertProjectMember(id, session.user.id);
+    } catch {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   try {

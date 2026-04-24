@@ -102,9 +102,25 @@ export async function POST(req: NextRequest) {
       miniProgramId: miniProgramId?.trim() || null,
     };
 
+    // Validate organizationId exists and is active
+    if (organizationId) {
+      const org = await prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, deleted: true, archived: true },
+      });
+      if (!org || org.deleted) {
+        return NextResponse.json({ error: "指定的单位不存在" }, { status: 400 });
+      }
+      if (org.archived) {
+        return NextResponse.json({ error: "指定的单位已归档，无法关联" }, { status: 400 });
+      }
+    }
+
     // Validate organizationSiteId belongs to organizationId
-    if (organizationSiteId && organizationId) {
-      const site = await prisma.organizationSite.findUnique({ where: { id: organizationSiteId }, select: { organizationId: true } });
+    // Auto-clear siteId if no orgId (prevent orphaned FK)
+    const effectiveSiteId = organizationId ? (organizationSiteId || null) : null;
+    if (effectiveSiteId && organizationId) {
+      const site = await prisma.organizationSite.findUnique({ where: { id: effectiveSiteId }, select: { organizationId: true } });
       if (!site || site.organizationId !== organizationId) {
         return NextResponse.json({ error: "院区不属于指定机构" }, { status: 400 });
       }
@@ -119,7 +135,7 @@ export async function POST(req: NextRequest) {
             customerCode,
             ...customerData,
             organizationId: organizationId || null,
-            organizationSiteId: organizationSiteId || null,
+            organizationSiteId: effectiveSiteId,
             organizationRawInput: organizationRawInput || null,
           },
         });

@@ -28,10 +28,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { parseSmartFill } from "@/lib/smart-fill";
 import { RepresentativeSelect } from "@/components/representative-select";
 import { CustomerSelect } from "@/components/customer-select";
-import { Wand2, ChevronDown, ChevronUp } from "lucide-react";
+import { OrganizationSelect } from "@/components/organization-select";
+import { Wand2, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; variant: "default" | "secondary" | "outline" | "destructive"; color: string }> = {
   NOT_STARTED: { label: "未开始", icon: Circle, variant: "secondary", color: "bg-slate-500" },
@@ -54,6 +54,9 @@ export default function ProjectsPage() {
   const [open, setOpen] = useState(false);
   const [smartFillOpen, setSmartFillOpen] = useState(false);
   const [smartFillText, setSmartFillText] = useState("");
+  const [smartFillLoading, setSmartFillLoading] = useState(false);
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [customerOrgId, setCustomerOrgId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -95,12 +98,43 @@ export default function ProjectsPage() {
       if (!res.ok) throw new Error("Failed to create project");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: async (data) => {
       toast.success("项目创建成功");
       setOpen(false);
+
+      // Post-save: offer to link customer to selected organization
+      // Only if customer has no org (customerOrgId is null) and user selected one
+      const custId = form.customerId;
+      const orgId = selectedOrgId;
+      const orgName = form.organization;
+      const custHadOrg = !!customerOrgId;
+
       setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "" });
+      setSelectedOrgId("");
+      setCustomerOrgId(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+
+      if (custId && orgId && !custHadOrg && data?.project) {
+        const confirmed = confirm(`是否将单位「${orgName}」同步关联到客户主数据？`);
+        if (confirmed) {
+          try {
+            const linkRes = await fetch(`/api/customers/${custId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ organizationId: orgId, organization: orgName }),
+            });
+            if (linkRes.ok) {
+              toast.success("客户已关联到该单位");
+              queryClient.invalidateQueries({ queryKey: ["customers-list"] });
+            } else {
+              toast.warning("客户关联单位失败，项目已创建成功");
+            }
+          } catch {
+            toast.warning("客户关联单位失败，项目已创建成功");
+          }
+        }
+      }
     },
     onError: () => toast.error("创建项目失败"),
   });
@@ -187,24 +221,45 @@ export default function ProjectsPage() {
                       variant="secondary"
                       size="sm"
                       className="w-full"
-                      disabled={!smartFillText.trim()}
-                      onClick={() => {
+                      disabled={!smartFillText.trim() || smartFillLoading}
+                      onClick={async () => {
+                        setSmartFillLoading(true);
                         try {
-                          const result = parseSmartFill(smartFillText);
+                          const res = await fetch("/api/plugins/form-draft/run", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              pluginKey: "project.smart-fill",
+                              formKey: "project.create",
+                              input: smartFillText,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) {
+                            toast.error(data.error || "解析失败");
+                            return;
+                          }
+                          const fields = data.result?.draft?.fields || {};
                           setForm((prev) => ({
                             ...prev,
-                            ...result,
-                            status: result.status || prev.status,
+                            ...fields,
+                            status: (fields.status as string) || prev.status,
                           }));
-                          toast.success("智能填写成功，请检查并补充信息");
+                          if (data.result?.warnings?.length) {
+                            toast.info(data.result.warnings.join("；"));
+                          } else {
+                            toast.success(data.result?.summary || "智能填写成功，请检查并补充信息");
+                          }
                           setSmartFillOpen(false);
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "解析失败");
+                        } catch {
+                          toast.error("网络错误");
+                        } finally {
+                          setSmartFillLoading(false);
                         }
                       }}
                     >
-                      <Wand2 className="mr-1 h-3 w-3" />
-                      解析并填充
+                      {smartFillLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Wand2 className="mr-1 h-3 w-3" />}
+                      {smartFillLoading ? "解析中..." : "解析并填充"}
                     </Button>
                   </div>
                 )}
@@ -239,11 +294,23 @@ export default function ProjectsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>单位</Label>
-                  <Input
-                    value={form.organization}
-                    onChange={(e) => setForm({ ...form, organization: e.target.value })}
-                    placeholder="研究机构/公司"
-                  />
+                  {isRepresentative ? (
+                    <Input
+                      value={form.organization}
+                      onChange={(e) => setForm({ ...form, organization: e.target.value })}
+                      placeholder="研究机构/公司"
+                    />
+                  ) : (
+                    <OrganizationSelect
+                      value={selectedOrgId}
+                      displayValue={form.organization || undefined}
+                      disabled={!!customerOrgId}
+                      onChange={(id, name) => {
+                        setSelectedOrgId(id || "");
+                        setForm({ ...form, organization: name });
+                      }}
+                    />
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -252,8 +319,11 @@ export default function ProjectsPage() {
                   <CustomerSelect
                     value={form.customerId}
                     displayValue={form.client}
-                    onChange={(id, name, org) => {
+                    onChange={(id, name, org, orgId) => {
                       setForm({ ...form, customerId: id || "", client: name, organization: org || "" });
+                      setCustomerOrgId(orgId || null);
+                      // If customer has an org, lock to it; otherwise clear selectedOrgId
+                      setSelectedOrgId(orgId || "");
                     }}
                   />
                 </div>

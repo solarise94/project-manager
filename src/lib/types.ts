@@ -52,7 +52,7 @@ export interface ProjectItem {
   }>;
   _count?: { tickets: number; comments: number; attachments?: number };
   rep?: { id: string; name: string; email: string } | null;
-  cust?: { id: string; name: string; customerCode: string; organization?: string | null } | null;
+  cust?: { id: string; name: string; customerCode: string; organization?: string | null; organizationId?: string | null } | null;
 }
 
 export interface TicketItem {
@@ -78,7 +78,7 @@ export interface TimelineItem {
   metadata: string | null;
   createdAt: string;
   user: { id: string; name: string; avatar?: string | null } | null;
-  kind: "activity" | "comment" | "attachment" | "status";
+  kind: "activity" | "comment" | "attachment" | "status" | "plugin";
 }
 
 export interface TicketReplyItem {

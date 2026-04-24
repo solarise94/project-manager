@@ -16,21 +16,24 @@ export async function GET(req: NextRequest) {
   const archived = searchParams.get("archived");
   const includeDeleted = searchParams.get("includeDeleted");
 
-  let projectIds: string[];
+  const isAdmin = session.user.role === "ADMIN";
+
+  let projectIds: string[] | null = null; // null = no filter (admin)
   if (isRepresentative(session.user.role)) {
     projectIds = await getRepresentativeProjectIds(session.user.id);
     if (projectIds.length === 0) return NextResponse.json({ projects: [] });
-  } else {
+  } else if (!isAdmin) {
     projectIds = await getUserProjectIds(session.user.id);
     if (projectIds.length === 0) return NextResponse.json({ projects: [] });
   }
 
-  const where: Prisma.ProjectWhereInput = {
-    id: { in: projectIds },
-  };
+  const where: Prisma.ProjectWhereInput = {};
+  if (projectIds) {
+    where.id = { in: projectIds };
+  }
 
   if (includeDeleted === "true") {
-    if (session.user.role !== "ADMIN") {
+    if (!isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     where.deleted = true;
@@ -143,18 +146,23 @@ export async function POST(req: NextRequest) {
     let repName: string | null = null;
     if (representativeId) {
       const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
-      repName = rep?.name || null;
+      if (!rep) {
+        return NextResponse.json({ error: "指定的代表不存在" }, { status: 400 });
+      }
+      repName = rep.name;
     }
 
     // Derive client/organization from customer when customerId is provided
+    // Only override organization if customer has one; otherwise keep user-supplied value
     let custClient: string | null = null;
     let custOrg: string | null = null;
     if (customerId) {
       const cust = await prisma.customer.findUnique({ where: { id: customerId } });
-      if (cust) {
-        custClient = cust.name;
-        custOrg = cust.organization;
+      if (!cust) {
+        return NextResponse.json({ error: "指定的客户不存在" }, { status: 400 });
       }
+      custClient = cust.name;
+      custOrg = cust.organization;
     }
 
     const project = await prisma.project.create({
@@ -162,7 +170,7 @@ export async function POST(req: NextRequest) {
         name,
         description,
         orderNumber,
-        organization: customerId ? (custOrg || null) : (organization || null),
+        organization: (customerId && custOrg) ? custOrg : (organization || null),
         client: custClient || client || null,
         representative: repName !== null ? repName : representative || null,
         representativeId: representativeId || null,
