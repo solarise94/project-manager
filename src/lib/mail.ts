@@ -123,3 +123,32 @@ export async function sendReminderEmail({
   console.log("[SMTP] Real email sent:", info.messageId);
   return { messageId: info.messageId };
 }
+
+/**
+ * Send email in the background, updating the Notification record with the result.
+ * Fire-and-forget — does not block the caller. Errors are logged and recorded.
+ */
+export function sendMailInBackground(
+  options: SendMailOptions,
+  notificationId: string,
+): void {
+  // Dynamic import to avoid circular dependency with prisma
+  const run = async () => {
+    const { prisma } = await import("@/lib/prisma");
+    try {
+      await sendMail(options);
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { emailStatus: "sent" },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "未知错误";
+      console.error(`[SMTP] Background email failed for notification ${notificationId}:`, msg);
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: { emailStatus: "failed", emailError: msg.slice(0, 500) },
+      }).catch(() => {});
+    }
+  };
+  run().catch(() => {});
+}

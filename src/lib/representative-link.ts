@@ -44,17 +44,14 @@ export async function notifyRepresentative(
   repEmail: string,
   redirect: string,
   notifications: Array<{ subject: string; text: string; html: string }>
-): Promise<{ ok: boolean; results: PromiseSettledResult<{ messageId: string }>[] }> {
+): Promise<{ ok: boolean }> {
   const rep = await prisma.representative.findUnique({
     where: { email: repEmail },
   });
 
   if (!rep || rep.archived) {
-    return { ok: false, results: [] };
+    return { ok: false };
   }
-
-  const oldToken = rep.token;
-  const oldTokenExpiresAt = rep.tokenExpiresAt;
 
   const token = generateToken();
   const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -66,28 +63,21 @@ export async function notifyRepresentative(
 
   const magicLink = getMagicLink(token, redirect);
 
-  const { sendMail } = await import("./mail");
-  const results = await Promise.allSettled(
-    notifications.map((n) =>
+  // Fire-and-forget — token is already saved, delivery failure is non-fatal
+  import("./mail").then(({ sendMail }) => {
+    for (const n of notifications) {
       sendMail({
         to: rep.email,
         subject: n.subject,
         text: n.text,
         html: appendLoginLinkToEmail(n.html, magicLink),
-      })
-    )
-  );
+      }).catch((err) => {
+        console.error("[SMTP] Representative notification failed for", rep.email, err);
+      });
+    }
+  }).catch(() => {});
 
-  const allFailed = results.every((r) => r.status === "rejected");
-  if (allFailed) {
-    await prisma.representative.update({
-      where: { id: rep.id },
-      data: { token: oldToken, tokenExpiresAt: oldTokenExpiresAt },
-    });
-    return { ok: false, results };
-  }
-
-  return { ok: true, results };
+  return { ok: true };
 }
 
 export function appendLoginLinkToEmail(

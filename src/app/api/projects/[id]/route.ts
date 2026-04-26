@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { assertProjectMember, assertProjectOwner, isProjectOwner, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         select: { id: true, name: true, email: true },
       },
       cust: {
-        select: { id: true, name: true, customerCode: true, organization: true, organizationId: true },
+        select: { id: true, name: true, customerCode: true, organization: true, organizationId: true, org: { select: { canonicalName: true } } },
       },
       _count: {
         select: { tickets: true, comments: true, attachments: true },
@@ -34,9 +35,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Resolve customer organization name from relation
+  const resolvedCust = project.cust
+    ? (() => { const { org, ...custRest } = project.cust; return { ...custRest, organization: getCustomerOrganizationName({ organization: custRest.organization, org }) }; })()
+    : null;
+  const resolvedProject = { ...project, cust: resolvedCust };
+
   // Representatives can access their own associated non-deleted projects
   if (isRepresentative(session.user.role)) {
-    if (project.deleted) {
+    if (resolvedProject.deleted) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const repProjectIds = await getRepresentativeProjectIds(session.user.id);
@@ -47,7 +54,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       where: { projectId: id, createdBy: session.user.id },
     });
     const result = {
-      ...project,
+      ...resolvedProject,
       _count: {
         tickets: myTicketCount,
         comments: 0,
@@ -58,7 +65,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   // Deleted projects: only ADMIN or owner can access
-  if (project.deleted) {
+  if (resolvedProject.deleted) {
     const isOwner = await isProjectOwner(id, session.user.id);
     if (!isOwner && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -71,7 +78,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
   }
 
-  return NextResponse.json({ project });
+  return NextResponse.json({ project: resolvedProject });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -115,15 +122,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // customerId drives client snapshot; organization only overridden if customer has one
     if (customerId !== undefined) {
       if (customerId) {
-        const cust = await prisma.customer.findUnique({ where: { id: customerId } });
+        const cust = await prisma.customer.findUnique({
+          where: { id: customerId },
+          include: { org: { select: { canonicalName: true } } },
+        });
         if (!cust) {
           return NextResponse.json({ error: "指定的客户不存在" }, { status: 400 });
         }
         data.customerId = customerId;
         data.client = cust.name;
-        // Only override organization if customer has one; otherwise keep user-supplied value
-        if (cust.organization) {
-          data.organization = cust.organization;
+        // Only override organization if customer has one; prefer canonical name from relation
+        const custOrg = getCustomerOrganizationName(cust);
+        if (custOrg) {
+          data.organization = custOrg;
         }
       } else {
         data.customerId = null;
@@ -200,26 +211,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       });
 
       if (owner) {
-        await prisma.notification.create({
+        const shouldEmail = !!(owner.user.email && owner.user.emailOnStatusChange && owner.user.role !== "REPRESENTATIVE");
+        const notification = await prisma.notification.create({
           data: {
             userId: owner.user.id,
             title: "项目状态变更",
             content: `项目 "${existing.name}" 状态已从 "${existing.status}" 变更为 "${status}"`,
             type: "STATUS",
             link: `/projects/${id}`,
+            emailStatus: shouldEmail ? "pending" : null,
           },
         });
-        if (owner.user.email && owner.user.emailOnStatusChange && owner.user.role !== "REPRESENTATIVE") {
-          const { sendMail } = await import("@/lib/mail");
-          await sendMail({
-            to: owner.user.email,
+        if (shouldEmail) {
+          const { sendMailInBackground } = await import("@/lib/mail");
+          sendMailInBackground({
+            to: owner.user.email!,
             subject: `【SciManage】项目状态变更: ${existing.name}`,
             text: `您好 ${owner.user.name || ""}，\n\n项目 "${existing.name}" 状态已从 "${existing.status}" 变更为 "${status}"。\n\n---\nSciManage`,
             html: `<p>您好 <strong>${owner.user.name || ""}</strong>，</p>
 <p>项目 <strong>"${existing.name}"</strong> 状态已从 <strong>"${existing.status}"</strong> 变更为 <strong>"${status}"</strong>。</p>
 <hr />
 <p style="color:#999;font-size:12px;">SciManage</p>`,
-          }).catch(() => {});
+          }, notification.id);
         }
       }
 
@@ -292,7 +305,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const { notifyRepresentative } = await import("@/lib/representative-link");
       const result = await notifyRepresentative(repForNotify.email, `/projects/${id}`, repNotifications);
       if (!result.ok) {
-        console.error("Failed to notify representative", result.results);
+        console.error("Failed to notify representative");
       }
     }
 

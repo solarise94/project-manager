@@ -72,6 +72,18 @@ export interface FormDraftResult {
   warnings?: string[];
   draft: {
     fields: Record<string, unknown>;
+    fieldMeta?: Record<string, {
+      source: "text" | "search" | "project_context";
+      confidence: number;
+      reviewRequired?: boolean;
+      reason?: string;
+    }>;
+    sources?: Array<{
+      kind: "search_result";
+      title?: string;
+      url?: string;
+      snippet?: string;
+    }>;
   };
 }
 
@@ -82,7 +94,7 @@ export interface TimelinePlugin {
 
 export interface FormDraftPlugin {
   manifest: PluginManifest & { capability: "form-draft" };
-  execute(input: string, actor: PluginActor, formKey: string, projectCtx?: ProjectPluginContext): Promise<FormDraftResult>;
+  execute(input: string | Record<string, unknown>, actor: PluginActor, formKey: string, projectCtx?: ProjectPluginContext): Promise<FormDraftResult>;
 }
 
 export type Plugin = TimelinePlugin | FormDraftPlugin;

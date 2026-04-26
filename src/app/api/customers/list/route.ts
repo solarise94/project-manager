@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -18,17 +19,17 @@ export async function GET() {
 
     const customers = await prisma.customer.findMany({
       where: { id: { in: customerIds }, deleted: false, archived: false },
-      select: { id: true, customerCode: true, name: true, organization: true, organizationId: true },
+      select: { id: true, customerCode: true, name: true, organization: true, organizationId: true, org: { select: { canonicalName: true } } },
       orderBy: { name: "asc" },
     });
-    return NextResponse.json({ customers });
+    return NextResponse.json({ customers: customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) })) });
   }
 
   const customers = await prisma.customer.findMany({
     where: { deleted: false, archived: false },
-    select: { id: true, customerCode: true, name: true, organization: true, organizationId: true },
+    select: { id: true, customerCode: true, name: true, organization: true, organizationId: true, org: { select: { canonicalName: true } } },
     orderBy: { name: "asc" },
   });
 
-  return NextResponse.json({ customers });
+  return NextResponse.json({ customers: customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) })) });
 }

@@ -105,15 +105,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Send Magic Link email (best-effort — don't block creation on mail failure)
+    // Send Magic Link email in background — token is already saved
     const magicLink = getMagicLink(token);
-    let mailSent = false;
-    try {
-      await sendMail({
-        to: normalizedEmail,
-        subject: "【SciManage】代表账号登录链接",
-        text: `您好 ${rep.name}，\n\n您已被添加为 SciManage 项目代表。请点击以下链接登录系统（有效期 1 天）：\n\n${magicLink}\n\n---\nSciManage 科研项目管理平台`,
-        html: `<div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+    sendMail({
+      to: normalizedEmail,
+      subject: "【SciManage】代表账号登录链接",
+      text: `您好 ${rep.name}，\n\n您已被添加为 SciManage 项目代表。请点击以下链接登录系统（有效期 1 天）：\n\n${magicLink}\n\n---\nSciManage 科研项目管理平台`,
+      html: `<div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
   <h2 style="color: #2563eb;">SciManage 代表登录</h2>
   <p>您好 <strong>${rep.name}</strong>，</p>
   <p>您已被添加为 SciManage 项目代表。</p>
@@ -123,16 +121,14 @@ export async function POST(req: NextRequest) {
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
   <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台</p>
 </div>`,
-      });
-      mailSent = true;
-    } catch (mailErr) {
-      console.error("Magic link mail failed (non-fatal):", mailErr);
-    }
+    }).catch((err) => {
+      console.error("[SMTP] Representative creation mail failed for", normalizedEmail, err);
+    });
 
     const safeRep = { id: rep.id, name: rep.name, email: rep.email, archived: rep.archived, createdAt: rep.createdAt };
 
     return NextResponse.json(
-      { representative: safeRep, mailSent, warning: mailSent ? undefined : "代表已创建，但邮件发送失败（SMTP 未配置），可稍后重发 Magic Link" },
+      { representative: safeRep },
       { status: 201 },
     );
   } catch (error) {

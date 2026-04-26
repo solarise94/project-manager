@@ -147,26 +147,28 @@ export async function POST(
   });
   const creator = creatorActivity?.user;
   if (creator && creator.id !== session.user.id && creator.role !== "REPRESENTATIVE") {
-    await prisma.notification.create({
+    const shouldEmail = !!(creator.email && creator.emailOnTicketReply);
+    const notification = await prisma.notification.create({
       data: {
         userId: creator.id,
         title: `工单回复: ${existing.title}`,
         content: `有人回复了工单 "${existing.title}"`,
         type: "TICKET_REPLY",
         link: `/projects/${existing.projectId}`,
+        emailStatus: shouldEmail ? "pending" : null,
       },
     });
-    if (creator.email && creator.emailOnTicketReply) {
-      const { sendMail } = await import("@/lib/mail");
-      await sendMail({
-        to: creator.email,
+    if (shouldEmail) {
+      const { sendMailInBackground } = await import("@/lib/mail");
+      sendMailInBackground({
+        to: creator.email!,
         subject: `【SciManage】工单回复: ${existing.title}`,
         text: `您好 ${creator.name || ""}，\n\n有人回复了工单 "${existing.title}"。\n\n---\nSciManage`,
         html: `<p>您好 <strong>${creator.name || ""}</strong>，</p>
 <p>有人回复了工单 <strong>"${existing.title}"</strong>。</p>
 <hr />
 <p style="color:#999;font-size:12px;">SciManage</p>`,
-      }).catch(() => {});
+      }, notification.id);
     }
   }
 

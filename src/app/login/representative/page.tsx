@@ -29,7 +29,7 @@ export default function RepresentativeLoginPage() {
 
       if (res.ok) {
         setSent(true);
-        toast.success("登录链接已发送到您的邮箱");
+        toast.success("登录链接正在发送到您的邮箱，请稍候查收");
       } else {
         const data = await res.json().catch(() => ({}));
         if (res.status === 403 && data.error) {
@@ -60,10 +60,10 @@ export default function RepresentativeLoginPage() {
             <div className="text-center space-y-4">
               <Mail className="h-12 w-12 text-primary mx-auto" />
               <p className="text-muted-foreground">
-                登录链接已发送到 <strong>{email}</strong>
+                登录链接正在发送到 <strong>{email}</strong>
               </p>
               <p className="text-xs text-muted-foreground">
-                请检查您的邮箱（包括垃圾邮件文件夹），点击邮件中的链接即可登录。
+                请稍候查收邮箱（包括垃圾邮件文件夹），点击邮件中的链接即可登录。
                 链接有效期为 1 天。
               </p>
               <Button variant="outline" className="w-full" onClick={() => { setSent(false); setEmail(""); }}>

@@ -84,7 +84,7 @@ async function searchTavily(query: string): Promise<EnrichmentEvidence[]> {
       Authorization: `Bearer ${TAVILY_API_KEY}`,
     },
     body: JSON.stringify({
-      query: `${query} 机构 地址 官方信息`,
+      query: `${query} 机构 地址 院区 校区 分院`,
       max_results: 5,
       search_depth: "basic",
       include_answer: false,
@@ -124,7 +124,7 @@ async function extractWithMinimax(
 严格按以下 JSON 格式返回，不要包含其他文字：
 {
   "canonicalName": "机构标准全称",
-  "address": "通讯地址或null",
+  "address": "总部/主院区通讯地址或null",
   "aliases": ["常用简称1", "常用简称2"],
   "sites": [{"siteName": "分支/院区/校区名称", "address": "地址或null"}],
   "confidence": 0.85
@@ -133,7 +133,7 @@ async function extractWithMinimax(
 规则：
 - canonicalName 必须是官方全称
 - aliases 只包含广泛使用的简称/别称，不要编造
-- sites 只包含有明确证据的分支机构（如院区、校区、分院、分部），没有就返回空数组
+- sites 应尽量完整地列出该机构的院区、校区、分院、分部、分支机构等。医院通常有多个院区（如总院、分院、东院、西院、南院等），大学通常有多个校区，研究所可能有多个园区。根据搜索结果中能找到的信息尽量补全，每个 site 尽量附带地址
 - confidence 反映信息可靠程度（0-1）
 - 如果搜索结果不足以确定，confidence 应低于 0.5`;
 
@@ -163,8 +163,17 @@ async function extractWithMinimax(
 
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content || "{}";
-  const jsonStr = content.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  const parsed = JSON.parse(jsonStr);
+  // Strip MiniMax <think> tags and markdown code blocks
+  let jsonStr = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  jsonStr = jsonStr.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    const match = jsonStr.match(/\{[\s\S]*\}/);
+    if (match) parsed = JSON.parse(match[0]);
+    else throw new Error("无法从 AI 返回中提取 JSON");
+  }
 
   return {
     canonicalName: parsed.canonicalName || query,

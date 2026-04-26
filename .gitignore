@@ -42,3 +42,6 @@ next-env.d.ts
 
 /src/generated/prisma
 *.db-journal
+
+# draft media (temporary server-side files for AI vision processing)
+/.draft-media

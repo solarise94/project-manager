@@ -35,9 +35,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "该代表账号已归档，无法登录" }, { status: 403 });
     }
 
-    const oldToken = rep.token;
-    const oldTokenExpiresAt = rep.tokenExpiresAt;
-
+    // Generate and persist token first — token is valid for 24h regardless of email delivery
     const token = generateToken();
     const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -46,13 +44,13 @@ export async function POST(req: NextRequest) {
       data: { token, tokenExpiresAt },
     });
 
+    // Send email in background — token is already saved, delivery failure is non-fatal
     const magicLink = getMagicLink(token);
-    try {
-      await sendMail({
-        to: rep.email,
-        subject: "【SciManage】代表账号登录链接",
-        text: `您好 ${rep.name}，\n\n请使用以下链接登录 SciManage（有效期 1 天）：\n\n${magicLink}\n\n---\nSciManage 科研项目管理平台`,
-        html: `<div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+    sendMail({
+      to: rep.email,
+      subject: "【SciManage】代表账号登录链接",
+      text: `您好 ${rep.name}，\n\n请使用以下链接登录 SciManage（有效期 1 天）：\n\n${magicLink}\n\n---\nSciManage 科研项目管理平台`,
+      html: `<div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
   <h2 style="color: #2563eb;">SciManage 代表登录</h2>
   <p>您好 <strong>${rep.name}</strong>，</p>
   <p>请使用以下链接登录系统（有效期 1 天）：</p>
@@ -61,18 +59,9 @@ export async function POST(req: NextRequest) {
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
   <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台</p>
 </div>`,
-      });
-    } catch {
-      // Restore old token so existing links remain valid and the user can retry
-      await prisma.representative.update({
-        where: { id: rep.id },
-        data: { token: oldToken, tokenExpiresAt: oldTokenExpiresAt },
-      });
-      return NextResponse.json(
-        { error: "邮件发送失败，请稍后重试" },
-        { status: 502 }
-      );
-    }
+    }).catch((err) => {
+      console.error("[SMTP] Magic link email failed for", rep.email, err);
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

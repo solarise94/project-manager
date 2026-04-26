@@ -46,6 +46,7 @@ import { OrganizationSelect } from "@/components/organization-select";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
+import { DraftInputPanel } from "@/components/draft-input-panel";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   NOT_STARTED: { label: "未开始", color: "text-slate-600", bg: "bg-slate-100" },
@@ -920,8 +921,25 @@ export default function ProjectDetailPage() {
                   <Plus className="mr-1 h-3 w-3" />
                   新建工单
                 </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
                 <DialogHeader><DialogTitle>新建工单</DialogTitle></DialogHeader>
+                <DraftInputPanel
+                  formKey="ticket.create"
+                  projectId={projectId}
+                  fieldLabels={{
+                    title: "标题",
+                    description: "描述",
+                    priority: "优先级",
+                  }}
+                  onApply={(fields) => {
+                    setTicketForm((prev) => ({
+                      ...prev,
+                      ...(typeof fields.title === "string" && fields.title.trim() ? { title: fields.title.trim() } : {}),
+                      ...(typeof fields.description === "string" ? { description: fields.description.trim() } : {}),
+                      ...(typeof fields.priority === "string" && ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(fields.priority) ? { priority: fields.priority } : {}),
+                    }));
+                  }}
+                />
                 <form onSubmit={(e) => { e.preventDefault(); ticketMutation.mutate(ticketForm); }} className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">标题</label>

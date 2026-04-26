@@ -97,6 +97,8 @@ export interface NotificationItem {
   type: string;
   read: boolean;
   link?: string | null;
+  emailStatus?: string | null;
+  emailError?: string | null;
   createdAt: string;
 }
 

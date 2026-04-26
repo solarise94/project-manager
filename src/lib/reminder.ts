@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { sendReminderEmail } from "./mail";
+import { sendMailInBackground } from "./mail";
 
 export async function checkAndSendReminders() {
   const now = new Date();
@@ -38,25 +38,38 @@ export async function checkAndSendReminders() {
       });
 
       const creator = activity?.user;
-      if (creator?.email && creator?.emailOnReminder) {
-        await sendReminderEmail({
-          to: creator.email,
-          ticketTitle: ticket.title,
-          projectName: ticket.project.name,
-        });
-      }
 
-      // Create in-app notification
+      // Create in-app notification first
       if (creator?.id) {
-        await prisma.notification.create({
+        const shouldEmail = !!(creator.email && creator.emailOnReminder);
+        const notification = await prisma.notification.create({
           data: {
             userId: creator.id,
             title: `工单提醒: ${ticket.title}`,
             content: `工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。`,
             type: "REMINDER",
             link: `/projects/${ticket.projectId}`,
+            emailStatus: shouldEmail ? "pending" : null,
           },
         });
+        if (shouldEmail) {
+          sendMailInBackground({
+            to: creator.email!,
+            subject: `[SciManage] 工单提醒: ${ticket.title}`,
+            text: `您好，\n\n您创建的工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。\n\n---\nSciManage 科研项目管理平台`,
+            html: `
+      <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">SciManage 工单提醒</h2>
+        <p>您好，</p>
+        <p>您创建的工单 <strong>"${ticket.title}"</strong> 即将到达提醒时间。</p>
+        <p>所属项目: <strong>${ticket.project.name}</strong></p>
+        <p>请关注处理进度。</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台</p>
+      </div>
+    `,
+          }, notification.id);
+        }
       }
 
       await prisma.ticket.update({

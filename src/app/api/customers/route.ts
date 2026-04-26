@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 async function generateCustomerCode(): Promise<string> {
   const count = await prisma.customer.count();
@@ -45,11 +46,13 @@ export async function GET(req: NextRequest) {
         archived: false,
         ...(search ? { name: { contains: search } } : {}),
       },
+      include: { org: { select: { canonicalName: true } } },
       orderBy: { createdAt: "desc" },
     });
 
-    const result = customers.map((c) => ({
+    const result = customers.map(({ org, ...c }) => ({
       ...c,
+      organization: getCustomerOrganizationName({ organization: c.organization, org }),
       _count: { projects: countMap.get(c.id) ?? 0 },
     }));
 
@@ -63,17 +66,18 @@ export async function GET(req: NextRequest) {
       { name: { contains: search } },
       { customerCode: { contains: search } },
       { organization: { contains: search } },
+      { org: { canonicalName: { contains: search } } },
       { email: { contains: search } },
     ];
   }
 
   const customers = await prisma.customer.findMany({
     where,
-    include: { _count: { select: { projects: true } } },
+    include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } } },
     orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
   });
 
-  return NextResponse.json({ customers });
+  return NextResponse.json({ customers: customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) })) });
 }
 
 export async function POST(req: NextRequest) {
@@ -106,7 +110,7 @@ export async function POST(req: NextRequest) {
     if (organizationId) {
       const org = await prisma.organization.findUnique({
         where: { id: organizationId },
-        select: { id: true, deleted: true, archived: true },
+        select: { id: true, canonicalName: true, deleted: true, archived: true },
       });
       if (!org || org.deleted) {
         return NextResponse.json({ error: "指定的单位不存在" }, { status: 400 });
@@ -114,6 +118,8 @@ export async function POST(req: NextRequest) {
       if (org.archived) {
         return NextResponse.json({ error: "指定的单位已归档，无法关联" }, { status: 400 });
       }
+      // Server-side sync: always use canonical name as organization text
+      customerData.organization = org.canonicalName;
     }
 
     // Validate organizationSiteId belongs to organizationId

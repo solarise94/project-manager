@@ -87,7 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             },
           ]);
           if (!result.ok) {
-            console.error("Failed to notify representative of ticket status change", result.results);
+            console.error("Failed to notify representative of ticket status change");
           }
         }
       }

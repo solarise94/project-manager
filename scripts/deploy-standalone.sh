@@ -37,11 +37,14 @@ MINIMAX_API_KEY_VALUE="${MINIMAX_API_KEY:-}"
 MINIMAX_BASE_URL_VALUE="${MINIMAX_BASE_URL:-}"
 MINIMAX_MODEL_VALUE="${MINIMAX_MODEL:-}"
 TAVILY_API_KEY_VALUE="${TAVILY_API_KEY:-}"
+TENCENTCLOUD_SECRET_ID_VALUE="${TENCENTCLOUD_SECRET_ID:-}"
+TENCENTCLOUD_SECRET_KEY_VALUE="${TENCENTCLOUD_SECRET_KEY:-}"
 
 # Persistent config files live next to the database, survive deploys.
 SMTP_CONF="$(dirname "${RUNTIME_DB}")/smtp.conf"
 MINIMAX_CONF="$(dirname "${RUNTIME_DB}")/minimax.conf"
 TAVILY_CONF="$(dirname "${RUNTIME_DB}")/tavily.conf"
+TENCENT_ASR_CONF="$(dirname "${RUNTIME_DB}")/tencent-asr.conf"
 
 cd "${REPO_DIR}"
 
@@ -148,6 +151,19 @@ for TV_SOURCE in "${TAVILY_CONF}" "${EXISTING_ENV_FILE}"; do
   done < <(grep -E '^TAVILY_API_KEY=' "${TV_SOURCE}" || true)
 done
 
+# Read Tencent Cloud ASR config: tencent-asr.conf (persistent) > existing .env (legacy) > shell env
+for TC_SOURCE in "${TENCENT_ASR_CONF}" "${EXISTING_ENV_FILE}"; do
+  [[ -f "${TC_SOURCE}" ]] || continue
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"
+    value="${value#\"}"
+    case "${key}" in
+      TENCENTCLOUD_SECRET_ID)  [[ -z "${TENCENTCLOUD_SECRET_ID_VALUE}" ]]  && TENCENTCLOUD_SECRET_ID_VALUE="${value}" ;;
+      TENCENTCLOUD_SECRET_KEY) [[ -z "${TENCENTCLOUD_SECRET_KEY_VALUE}" ]] && TENCENTCLOUD_SECRET_KEY_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^TENCENTCLOUD_SECRET_(ID|KEY)=' "${TC_SOURCE}" || true)
+done
+
 echo "[6/8] Writing runtime .env..."
 cat > "${TARGET_DIR}/.env" <<EOF
 # Runtime database for this deployed instance only.
@@ -169,6 +185,9 @@ MINIMAX_BASE_URL="${MINIMAX_BASE_URL_VALUE}"
 MINIMAX_MODEL="${MINIMAX_MODEL_VALUE}"
 # Tavily search settings — sourced from tavily.conf next to the database.
 TAVILY_API_KEY="${TAVILY_API_KEY_VALUE}"
+# Tencent Cloud ASR settings — sourced from tencent-asr.conf next to the database.
+TENCENTCLOUD_SECRET_ID="${TENCENTCLOUD_SECRET_ID_VALUE}"
+TENCENTCLOUD_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY_VALUE}"
 # Standalone server bind settings.
 PORT="${PORT}"
 HOSTNAME="${BIND_HOST}"

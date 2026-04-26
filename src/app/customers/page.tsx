@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/organization-select";
+import { DraftInputPanel } from "@/components/draft-input-panel";
 import type { CustomerItem } from "@/lib/types";
 
 const emptyForm = {
@@ -344,8 +345,76 @@ export default function CustomersPage() {
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>新增客户</DialogTitle></DialogHeader>
+          <DraftInputPanel
+            formKey="customer.create"
+            fieldLabels={{
+              name: "客户姓名",
+              organization: "单位",
+              principal: "课题组负责人",
+              email: "邮箱",
+              wechat: "微信",
+              address: "通讯地址",
+            }}
+            onApply={async (fields) => {
+              const updates: Partial<typeof emptyForm> = {};
+              if (typeof fields.name === "string" && fields.name.trim()) updates.name = fields.name.trim();
+              if (typeof fields.principal === "string") updates.principal = fields.principal.trim();
+              if (typeof fields.email === "string") updates.email = fields.email.trim();
+              if (typeof fields.wechat === "string") updates.wechat = fields.wechat.trim();
+              if (typeof fields.address === "string") updates.address = fields.address.trim();
+              // Handle organization entity
+              const orgField = fields.organization;
+              if (orgField && typeof orgField === "object" && "matched" in orgField) {
+                const entity = orgField as { id?: string; name: string; matched: boolean; address?: string; shouldCreate?: boolean };
+                if (entity.matched && entity.id) {
+                  updates.organizationId = entity.id;
+                  updates.organization = entity.name;
+                  updates.organizationRawInput = entity.name;
+                  if (entity.address) updates.address = entity.address;
+                } else if (entity.shouldCreate && entity.name.trim()) {
+                  try {
+                    const res = await fetch("/api/organizations/quick-create", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ canonicalName: entity.name.trim() }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      updates.organizationId = data.organization.id;
+                      updates.organization = data.organization.canonicalName;
+                      updates.organizationRawInput = data.organization.canonicalName;
+                      if (data.organization.address) updates.address = data.organization.address;
+                    } else {
+                      const err = await res.json().catch(() => ({}));
+                      toast.error(err.error || "单位创建失败，请手动选择");
+                      // Clear org binding — creation failed
+                      updates.organizationId = "";
+                      updates.organizationSiteId = "";
+                    }
+                  } catch {
+                    toast.error("单位创建失败");
+                    updates.organizationId = "";
+                    updates.organizationSiteId = "";
+                  }
+                } else {
+                  // Unmatched, user declined create — clear org binding
+                  updates.organizationId = "";
+                  updates.organizationSiteId = "";
+                  updates.organization = entity.name;
+                  updates.organizationRawInput = entity.name;
+                }
+              } else if (typeof orgField === "string" && orgField.trim()) {
+                // Plain text org — clear any previous binding
+                updates.organizationId = "";
+                updates.organizationSiteId = "";
+                updates.organization = orgField.trim();
+                updates.organizationRawInput = orgField.trim();
+              }
+              setForm((prev) => ({ ...prev, ...updates }));
+            }}
+          />
           <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; createMutation.mutate(form); }} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

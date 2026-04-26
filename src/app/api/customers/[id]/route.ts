@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
+import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       id: true, name: true, customerCode: true, organization: true,
       organizationId: true, organizationSiteId: true, email: true,
       wechat: true, address: true, principal: true,
+      org: { select: { canonicalName: true } },
     },
   });
 
@@ -27,7 +29,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "客户不存在" }, { status: 404 });
   }
 
-  return NextResponse.json({ customer });
+  const { org, ...rest } = customer;
+  return NextResponse.json({ customer: { ...rest, organization: getCustomerOrganizationName({ organization: rest.organization, org }) } });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -71,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (effectiveOrgId && organizationId !== undefined && organizationId) {
       const org = await prisma.organization.findUnique({
         where: { id: effectiveOrgId },
-        select: { id: true, deleted: true, archived: true },
+        select: { id: true, canonicalName: true, deleted: true, archived: true },
       });
       if (!org || org.deleted) {
         return NextResponse.json({ error: "指定的单位不存在" }, { status: 400 });
@@ -79,6 +82,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (org.archived) {
         return NextResponse.json({ error: "指定的单位已归档，无法关联" }, { status: 400 });
       }
+      // Server-side sync: always use canonical name as organization text
+      data.organization = org.canonicalName;
+    }
+
+    // When explicitly clearing organizationId, also clear organization text
+    if (organizationId !== undefined && !organizationId) {
+      data.organization = null;
     }
 
     // Auto-clear siteId when orgId is absent (prevent orphaned FK)

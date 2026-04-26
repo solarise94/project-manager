@@ -60,26 +60,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       include: { user: { select: { id: true, email: true, name: true, emailOnComment: true } } },
     });
     if (owner && owner.user.id !== session.user.id) {
-      await prisma.notification.create({
+      const shouldEmail = !!(owner.user.email && owner.user.emailOnComment);
+      const notification = await prisma.notification.create({
         data: {
           userId: owner.user.id,
           title: `项目评论: ${project.name}`,
           content: `有人在项目 "${project.name}" 发表了评论`,
           type: "COMMENT",
           link: `/projects/${id}`,
+          emailStatus: shouldEmail ? "pending" : null,
         },
       });
-      if (owner.user.email && owner.user.emailOnComment) {
-        const { sendMail } = await import("@/lib/mail");
-        await sendMail({
-          to: owner.user.email,
+      if (shouldEmail) {
+        const { sendMailInBackground } = await import("@/lib/mail");
+        sendMailInBackground({
+          to: owner.user.email!,
           subject: `【SciManage】项目评论: ${project.name}`,
           text: `您好 ${owner.user.name || ""}，\n\n有人在项目 "${project.name}" 发表了评论。\n\n---\nSciManage`,
           html: `<p>您好 <strong>${owner.user.name || ""}</strong>，</p>
 <p>有人在项目 <strong>"${project.name}"</strong> 发表了评论。</p>
 <hr />
 <p style="color:#999;font-size:12px;">SciManage</p>`,
-        }).catch(() => {});
+        }, notification.id);
       }
     }
 

@@ -33,5 +33,6 @@ export const config = {
     "/api/upload/:path*",
     "/api/reminders/:path*",
     "/api/notifications/:path*",
+    "/api/draft-media/:path*",
   ],
 };

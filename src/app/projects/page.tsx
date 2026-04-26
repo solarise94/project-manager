@@ -31,7 +31,7 @@ import { toast } from "sonner";
 import { RepresentativeSelect } from "@/components/representative-select";
 import { CustomerSelect } from "@/components/customer-select";
 import { OrganizationSelect } from "@/components/organization-select";
-import { Wand2, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { DraftInputPanel } from "@/components/draft-input-panel";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; variant: "default" | "secondary" | "outline" | "destructive"; color: string }> = {
   NOT_STARTED: { label: "未开始", icon: Circle, variant: "secondary", color: "bg-slate-500" },
@@ -52,9 +52,6 @@ export default function ProjectsPage() {
   const [dateRange, setDateRange] = useState<string>("ALL");
   const [archivedFilter, setArchivedFilter] = useState<string>("active");
   const [open, setOpen] = useState(false);
-  const [smartFillOpen, setSmartFillOpen] = useState(false);
-  const [smartFillText, setSmartFillText] = useState("");
-  const [smartFillLoading, setSmartFillLoading] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [customerOrgId, setCustomerOrgId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -98,16 +95,22 @@ export default function ProjectsPage() {
       if (!res.ok) throw new Error("Failed to create project");
       return res.json();
     },
-    onSuccess: async (data) => {
+    onMutate: () => {
+      // Capture state snapshot before React batches any updates
+      return {
+        snap: {
+          custId: form.customerId,
+          orgId: selectedOrgId,
+          orgName: form.organization,
+          custHadOrg: !!customerOrgId,
+        },
+      };
+    },
+    onSuccess: async (data, _variables, context) => {
+      // Use the snapshot captured at submit time, not current state
+      const snap = (context as { snap: { custId: string; orgId: string; orgName: string; custHadOrg: boolean } }).snap;
       toast.success("项目创建成功");
       setOpen(false);
-
-      // Post-save: offer to link customer to selected organization
-      // Only if customer has no org (customerOrgId is null) and user selected one
-      const custId = form.customerId;
-      const orgId = selectedOrgId;
-      const orgName = form.organization;
-      const custHadOrg = !!customerOrgId;
 
       setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "" });
       setSelectedOrgId("");
@@ -115,14 +118,14 @@ export default function ProjectsPage() {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
 
-      if (custId && orgId && !custHadOrg && data?.project) {
-        const confirmed = confirm(`是否将单位「${orgName}」同步关联到客户主数据？`);
+      if (snap.custId && snap.orgId && !snap.custHadOrg && data?.project) {
+        const confirmed = confirm(`是否将单位「${snap.orgName}」同步关联到客户主数据？`);
         if (confirmed) {
           try {
-            const linkRes = await fetch(`/api/customers/${custId}`, {
+            const linkRes = await fetch(`/api/customers/${snap.custId}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ organizationId: orgId, organization: orgName }),
+              body: JSON.stringify({ organizationId: snap.orgId, organization: snap.orgName }),
             });
             if (linkRes.ok) {
               toast.success("客户已关联到该单位");
@@ -186,84 +189,127 @@ export default function ProjectsPage() {
               <Plus className="mr-2 h-4 w-4" />
               新建项目
             </DialogTrigger>
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>新建项目</DialogTitle>
             </DialogHeader>
             <form onSubmit={onSubmit} className="space-y-4">
-              {/* Smart Fill Section */}
-              <div className="border rounded-lg overflow-hidden">
-                <button
-                  type="button"
-                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 transition-colors"
-                  onClick={() => setSmartFillOpen(!smartFillOpen)}
-                >
-                  <span className="flex items-center gap-2">
-                    <Wand2 className="h-4 w-4" />
-                    智能填写
-                  </span>
-                  {smartFillOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </button>
-                {smartFillOpen && (
-                  <div className="px-3 pb-3 space-y-2 border-t">
-                    <p className="text-xs text-muted-foreground mt-2">
-                      粘贴制表符分隔的项目信息文本，系统将自动解析并填充表单。
-                    </p>
-                    <Textarea
-                      value={smartFillText}
-                      onChange={(e) => setSmartFillText(e.target.value)}
-                      placeholder="例如：2604357&#09;GJ24937&#09;云南大学附属医院&#09;吴家旺&#09;王哲&#09;..."
-                      rows={3}
-                      className="text-xs"
-                    />
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="w-full"
-                      disabled={!smartFillText.trim() || smartFillLoading}
-                      onClick={async () => {
-                        setSmartFillLoading(true);
-                        try {
-                          const res = await fetch("/api/plugins/form-draft/run", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({
-                              pluginKey: "project.smart-fill",
-                              formKey: "project.create",
-                              input: smartFillText,
-                            }),
-                          });
+              <DraftInputPanel
+                formKey="project.create"
+                fieldLabels={{
+                  name: "项目名称", description: "项目描述", orderNumber: "订单号",
+                  organization: "单位", client: "客户", representative: "代表",
+                  status: "状态", startDate: "开始日期", endDate: "结束日期",
+                }}
+                fallbackPlugin="project.smart-fill"
+                onApply={async (fields) => {
+                  type EntityField = { id?: string; name: string; matched: boolean; shouldCreate?: boolean; address?: string; organization?: string; organizationId?: string };
+                  const updates: Record<string, unknown> = {};
+                  let newCustomerId = "";
+                  let newSelectedOrgId = "";
+                  let newCustomerOrgId: string | null = null;
+                  let clientTouched = false;
+                  let orgTouched = false;
+
+                  // --- Phase 1: Collect all fields and determine intent ---
+                  let orgEntity: EntityField | null = null;
+                  let clientEntity: EntityField | null = null;
+                  for (const [key, value] of Object.entries(fields)) {
+                    if (typeof value === "object" && value !== null && "matched" in value) {
+                      const entity = value as EntityField;
+                      if (key === "organization") { orgEntity = entity; orgTouched = true; }
+                      else if (key === "client") { clientEntity = entity; clientTouched = true; }
+                    } else {
+                      updates[key] = value;
+                    }
+                  }
+
+                  // --- Phase 2: Decide whether org creation should be skipped ---
+                  // If the final client is an existing customer with their own org,
+                  // that org takes priority — skip creating a new org to avoid orphan records.
+                  const clientWillUseExistingOrg = clientEntity?.id && clientEntity.matched && !!clientEntity.organizationId;
+                  const shouldCreateOrg = orgEntity?.shouldCreate && orgEntity.name.trim() && !clientWillUseExistingOrg;
+
+                  // --- Phase 3: Execute org resolution/creation ---
+                  if (orgEntity) {
+                    updates.organization = orgEntity.name;
+                    if (orgEntity.id && orgEntity.matched) {
+                      newSelectedOrgId = orgEntity.id;
+                    } else if (shouldCreateOrg) {
+                      try {
+                        const res = await fetch("/api/organizations/quick-create", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ canonicalName: orgEntity.name.trim() }),
+                        });
+                        if (res.ok) {
                           const data = await res.json();
-                          if (!res.ok) {
-                            toast.error(data.error || "解析失败");
-                            return;
-                          }
-                          const fields = data.result?.draft?.fields || {};
-                          setForm((prev) => ({
-                            ...prev,
-                            ...fields,
-                            status: (fields.status as string) || prev.status,
-                          }));
-                          if (data.result?.warnings?.length) {
-                            toast.info(data.result.warnings.join("；"));
-                          } else {
-                            toast.success(data.result?.summary || "智能填写成功，请检查并补充信息");
-                          }
-                          setSmartFillOpen(false);
-                        } catch {
-                          toast.error("网络错误");
-                        } finally {
-                          setSmartFillLoading(false);
+                          newSelectedOrgId = data.organization.id;
+                          updates.organization = data.organization.canonicalName;
+                          if (!data.created) toast.info(`单位 "${data.organization.canonicalName}" 已存在，已自动关联`);
+                        } else {
+                          const err = await res.json().catch(() => ({}));
+                          toast.error(err.error || "单位创建失败，请在表单中手动选择");
                         }
-                      }}
-                    >
-                      {smartFillLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Wand2 className="mr-1 h-3 w-3" />}
-                      {smartFillLoading ? "解析中..." : "解析并填充"}
-                    </Button>
-                  </div>
-                )}
-              </div>
+                      } catch {
+                        toast.error("单位创建失败，请在表单中手动选择");
+                      }
+                    }
+                  }
+
+                  // --- Phase 4: Execute customer resolution/creation ---
+                  if (clientEntity) {
+                    updates.client = clientEntity.name;
+                    if (clientEntity.id && clientEntity.matched) {
+                      newCustomerId = clientEntity.id;
+                      // Existing customer's org takes priority over draft org
+                      if (clientEntity.organizationId) {
+                        newCustomerOrgId = clientEntity.organizationId;
+                        newSelectedOrgId = clientEntity.organizationId;
+                        if (clientEntity.organization) updates.organization = clientEntity.organization;
+                      }
+                    } else if (clientEntity.shouldCreate && clientEntity.name.trim()) {
+                      try {
+                        const res = await fetch("/api/customers", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            name: clientEntity.name.trim(),
+                            organizationId: newSelectedOrgId || undefined,
+                            organization: newSelectedOrgId ? (updates.organization as string || "") : undefined,
+                          }),
+                        });
+                        if (res.ok) {
+                          const data = await res.json();
+                          newCustomerId = data.customer.id;
+                          if (newSelectedOrgId) newCustomerOrgId = newSelectedOrgId;
+                        } else {
+                          const err = await res.json().catch(() => ({}));
+                          toast.error(err.error || "客户创建失败，请在表单中手动选择");
+                        }
+                      } catch {
+                        toast.error("客户创建失败，请在表单中手动选择");
+                      }
+                    }
+                  }
+
+                  if (orgTouched) setSelectedOrgId(newSelectedOrgId);
+                  if (clientTouched) {
+                    setCustomerOrgId(newCustomerOrgId);
+                    updates.customerId = newCustomerId;
+                  } else if (orgTouched && !clientTouched) {
+                    if (customerOrgId && customerOrgId !== newSelectedOrgId) {
+                      setCustomerOrgId(null);
+                      updates.customerId = "";
+                    }
+                  }
+                  setForm((prev) => ({
+                    ...prev,
+                    ...updates,
+                    status: (updates.status as string) || prev.status,
+                  }));
+                }}
+              />
 
               <div className="space-y-2">
                 <Label>项目名称</Label>

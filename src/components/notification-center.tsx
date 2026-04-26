@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle } from "lucide-react";
+import { Bell, Check, CheckCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle, Mail, MailX, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { NotificationItem } from "@/lib/types";
@@ -55,6 +55,19 @@ export function NotificationCenter() {
     mutationFn: async () => {
       const res = await fetch("/api/notifications/read-all", { method: "PATCH" });
       if (!res.ok) throw new Error("Failed to mark all as read");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
+  const retryEmailMutation = useMutation({
+    mutationFn: async (notificationId: string) => {
+      const res = await fetch("/api/notifications/retry-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationId }),
+      });
+      if (!res.ok) throw new Error("Failed to retry email");
       return res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
@@ -138,6 +151,33 @@ export function NotificationCenter() {
                             <p className="text-[10px] text-muted-foreground mt-1">
                               {formatDistanceToNow(new Date(n.createdAt), { addSuffix: true, locale: zhCN })}
                             </p>
+                            {n.emailStatus === "sent" && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-green-600 mt-0.5">
+                                <Mail className="h-2.5 w-2.5" />邮件已发送
+                              </span>
+                            )}
+                            {n.emailStatus === "pending" && (
+                              <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 mt-0.5">
+                                <Mail className="h-2.5 w-2.5" />邮件发送中
+                              </span>
+                            )}
+                            {n.emailStatus === "failed" && (
+                              <span className="inline-flex items-center gap-1 text-[10px] text-red-600 mt-0.5">
+                                <MailX className="h-2.5 w-2.5" />
+                                邮件发送失败
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-0.5 text-blue-600 hover:underline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    retryEmailMutation.mutate(n.id);
+                                  }}
+                                  disabled={retryEmailMutation.isPending}
+                                >
+                                  <RefreshCw className="h-2.5 w-2.5" />重发
+                                </button>
+                              </span>
+                            )}
                           </div>
                           {!n.read && (
                             <Button

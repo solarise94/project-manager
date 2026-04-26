@@ -78,12 +78,8 @@ export default function AdminRepresentativesPage() {
       if (!res.ok) throw new Error(data.error || "创建失败");
       return data;
     },
-    onSuccess: (data) => {
-      if (data.warning) {
-        toast.warning(data.warning);
-      } else {
-        toast.success("代表添加成功，Magic Link 已发送");
-      }
+    onSuccess: () => {
+      toast.success("代表添加成功，登录链接正在发送");
       setOpen(false);
       setForm({ name: "", email: "" });
       queryClient.invalidateQueries({ queryKey: ["admin-representatives"] });
@@ -137,7 +133,7 @@ export default function AdminRepresentativesPage() {
       return data;
     },
     onSuccess: () => {
-      toast.success("Magic Link 已重新发送");
+      toast.success("登录链接正在重新发送");
     },
     onError: (err: Error) => toast.error(err.message),
   });

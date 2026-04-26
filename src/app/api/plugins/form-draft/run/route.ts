@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { pluginKey, formKey, input, projectId } = body;
 
-    if (!pluginKey || !formKey || input === undefined) {
+    if (!pluginKey || !formKey || input === undefined || input === null) {
       return NextResponse.json({ error: "pluginKey、formKey 和 input 为必填" }, { status: 400 });
     }
 
