@@ -128,3 +128,20 @@
     @apply font-sans;
   }
 }
+
+@media print {
+  body > *:not(#invoice-print-root) {
+    display: none !important;
+  }
+  #invoice-print-root {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+  #invoice-print-root * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

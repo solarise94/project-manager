@@ -3,12 +3,30 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeOrgName } from "@/lib/organization-normalize";
+import { isRepresentative } from "@/lib/permissions";
 
 async function assertAdmin(session: { user: { id: string; role: string } } | null) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { role: true } });
   if (!user || user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   return null;
+}
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const org = await prisma.organization.findUnique({
+    where: { id },
+    select: { id: true, orgCode: true, canonicalName: true, address: true, taxId: true },
+  });
+  if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  return NextResponse.json({ organization: org });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,7 +43,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const body = await req.json();
-    const { canonicalName, address, archived, addAlias, removeAliasId, addSite, removeSiteId } = body;
+    const { canonicalName, address, taxId, archived, addAlias, removeAliasId, addSite, removeSiteId } = body;
 
     const data: Record<string, unknown> = {};
     if (canonicalName !== undefined) {
@@ -36,6 +54,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data.normalizedName = normalizeOrgName(canonicalName.trim());
     }
     if (address !== undefined) data.address = address?.trim() || null;
+    if (taxId !== undefined) data.taxId = taxId?.trim() || null;
     if (archived !== undefined) data.archived = archived;
 
     await prisma.organization.update({ where: { id }, data });

@@ -34,5 +34,11 @@ export const config = {
     "/api/reminders/:path*",
     "/api/notifications/:path*",
     "/api/draft-media/:path*",
+    "/api/project-invoices/:path*",
+    "/api/billing-profiles/:path*",
+    "/api/tax-id-lookup/:path*",
+    "/external-orders/:path*",
+    "/api/external-orders/:path*",
+    "/api/external-order-invoices/:path*",
   ],
 };

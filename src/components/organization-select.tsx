@@ -19,13 +19,14 @@ interface OrgOption {
   orgCode: string;
   canonicalName: string;
   address: string | null;
+  taxId: string | null;
 }
 
 interface OrganizationSelectProps {
   value: string;
   displayValue?: string;
   disabled?: boolean;
-  onChange: (id: string | null, canonicalName: string, address?: string | null) => void;
+  onChange: (id: string | null, canonicalName: string, address?: string | null, taxId?: string | null) => void;
 }
 
 export function OrganizationSelect({ value, displayValue, disabled, onChange }: OrganizationSelectProps) {
@@ -67,7 +68,7 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
       } else {
         toast.info(`已存在同名单位：${org.canonicalName}`);
       }
-      onChange(org.id, org.canonicalName, org.address);
+      onChange(org.id, org.canonicalName, org.address, org.taxId);
       setQuickName("");
       setShowQuickAdd(false);
       setOpen(false);
@@ -131,7 +132,7 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
             <div
               key={o.id}
               className="px-2 py-1.5 text-sm cursor-pointer hover:bg-accent rounded-sm mx-1"
-              onClick={() => { onChange(o.id, o.canonicalName, o.address); setOpen(false); }}
+              onClick={() => { onChange(o.id, o.canonicalName, o.address, o.taxId); setOpen(false); }}
             >
               <div className="flex items-center gap-2">
                 <Check className={cn("h-4 w-4", value === o.id ? "opacity-100" : "opacity-0")} />

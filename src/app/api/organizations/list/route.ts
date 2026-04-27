@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
       orgCode: true,
       canonicalName: true,
       address: true,
+      taxId: true,
     },
     orderBy: { canonicalName: "asc" },
     take: 50,

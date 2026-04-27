@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
+import { TaxIdLookupInput } from "@/components/tax-id-lookup-input";
 import { toast } from "sonner";
 
 interface OrgAlias {
@@ -38,6 +39,7 @@ interface OrgItem {
   orgCode: string;
   canonicalName: string;
   address: string | null;
+  taxId: string | null;
   archived: boolean;
   aliases: OrgAlias[];
   sites: OrgSite[];
@@ -58,7 +60,7 @@ export default function OrganizationsPage() {
   const [mergeSource, setMergeSource] = useState<OrgItem | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState("");
   const [form, setForm] = useState({ ...emptyCreate });
-  const [editForm, setEditForm] = useState({ canonicalName: "", address: "" });
+  const [editForm, setEditForm] = useState({ canonicalName: "", address: "", taxId: "" });
   const [newAlias, setNewAlias] = useState("");
   const [newSite, setNewSite] = useState({ siteName: "", address: "" });
 
@@ -258,7 +260,7 @@ export default function OrganizationsPage() {
                 <div className="flex items-center gap-1 shrink-0">
                   <Button variant="ghost" size="sm" onClick={() => {
                     setEditing(o);
-                    setEditForm({ canonicalName: o.canonicalName, address: o.address || "" });
+                    setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
                     setNewAlias("");
                     setNewSite({ siteName: "", address: "" });
                     setEditOpen(true);
@@ -343,9 +345,18 @@ export default function OrganizationsPage() {
               <Label>地址</Label>
               <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
             </div>
+            <div className="space-y-2">
+              <Label>税号</Label>
+              <TaxIdLookupInput
+                value={editForm.taxId}
+                onChange={(v) => setEditForm({ ...editForm, taxId: v })}
+                orgName={editForm.canonicalName}
+                placeholder="统一社会信用代码/纳税人识别号"
+              />
+            </div>
             <Button size="sm" disabled={updateMutation.isPending} onClick={() => {
               if (!editing) return;
-              updateMutation.mutate({ id: editing.id, canonicalName: editForm.canonicalName, address: editForm.address });
+              updateMutation.mutate({ id: editing.id, canonicalName: editForm.canonicalName, address: editForm.address, taxId: editForm.taxId });
             }}>保存基本信息</Button>
 
             <hr />

@@ -47,6 +47,7 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { DraftInputPanel } from "@/components/draft-input-panel";
+import { ProjectInvoiceSection } from "@/components/project-invoice-section";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   NOT_STARTED: { label: "未开始", color: "text-slate-600", bg: "bg-slate-100" },
@@ -714,7 +715,7 @@ export default function ProjectDetailPage() {
       </div>
 
       <Tabs defaultValue="timeline" className="space-y-4">
-        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex">
+        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={!isRep ? { gridTemplateColumns: "repeat(4, 1fr)" } : undefined}>
           <TabsTrigger value="timeline">
             <Activity className="mr-2 h-4 w-4" />
             时间流
@@ -727,6 +728,12 @@ export default function ProjectDetailPage() {
             <Paperclip className="mr-2 h-4 w-4" />
             文件
           </TabsTrigger>
+          {!isRep && (
+            <TabsTrigger value="invoices">
+              <FileText className="mr-2 h-4 w-4" />
+              开票
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Timeline Tab */}
@@ -1137,6 +1144,19 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </TabsContent>
+
+        {/* Invoices Tab */}
+        {!isRep && (
+          <TabsContent value="invoices" className="space-y-4">
+            <ProjectInvoiceSection
+              projectId={projectId}
+              projectCode={project.orderNumber}
+              customerOrgId={project.cust?.organizationId}
+              customerOrgName={project.cust?.organization || project.organization}
+              readOnly={project.deleted}
+            />
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Image Preview Dialog */}

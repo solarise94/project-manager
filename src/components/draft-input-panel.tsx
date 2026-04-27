@@ -162,6 +162,26 @@ export function DraftInputPanel({ formKey, projectId, fieldLabels, onApply, fall
     toast.success("语音已转写");
   }, []);
 
+  // Handle paste — extract images from clipboard
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    if (ocrBusy || loading) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      const dt = new DataTransfer();
+      for (const f of imageFiles) dt.items.add(f);
+      handleImageUpload(dt.files);
+    }
+  }, [handleImageUpload, ocrBusy, loading]);
+
   // Submit — always pure text, always use auto-draft (with fallback if AI not configured)
   const handleSubmit = useCallback(async () => {
     setLoading(true);
@@ -246,7 +266,8 @@ export function DraftInputPanel({ formKey, projectId, fieldLabels, onApply, fall
             <Textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder="粘贴项目信息文本，或通过图片/语音自动提取..."
+              onPaste={handlePaste}
+              placeholder="粘贴文本或图片（Ctrl+V），也可上传图片或录音，AI 将自动提取信息"
               rows={4}
               className="text-xs max-h-[200px] overflow-y-auto resize-none"
             />
