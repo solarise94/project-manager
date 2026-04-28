@@ -46,6 +46,14 @@ export interface ProjectItem {
   deleted: boolean;
   deletedAt?: string | null;
   deletedReason?: string | null;
+  projectType?: string | null | undefined;
+  projectContent?: string | null | undefined;
+  quantity?: number | null | undefined;
+  procurementSource?: string | null | undefined;
+  brand?: string | null | undefined;
+  techSupport?: string | null | undefined;
+  budgetAmount?: number | null | undefined;
+  budgetCost?: number | null | undefined;
   members?: Array<{
     user: { id: string; name: string; email: string; avatar?: string | null };
     role: string;

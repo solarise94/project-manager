@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import { checkAndSendReminders } from "@/lib/reminder";
+import { checkAndSendReminders, checkAndSendCrmFollowUpReminders } from "@/lib/reminder";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -13,8 +13,11 @@ export async function GET() {
   }
 
   try {
-    const count = await checkAndSendReminders();
-    return NextResponse.json({ checked: count, message: `Checked ${count} reminders` });
+    const [ticketCount, crmCount] = await Promise.all([
+      checkAndSendReminders(),
+      checkAndSendCrmFollowUpReminders(),
+    ]);
+    return NextResponse.json({ checked: ticketCount + crmCount, tickets: ticketCount, crmFollowUps: crmCount });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to check reminders" }, { status: 500 });

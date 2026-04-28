@@ -25,6 +25,7 @@ import {
   Trash2,
   AlertTriangle,
   Sparkles,
+  ClipboardCopy,
 } from "lucide-react";
 import { ProjectItem, TimelineItem, TicketItem, TicketReplyItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { DraftInputPanel } from "@/components/draft-input-panel";
 import { ProjectInvoiceSection } from "@/components/project-invoice-section";
+import { projectToFeishuRow } from "@/lib/feishu-export";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   NOT_STARTED: { label: "未开始", color: "text-slate-600", bg: "bg-slate-100" },
@@ -479,11 +481,25 @@ export default function ProjectDetailPage() {
                 <Trash2 className="mr-1 h-3 w-3" />
                 删除
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const text = projectToFeishuRow(project);
+                  navigator.clipboard.writeText(text).then(
+                    () => toast.success("已复制到剪贴板，可直接粘贴到飞书"),
+                    () => toast.error("复制失败"),
+                  );
+                }}
+              >
+                <ClipboardCopy className="mr-1 h-3 w-3" />
+                复制到飞书
+              </Button>
               <Dialog open={editOpen} onOpenChange={setEditOpen}>
                 <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); }} />}>
                   编辑项目
                 </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>编辑项目</DialogTitle>
               </DialogHeader>
@@ -501,6 +517,14 @@ export default function ProjectDetailPage() {
                     progress: editForm.progress,
                     startDate: editForm.startDate,
                     endDate: editForm.endDate,
+                    projectType: editForm.projectType,
+                    projectContent: editForm.projectContent,
+                    quantity: editForm.quantity,
+                    procurementSource: editForm.procurementSource,
+                    brand: editForm.brand,
+                    techSupport: editForm.techSupport,
+                    budgetAmount: editForm.budgetAmount,
+                    budgetCost: editForm.budgetCost,
                   };
                   if (repTouched) {
                     payload.representative = editForm.representative;
@@ -590,6 +614,55 @@ export default function ProjectDetailPage() {
                     <Input type="date" value={editForm.endDate ? new Date(editForm.endDate).toISOString().split("T")[0] : ""} onChange={(e) => setEditForm({ ...editForm, endDate: e.target.value })} />
                   </div>
                 </div>
+                <details className="border rounded-lg p-3 space-y-3">
+                  <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">财务 / 商品信息</summary>
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">项目类型</label>
+                      <Select value={editForm.projectType || ""} onValueChange={(v) => setEditForm({ ...editForm, projectType: v })}>
+                        <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="商品">商品</SelectItem>
+                          <SelectItem value="服务">服务</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">项目内容</label>
+                      <Input value={editForm.projectContent || ""} onChange={(e) => setEditForm({ ...editForm, projectContent: e.target.value })} placeholder="如 C57/雌/7周" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">数量</label>
+                      <Input type="number" value={editForm.quantity ?? ""} onChange={(e) => setEditForm({ ...editForm, quantity: e.target.value ? Number(e.target.value) : null })} />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">采购渠道</label>
+                      <Input value={editForm.procurementSource || ""} onChange={(e) => setEditForm({ ...editForm, procurementSource: e.target.value })} placeholder="笙源/高精等" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">品牌</label>
+                      <Input value={editForm.brand || ""} onChange={(e) => setEditForm({ ...editForm, brand: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">技术支持</label>
+                      <Input value={editForm.techSupport || ""} onChange={(e) => setEditForm({ ...editForm, techSupport: e.target.value })} placeholder="技术支持人员" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">项目金额（元）</label>
+                      <Input type="number" step="0.01" value={editForm.budgetAmount ?? ""} onChange={(e) => setEditForm({ ...editForm, budgetAmount: e.target.value ? Number(e.target.value) : null })} />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">项目成本（元）</label>
+                      <Input type="number" step="0.01" value={editForm.budgetCost ?? ""} onChange={(e) => setEditForm({ ...editForm, budgetCost: e.target.value ? Number(e.target.value) : null })} />
+                    </div>
+                  </div>
+                </details>
                 <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? "保存中..." : "保存更改"}
                 </Button>

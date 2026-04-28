@@ -102,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, progress, startDate, endDate, archived } = body;
+    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -118,6 +118,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (startDate !== undefined) data.startDate = startDate ? new Date(startDate) : null;
     if (endDate !== undefined) data.endDate = endDate ? new Date(endDate) : null;
     if (archived !== undefined) data.archived = archived;
+    if (projectType !== undefined) data.projectType = projectType || null;
+    if (projectContent !== undefined) data.projectContent = projectContent || null;
+    if (quantity !== undefined) data.quantity = quantity != null && quantity !== "" ? Number(quantity) : null;
+    if (procurementSource !== undefined) data.procurementSource = procurementSource || null;
+    if (brand !== undefined) data.brand = brand || null;
+    if (techSupport !== undefined) data.techSupport = techSupport || null;
+    if (budgetAmount !== undefined) data.budgetAmount = budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null;
+    if (budgetCost !== undefined) data.budgetCost = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
 
     // customerId drives client snapshot; organization only overridden if customer has one
     if (customerId !== undefined) {

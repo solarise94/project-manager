@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, startDate, endDate } = body;
+    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     // Derive representative text from DB when representativeId is provided
     let repName: string | null = null;
@@ -189,6 +189,14 @@ export async function POST(req: NextRequest) {
         status: status || "NOT_STARTED",
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
+        projectType: projectType || null,
+        projectContent: projectContent || null,
+        quantity: quantity != null && quantity !== "" ? Number(quantity) : null,
+        procurementSource: procurementSource || null,
+        brand: brand || null,
+        techSupport: techSupport || null,
+        budgetAmount: budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null,
+        budgetCost: budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null,
         members: {
           create: {
             userId: session.user.id,

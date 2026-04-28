@@ -30,6 +30,13 @@ model User {
   invoicesCreated ProjectInvoice[]
   externalOrderImportBatches ExternalOrderImportBatch[]
   externalOrderInvoicesCreated ExternalOrderInvoiceRequest[]
+  crmOwnedProfiles           CrmCustomerProfile[]   @relation("CrmOwnedProfiles")
+  crmInteractionsCreated     CrmInteraction[]       @relation("CrmInteractionsCreated")
+  crmFollowUpOwned           CrmFollowUpTask[]      @relation("CrmFollowUpOwner")
+  crmFollowUpCreated         CrmFollowUpTask[]      @relation("CrmFollowUpCreatedBy")
+  crmCheckinsCreated         CrmVisitCheckin[]      @relation("CrmCheckinCreatedBy")
+  crmAddressesVerified       CrmCustomerAddress[]   @relation("CrmAddressVerifiedBy")
+  customerRelationsCreated   CustomerRelation[]
 }
 
 model Representative {
@@ -116,6 +123,9 @@ model Customer {
   mergedInto           Customer?          @relation("CustomerMerge", fields: [mergedIntoId], references: [id])
   mergedFrom           Customer[]         @relation("CustomerMerge")
   projects             Project[]
+  crmProfile           CrmCustomerProfile?
+  relationsFrom        CustomerRelation[] @relation("RelationsFrom")
+  relationsTo          CustomerRelation[] @relation("RelationsTo")
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 }
@@ -163,6 +173,14 @@ model Project {
   rep              Representative? @relation(fields: [representativeId], references: [id], onDelete: SetNull)
   customerId       String?
   cust             Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  projectType       String?
+  projectContent    String?
+  quantity          Int?
+  procurementSource String?
+  brand             String?
+  techSupport       String?
+  budgetAmount      Float?
+  budgetCost        Float?
   status           String          @default("NOT_STARTED")
   progress         Int             @default(0)
   startDate        DateTime?
@@ -464,4 +482,150 @@ model ExternalOrderInvoiceItem {
   amount           Float                        @default(0)
 
   @@index([invoiceRequestId])
+}
+
+// ─── CRM Models ──────────────────────────────────────────────
+
+model CrmCustomerProfile {
+  id                 String               @id @default(cuid())
+  sourceCustomerId   String               @unique
+  sourceCustomer     Customer             @relation(fields: [sourceCustomerId], references: [id], onDelete: Cascade)
+  ownerUserId        String
+  ownerUser          User                 @relation("CrmOwnedProfiles", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  stage              String               @default("NEW") // NEW, CONTACTED, FOLLOWING, ACTIVE, BLOCKED, LOST, DORMANT
+  importance         String               @default("NORMAL") // LOW, NORMAL, HIGH, KEY
+  tagsJson           String?
+  summary            String?
+  lastFollowUpAt     DateTime?
+  nextFollowUpAt     DateTime?
+  lastOrderAt        DateTime?
+  archived           Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  interactions       CrmInteraction[]
+  followUpTasks      CrmFollowUpTask[]
+  addresses          CrmCustomerAddress[]
+  visitCheckins      CrmVisitCheckin[]
+
+  @@index([ownerUserId])
+  @@index([stage])
+  @@index([nextFollowUpAt])
+}
+
+model CrmCustomerAddress {
+  id               String             @id @default(cuid())
+  profile          CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId        String
+  label            String             @default("默认")
+  addressText      String?
+  province         String?
+  city             String?
+  district         String?
+  lat              Float?
+  lng              Float?
+  accuracy         Float?
+  sourceType       String             @default("MANUAL") // MANUAL, PROJECT_IMPORT, EXTERNAL_ORDER_IMPORT, VISIT_CHECKIN
+  isPrimary        Boolean            @default(false)
+  verifiedAt       DateTime?
+  verifiedByUserId String?
+  verifiedByUser   User?              @relation("CrmAddressVerifiedBy", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([profileId])
+}
+
+model CrmInteraction {
+  id               String             @id @default(cuid())
+  profile          CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId        String
+  type             String             // CALL, WECHAT, EMAIL, MEETING, VISIT, REFERRAL, NOTE
+  summary          String
+  detail           String?
+  happenedAt       DateTime           @default(now())
+  nextActionAt     DateTime?
+  relatedProjectId String?
+  createdByUserId  String
+  createdByUser    User               @relation("CrmInteractionsCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([profileId, happenedAt])
+}
+
+model CrmFollowUpTask {
+  id                     String             @id @default(cuid())
+  profile                CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId              String
+  ownerUserId            String
+  ownerUser              User               @relation("CrmFollowUpOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  title                  String
+  dueAt                  DateTime
+  status                 String             @default("OPEN") // OPEN, DONE, CANCELLED, EXPIRED
+  completedAt            DateTime?
+  completedInteractionId String?
+  reminderSent           Boolean            @default(false)
+  createdByUserId        String
+  createdByUser          User               @relation("CrmFollowUpCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  @@index([profileId])
+  @@index([ownerUserId, status])
+  @@index([dueAt, reminderSent])
+}
+
+model CrmVisitCheckin {
+  id              String             @id @default(cuid())
+  profile         CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profileId       String
+  interactionId   String?
+  userId          String
+  user            User               @relation("CrmCheckinCreatedBy", fields: [userId], references: [id], onDelete: Cascade)
+  lat             Float?
+  lng             Float?
+  accuracy        Float?
+  addressSnapshot String?
+  mapProvider     String?
+  photoCount      Int                @default(0)
+  status          String             @default("DRAFT") // DRAFT, COMPLETED
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  media           CrmVisitMedia[]
+
+  @@index([profileId, createdAt])
+  @@index([userId])
+}
+
+model CrmVisitMedia {
+  id        String          @id @default(cuid())
+  checkin   CrmVisitCheckin @relation(fields: [checkinId], references: [id], onDelete: Cascade)
+  checkinId String
+  url       String
+  mimeType  String
+  size      Int
+  createdAt DateTime        @default(now())
+
+  @@index([checkinId])
+}
+
+model CustomerRelation {
+  id              String    @id @default(cuid())
+  fromCustomerId  String
+  fromCustomer    Customer  @relation("RelationsFrom", fields: [fromCustomerId], references: [id], onDelete: Cascade)
+  toCustomerId    String
+  toCustomer      Customer  @relation("RelationsTo", fields: [toCustomerId], references: [id], onDelete: Cascade)
+  type            String
+  strength        String?
+  notes           String?
+  introducedAt    DateTime?
+  createdByUserId String
+  createdByUser   User      @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([fromCustomerId, toCustomerId, type])
+  @@index([fromCustomerId])
+  @@index([toCustomerId])
 }

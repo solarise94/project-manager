@@ -84,14 +84,83 @@ export async function checkAndSendReminders() {
   return tickets.length;
 }
 
+export async function checkAndSendCrmFollowUpReminders() {
+  const now = new Date();
+  const soon = new Date(now.getTime() + 30 * 60 * 1000);
+
+  const tasks = await prisma.crmFollowUpTask.findMany({
+    where: {
+      status: "OPEN",
+      reminderSent: false,
+      dueAt: { lte: soon },
+    },
+    include: {
+      ownerUser: { select: { id: true, name: true, email: true, emailOnReminder: true } },
+      profile: {
+        select: {
+          sourceCustomer: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  for (const task of tasks) {
+    try {
+      const user = task.ownerUser;
+      const customerName = task.profile.sourceCustomer.name;
+      const shouldEmail = !!(user.email && user.emailOnReminder);
+
+      const notification = await prisma.notification.create({
+        data: {
+          userId: user.id,
+          title: `CRM 跟进提醒: ${task.title}`,
+          content: `客户「${customerName}」的跟进任务「${task.title}」即将到期，请及时处理。`,
+          type: "CRM_FOLLOW_UP_REMINDER",
+          link: `/crm/follow-ups`,
+          emailStatus: shouldEmail ? "pending" : null,
+        },
+      });
+
+      if (shouldEmail) {
+        sendMailInBackground({
+          to: user.email!,
+          subject: `[SciManage] CRM 跟进提醒: ${task.title}`,
+          text: `您好，\n\n客户「${customerName}」的跟进任务「${task.title}」即将到期，请及时处理。\n\n---\nSciManage 科研项目管理平台`,
+          html: `
+      <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">SciManage CRM 跟进提醒</h2>
+        <p>您好，</p>
+        <p>客户 <strong>「${customerName}」</strong> 的跟进任务 <strong>「${task.title}」</strong> 即将到期。</p>
+        <p>请及时处理。</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台</p>
+      </div>
+    `,
+        }, notification.id);
+      }
+
+      await prisma.crmFollowUpTask.update({
+        where: { id: task.id },
+        data: { reminderSent: true },
+      });
+    } catch (err) {
+      console.error("Failed to send CRM follow-up reminder for task", task.id, err);
+    }
+  }
+
+  return tasks.length;
+}
+
 let intervalId: NodeJS.Timeout | null = null;
 
 export function startReminderScheduler(intervalMinutes = 5) {
   if (intervalId) return;
   console.log(`Starting reminder scheduler (every ${intervalMinutes} minutes)`);
   checkAndSendReminders().catch(console.error);
+  checkAndSendCrmFollowUpReminders().catch(console.error);
   intervalId = setInterval(() => {
     checkAndSendReminders().catch(console.error);
+    checkAndSendCrmFollowUpReminders().catch(console.error);
   }, intervalMinutes * 60 * 1000);
 }
 

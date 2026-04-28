@@ -4,7 +4,7 @@ import { useState, useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Search, Upload, Copy, FileDown,
-  Send, CheckCircle2, XCircle, MessageSquare, Pencil,
+  Send, CheckCircle2, XCircle, MessageSquare, Pencil, ClipboardCopy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ import { zhCN } from "date-fns/locale";
 import { InvoiceFormDialog, type InvoiceRecord, type InvoiceItem } from "@/components/invoice-form-dialog";
 import { sheetDataFromRecord, type InvoiceSheetData } from "@/lib/invoice-sheet";
 import { exportInvoiceSheetToPdf } from "@/lib/export-invoice-pdf";
+import { getFeishuProjectHeader, externalOrderToFeishuRow, externalOrdersToFeishuText } from "@/lib/feishu-export";
 
 interface ExternalOrder {
   id: string;
@@ -324,6 +325,33 @@ export default function ExternalOrdersPage() {
             <SelectItem value="ISSUED">已开票</SelectItem>
           </SelectContent>
         </Select>
+        {orders.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={async () => {
+              try {
+                const params = new URLSearchParams({ exportAll: "1" });
+                if (debouncedSearch) params.set("search", debouncedSearch);
+                if (invoiceStatusFilter !== "ALL") params.set("invoiceStatus", invoiceStatusFilter);
+                const res = await fetch(`/api/external-orders?${params}`);
+                if (!res.ok) throw new Error("fetch failed");
+                const data = await res.json();
+                const allOrders: ExternalOrder[] = data.orders || [];
+                if (allOrders.length === 0) { toast.error("没有可导出的订单"); return; }
+                const text = getFeishuProjectHeader() + "\n" + externalOrdersToFeishuText(allOrders);
+                await navigator.clipboard.writeText(text);
+                toast.success(`已复制 ${allOrders.length} 条订单到剪贴板`);
+              } catch {
+                toast.error("导出失败");
+              }
+            }}
+          >
+            <ClipboardCopy className="mr-1 h-3.5 w-3.5" />
+            导出飞书（全部{total > pageSize ? ` ${total}条` : ""})
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -417,6 +445,22 @@ export default function ExternalOrdersPage() {
           {detailOrder && (
             <>
               <DialogHeader><DialogTitle>订单详情</DialogTitle></DialogHeader>
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const text = externalOrderToFeishuRow(detailOrder);
+                    navigator.clipboard.writeText(text).then(
+                      () => toast.success("已复制到剪贴板，可直接粘贴到飞书"),
+                      () => toast.error("复制失败"),
+                    );
+                  }}
+                >
+                  <ClipboardCopy className="mr-1 h-3 w-3" />
+                  复制到飞书
+                </Button>
+              </div>
               <OrderDetail order={detailOrder} />
               <div className="border-t pt-3 space-y-3">
                 <div className="flex items-center justify-between">

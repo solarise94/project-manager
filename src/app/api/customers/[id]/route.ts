@@ -20,7 +20,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     select: {
       id: true, name: true, customerCode: true, organization: true,
       organizationId: true, organizationSiteId: true, email: true,
-      wechat: true, address: true, principal: true,
+      wechat: true, address: true, principal: true, miniProgramId: true,
       org: { select: { canonicalName: true } },
     },
   });

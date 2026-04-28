@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Archive,
   Trash2,
+  ClipboardCopy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ import { RepresentativeSelect } from "@/components/representative-select";
 import { CustomerSelect } from "@/components/customer-select";
 import { OrganizationSelect } from "@/components/organization-select";
 import { DraftInputPanel } from "@/components/draft-input-panel";
+import { getFeishuProjectHeader, projectsToFeishuText } from "@/lib/feishu-export";
 
 const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; variant: "default" | "secondary" | "outline" | "destructive"; color: string }> = {
   NOT_STARTED: { label: "未开始", icon: Circle, variant: "secondary", color: "bg-slate-500" },
@@ -66,6 +68,14 @@ export default function ProjectsPage() {
     status: "NOT_STARTED",
     startDate: "",
     endDate: "",
+    projectType: "",
+    projectContent: "",
+    quantity: "",
+    procurementSource: "",
+    brand: "",
+    techSupport: "",
+    budgetAmount: "",
+    budgetCost: "",
   });
 
   const { data, isLoading } = useQuery<{ projects: ProjectItem[] }>({
@@ -112,7 +122,7 @@ export default function ProjectsPage() {
       toast.success("项目创建成功");
       setOpen(false);
 
-      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "" });
+      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "", projectType: "", projectContent: "", quantity: "", procurementSource: "", brand: "", techSupport: "", budgetAmount: "", budgetCost: "" });
       setSelectedOrgId("");
       setCustomerOrgId(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -414,6 +424,55 @@ export default function ProjectsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <details className="border rounded-lg p-3 space-y-3">
+                <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">财务 / 商品信息</summary>
+                <div className="grid grid-cols-2 gap-4 pt-2">
+                  <div className="space-y-2">
+                    <Label>项目类型</Label>
+                    <Select value={form.projectType || ""} onValueChange={(v) => setForm({ ...form, projectType: v || "" })}>
+                      <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="商品">商品</SelectItem>
+                        <SelectItem value="服务">服务</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>项目内容</Label>
+                    <Input value={form.projectContent} onChange={(e) => setForm({ ...form, projectContent: e.target.value })} placeholder="如 C57/雌/7周" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>数量</Label>
+                    <Input type="number" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="数量" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>采购渠道</Label>
+                    <Input value={form.procurementSource} onChange={(e) => setForm({ ...form, procurementSource: e.target.value })} placeholder="笙源/高精等" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>品牌</Label>
+                    <Input value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>技术支持</Label>
+                    <Input value={form.techSupport} onChange={(e) => setForm({ ...form, techSupport: e.target.value })} placeholder="技术支持人员" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>项目金额（元）</Label>
+                    <Input type="number" step="0.01" value={form.budgetAmount} onChange={(e) => setForm({ ...form, budgetAmount: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>项目成本（元）</Label>
+                    <Input type="number" step="0.01" value={form.budgetCost} onChange={(e) => setForm({ ...form, budgetCost: e.target.value })} />
+                  </div>
+                </div>
+              </details>
               <Button type="submit" className="w-full" disabled={createMutation.isPending}>
                 {createMutation.isPending ? "创建中..." : "创建项目"}
               </Button>
@@ -483,6 +542,22 @@ export default function ProjectsPage() {
               <ListIcon className="h-4 w-4" />
             </button>
           </div>
+          {!isRepresentative && projects.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const text = getFeishuProjectHeader() + "\n" + projectsToFeishuText(projects);
+                navigator.clipboard.writeText(text).then(
+                  () => toast.success(`已复制 ${projects.length} 条项目到剪贴板`),
+                  () => toast.error("复制失败"),
+                );
+              }}
+            >
+              <ClipboardCopy className="mr-1 h-4 w-4" />
+              导出飞书
+            </Button>
+          )}
         </div>
       </div>
 

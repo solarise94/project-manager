@@ -59,6 +59,37 @@ rsync -a --delete --exclude=".env" --exclude="dev.db" "${REPO_DIR}/.next/standal
 rsync -a --delete "${REPO_DIR}/.next/static/" "${TARGET_DIR}/.next/static/"
 rsync -a --delete "${REPO_DIR}/public/" "${TARGET_DIR}/public/"
 
+echo "[3.5/8] Ensuring Prisma runtime is available in standalone..."
+# Copy the canonical Prisma client packages
+for PKG_DIR in "@prisma/client" ".prisma"; do
+  SRC="${REPO_DIR}/node_modules/${PKG_DIR}"
+  DST="${TARGET_DIR}/node_modules/${PKG_DIR}"
+  if [[ -d "${SRC}" ]]; then
+    mkdir -p "$(dirname "${DST}")"
+    rsync -a --delete "${SRC}/" "${DST}/"
+  fi
+done
+
+# Scan for hashed Prisma client package names (e.g. @prisma/client-2c3a283f134fdcb6)
+# and create shim modules that re-export the canonical @prisma/client
+HASH_PKGS=$(grep -roh '@prisma/client-[0-9a-f]\+' "${TARGET_DIR}/.next/server/" 2>/dev/null | sort -u || true)
+for HASH_PKG in ${HASH_PKGS}; do
+  SHIM_DIR="${TARGET_DIR}/node_modules/${HASH_PKG}"
+  if [[ ! -d "${SHIM_DIR}" ]]; then
+    echo "  Creating shim for ${HASH_PKG}"
+    mkdir -p "${SHIM_DIR}"
+    cat > "${SHIM_DIR}/package.json" <<SHIMEOF
+{"name":"${HASH_PKG}","version":"0.0.0","main":"index.js"}
+SHIMEOF
+    cat > "${SHIM_DIR}/index.js" <<SHIMEOF
+module.exports = require("@prisma/client");
+SHIMEOF
+    cat > "${SHIM_DIR}/default.js" <<SHIMEOF
+module.exports = require("@prisma/client");
+SHIMEOF
+  fi
+done
+
 echo "[4/8] Preparing runtime database at ${RUNTIME_DB}..."
 
 if [[ "${RUNTIME_DB}" != "${LEGACY_RUNTIME_DB}" && -f "${LEGACY_RUNTIME_DB}" && ! -f "${RUNTIME_DB}" ]]; then
@@ -217,3 +248,26 @@ echo "[8/8] Restarting ${SERVICE_NAME}..."
 systemctl --user daemon-reload
 systemctl --user restart "${SERVICE_NAME}"
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
+
+echo ""
+echo "Smoke-testing /api/auth/session on port ${PORT}..."
+SMOKE_OK=false
+for i in 1 2 3 4 5; do
+  sleep 2
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PORT}/api/auth/session" 2>/dev/null || echo "000")
+  if [[ "${HTTP_CODE}" == "200" ]]; then
+    SMOKE_OK=true
+    break
+  fi
+  echo "  Attempt ${i}: HTTP ${HTTP_CODE}, retrying..."
+done
+
+if [[ "${SMOKE_OK}" == "true" ]]; then
+  echo "Smoke test passed: /api/auth/session returned 200"
+else
+  echo ""
+  echo "SMOKE TEST FAILED: /api/auth/session did not return 200 after 5 attempts." >&2
+  echo "Recent service logs:" >&2
+  journalctl --user -u "${SERVICE_NAME}" --no-pager -n 30 >&2
+  exit 1
+fi

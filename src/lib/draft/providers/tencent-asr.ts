@@ -1,7 +1,7 @@
 import type { SpeechProvider } from "./types";
 import { createHmac, createHash } from "crypto";
 import { execFile } from "child_process";
-import { writeFile, unlink } from "fs/promises";
+import { writeFile, unlink, readFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomBytes } from "crypto";
@@ -72,7 +72,6 @@ async function convertToWav(inputData: Buffer, inputMime: string): Promise<Buffe
       });
     });
 
-    const { readFile } = await import("fs/promises");
     return await readFile(outputPath);
   } finally {
     await unlink(inputPath).catch(() => {});

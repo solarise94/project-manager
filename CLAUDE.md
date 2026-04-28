@@ -13,55 +13,74 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — local dev server
 - `npm run build` — production build
 - `npm run lint` — ESLint (flat config, no args needed)
-- `npx prisma db push` — sync schema to database
+- `npx prisma db push` — sync schema to SQLite (prefer over migrate for quick iteration)
+- `npx prisma migrate dev --name <name>` — create a migration
 - `npx prisma studio` — browse database
-- `npx tsx prisma/seed.ts` — seed database
+- `npx tsx prisma/seed.ts` — **destructive**: truncates all data, re-seeds
 
 No test framework is configured. There are no project-level tests.
 
 ## Architecture
 
-Next.js App Router with `output: "standalone"`. React 19, Tailwind CSS v4, shadcn/ui components.
+Next.js App Router with `output: "standalone"`. React 19, Tailwind CSS v4, shadcn/ui components (style `"base-nova"`).
 
 ### Auth
 
-NextAuth v4 with JWT strategy (`src/lib/auth.ts`). Two credential providers:
-- `credentials` — email/password login with brute-force lockout (5 attempts → 15 min lock)
-- `representative` — magic-link token login for external representatives
-
-Session carries `user.id` and `user.role`. Roles: `ADMIN`, `USER`, `REPRESENTATIVE`.
-
-Middleware (`src/middleware.ts`) protects `/dashboard`, `/projects`, `/tickets`, `/profile`, `/admin` and their corresponding API routes. Unauthenticated requests redirect to `/login`.
+- **There is no middleware.ts.** Routes are NOT protected by a middleware file. Each API route calls `getServerSession(authOptions)` inline. Page components are `"use client"` and rely on `useSession()` + client-side redirects. Do not look for or create a middleware file.
+- NextAuth v4, JWT strategy (`src/lib/auth.ts`). Two providers:
+  - `credentials` — email/password login with brute-force lockout (5 failed attempts → 15 min lock, tracks via `FailedLoginAttempt` model, triggers admin email alert)
+  - `representative` — magic-link token login (24h expiry, single-use, token cleared after use). Representatives get auto-created User rows on first login.
+- Session carries `user.id` and `user.role`. Max session age: 30 days.
+- Roles (ascending privilege): `REPRESENTATIVE` < `USER` < `ADMIN`
+- `src/lib/permissions.ts` guards: ADMIN bypasses membership checks; REPRESENTATIVE is scoped to linked projects only
 
 ### Data Model
 
-Prisma with SQLite (`prisma/schema.prisma`). Core entities: User, Representative, Project, ProjectMember, Ticket, Comment, TicketReply, Attachment, ActivityLog, Notification.
+Prisma with SQLite (`prisma/schema.prisma`). Core entities:
 
-- Projects have members (with OWNER/MEMBER roles) and an optional linked Representative
-- Representatives are external contacts who log in via magic links, not passwords
-- Soft-delete pattern: `deleted` + `deletedAt` + `deletedReason` on Project; `archived` flag on Representative
+- User, Representative, Organization (+Alias, +Site), Customer
+- Project (+Member, +StatusHistory), Ticket (+Reply), Comment, Attachment
+- ActivityLog, Notification, DevLog
+- Invoice system: `ProjectInvoice` and `ExternalOrderInvoiceRequest` with line items; `BillingProfile` for sellers
+- `ExternalOrder` / `ExternalOrderImportBatch` for bulk order import
+- `OrganizationReviewTask` for AI-assisted organization deduplication review workflow
+
+Patterns:
+- Projects and Customers: soft-delete (`deleted`, `deletedAt`, `deletedReason`); Customers also support merge
+- Representatives: `archived` flag; linked to Projects via `representativeId`
+- Prisma client singleton in `src/lib/prisma.ts` — uses `globalForPrisma` pattern. Always import from `@/lib/prisma`, never instantiate directly.
 
 ### State Management
 
 - Server state: TanStack React Query v5
 - Client state: Zustand
-- No Redux
 
 ### API Pattern
 
-All API routes are in `src/app/api/`. They use `getServerSession(authOptions)` for auth, then check permissions via `src/lib/permissions.ts` (project membership/ownership checks). ADMIN role bypasses most restrictions. REPRESENTATIVE role is scoped to their linked projects only.
+All API routes in `src/app/api/{resource}/route.ts`. Each calls `getServerSession(authOptions)` for auth, then checks permissions via `src/lib/permissions.ts`.
 
-### Key Libraries
+### Key Subsystems
 
-- `src/lib/permissions.ts` — project membership/ownership guards, representative scoping
-- `src/lib/mail.ts` — nodemailer SMTP integration
-- `src/lib/types.ts` — shared TypeScript interfaces for API responses
+- `src/lib/draft/` — AI draft workflow: entity resolution, form schemas, media processing, LLM orchestration with provider abstraction (`providers/`)
+- `src/lib/plugins/` — plugin system with registry, context, and built-in plugins
+- `src/lib/mail.ts` — nodemailer SMTP; auto-falls back to Ethereal test accounts when unconfigured (logs preview URL)
+- `src/lib/export-invoice-pdf.tsx` — PDF invoice generation
+- `src/lib/organization-*.ts` — organization enrichment, normalization, resolution, and review
 - `src/lib/representative-link.ts` — magic link generation/validation
-- `src/lib/prisma.ts` — singleton Prisma client
+- `src/lib/validation.ts` — shared validation logic
 
 ### UI Components
 
 shadcn/ui in `src/components/ui/`. App-level components (sidebar, mobile-nav, representative-select) in `src/components/`.
+
+## Conventions
+
+- **Tailwind CSS v4**: no `tailwind.config.ts`. CSS via `@import "tailwindcss"` in `src/app/globals.css`. Use `@theme inline { ... }` for custom tokens, `@custom-variant dark` for dark mode.
+- ESLint flat config at `eslint.config.mjs`. Extends `eslint-config-next/core-web-vitals` + `typescript`. `@next/next/no-img-element` is disabled.
+- `tsconfig.json`: `moduleResolution: "bundler"`, `target: "ES2017"`, path alias `@/*` → `./src/*`
+- Dev scheduler auto-starts in `layout.tsx` for `NODE_ENV === "development"` only; production uses external cron
+- `.draft-media/` is a temp directory for AI vision processing (excluded from build tracing and git)
+- `/src/generated/prisma` is gitignored — generated code directory
 
 ## Environment Variables
 
@@ -71,17 +90,31 @@ Required in `.env`:
 - `NEXTAUTH_URL` — canonical app URL
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` — email delivery
 
+### `.env` dichotomy
+
+Two separate `.env` files — do not confuse them:
+- **Repo root `.env`**: for local `npm run dev` only
+- **Runtime `.env`** (at deploy target, e.g. `/home/solarise/task-manager/.env`): auto-generated by deploy script, read by the systemd service
+
+Changing the repo `.env` does NOT change the deployed service.
+
 ## Database Environments
 
-Three separate SQLite databases — never cross-use them:
+Three isolated SQLite databases — never cross-use them:
 - Dev: `prisma/dev.db` (local development)
 - Demo: `/home/solarise/task-manager-data/demo/dev.db`
 - Prod: `/home/solarise/task-manager-data/prod/dev.db`
 
-## Deployment
+Root `/home/solarise/project-manage/dev.db` is NOT a valid path — likely debug residue.
 
-Deploy scripts in `scripts/`:
-- `./scripts/deploy-demo.sh` → `task-manager-demo.service` on `:31081`
-- `./scripts/deploy-prod.sh` → `task-manager.service` on `:31080`
+## Build & Deploy
 
-Both call `scripts/deploy-standalone.sh` which handles build, copy, `prisma db push`, and `.env` generation. The deploy preserves existing SMTP config and database files.
+- **Never use `next start`** for verification — always `node .next/standalone/server.js`
+- If a specific host/port is needed: `HOSTNAME=127.0.0.1 PORT=31081 node .next/standalone/server.js`
+- `next.config.ts` excludes `prisma/`, `docs/`, `.draft-media/` from the standalone bundle via `outputFileTracingExcludes` — **Prisma CLI cannot run from the deployed directory**. Always run `prisma db push` from the source repo.
+- Deploy scripts in `scripts/`:
+  - `./scripts/deploy-demo.sh` → `task-manager-demo.service` on `:31081`
+  - `./scripts/deploy-prod.sh` → `task-manager.service` on `:31080`
+  - Both call `scripts/deploy-standalone.sh` (build + rsync + prisma db push + .env generation)
+- Deploy script reads persistent config files next to the database directory: `smtp.conf`, `minimax.conf`, `tavily.conf`, `tencent-asr.conf`. These survive redeploys.
+- If login page renders but `/api/auth/*` returns `500` after a build/deploy, first check whether someone started the app with `next start` instead of the standalone `server.js`.

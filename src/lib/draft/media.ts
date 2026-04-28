@@ -4,15 +4,22 @@
  * This module is the ONLY place that maps fileId → absolute path.
  */
 
-import { join, resolve, normalize } from "path";
+import { join, normalize } from "path";
 import { stat, unlink, readdir, rmdir } from "fs/promises";
 
-const DRAFT_MEDIA_ROOT = join(process.cwd(), ".draft-media");
+let _draftMediaRoot: string;
+function getDraftMediaRoot() {
+  if (!_draftMediaRoot) {
+    _draftMediaRoot = process.env.DRAFT_MEDIA_DIR
+      || join(process.cwd(), ".draft-media");
+  }
+  return _draftMediaRoot;
+}
 const TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /** Build the storage directory for a user. */
 export function getDraftMediaDir(userId: string): string {
-  return join(DRAFT_MEDIA_ROOT, userId);
+  return join(getDraftMediaRoot(), userId);
 }
 
 /**
@@ -48,8 +55,8 @@ export async function resolveDraftMediaPath(
   const match = entries.find((e) => e.startsWith(prefix));
   if (!match) return null;
 
-  const filePath = resolve(join(dir, match));
-  const normalizedRoot = normalize(DRAFT_MEDIA_ROOT);
+  const filePath = normalize(join(dir, match));
+  const normalizedRoot = normalize(getDraftMediaRoot());
 
   // Path traversal guard
   if (!filePath.startsWith(normalizedRoot)) return null;
@@ -68,7 +75,7 @@ export async function resolveDraftMediaPath(
  * Silently ignores missing files. Cleans up empty user directory.
  */
 export async function deleteDraftMediaFile(filePath: string): Promise<void> {
-  const normalizedRoot = normalize(DRAFT_MEDIA_ROOT);
+  const normalizedRoot = normalize(getDraftMediaRoot());
   const normalizedPath = normalize(filePath);
 
   // Safety: only delete files under the draft media root
@@ -98,13 +105,13 @@ export async function sweepExpiredMedia(): Promise<void> {
   const now = Date.now();
   let userDirs: string[];
   try {
-    userDirs = await readdir(DRAFT_MEDIA_ROOT);
+    userDirs = await readdir(getDraftMediaRoot());
   } catch {
     return; // Root doesn't exist yet
   }
 
   for (const userDir of userDirs) {
-    const dirPath = join(DRAFT_MEDIA_ROOT, userDir);
+    const dirPath = join(getDraftMediaRoot(), userDir);
     let files: string[];
     try {
       files = await readdir(dirPath);

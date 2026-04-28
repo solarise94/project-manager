@@ -17,8 +17,9 @@ export async function GET(req: NextRequest) {
   const invoiceStatus = url.searchParams.get("invoiceStatus")?.trim() || "";
   const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
   const dateTo = url.searchParams.get("dateTo")?.trim() || "";
+  const exportAll = url.searchParams.get("exportAll") === "1";
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
-  const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
+  const pageSize = exportAll ? undefined : Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
 
   const where: Record<string, unknown> = {};
 
@@ -44,8 +45,7 @@ export async function GET(req: NextRequest) {
     prisma.externalOrder.findMany({
       where,
       orderBy: [{ orderAt: "desc" }, { createdAt: "desc" }],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
+      ...(exportAll ? {} : { skip: (page - 1) * pageSize!, take: pageSize }),
       select: {
         id: true, source: true, platform: true, externalOrderNo: true,
         storeName: true, receiverName: true, receiverPhone: true,

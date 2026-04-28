@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, User, Users, Handshake, Contact } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Ticket, User, Users, Handshake, Contact, HeartHandshake } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSession } from "next-auth/react";
 
@@ -10,6 +10,7 @@ const baseNavItems = [
   { href: "/dashboard", label: "看板", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/tickets", label: "工单", icon: Ticket },
+  { href: "/crm", label: "CRM", icon: HeartHandshake },
   { href: "/profile", label: "我的", icon: User },
 ];
 

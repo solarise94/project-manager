@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, LogOut, FlaskConical, Users, User, Handshake, Contact, Building2, ClipboardList, FileText, Receipt, ShoppingBag } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Ticket, LogOut, FlaskConical, Users, User, Handshake, Contact, Building2, ClipboardList, FileText, Receipt, ShoppingBag, HeartHandshake } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ const baseNavItems = [
   { href: "/dashboard", label: "仪表盘", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/tickets", label: "工单", icon: Ticket },
+  { href: "/crm", label: "CRM", icon: HeartHandshake },
 ];
 
 function useNavItems() {

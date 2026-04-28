@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search") || "";
   const showArchived = searchParams.get("archived") === "true";
+  const limitParam = searchParams.get("limit");
+  const excludeCrm = searchParams.get("excludeCrm") === "1";
 
   if (isRepresentative(session.user.role)) {
     const projectIds = await getRepresentativeProjectIds(session.user.id);
@@ -61,6 +63,7 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = { deleted: false };
   if (!showArchived) where.archived = false;
+  if (excludeCrm) where.crmProfile = null;
   if (search) {
     where.OR = [
       { name: { contains: search } },
@@ -75,6 +78,7 @@ export async function GET(req: NextRequest) {
     where,
     include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } } },
     orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
+    ...(limitParam ? { take: Math.min(parseInt(limitParam, 10) || 500, 500) } : {}),
   });
 
   return NextResponse.json({ customers: customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) })) });
