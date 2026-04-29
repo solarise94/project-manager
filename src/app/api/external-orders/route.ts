@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   const search = url.searchParams.get("search")?.trim() || "";
   const platform = url.searchParams.get("platform")?.trim() || "";
   const invoiceStatus = url.searchParams.get("invoiceStatus")?.trim() || "";
+  const duplicateStatus = url.searchParams.get("duplicateStatus")?.trim() || "";
   const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
   const dateTo = url.searchParams.get("dateTo")?.trim() || "";
   const exportAll = url.searchParams.get("exportAll") === "1";
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
   }
   if (platform) where.platform = platform;
   if (invoiceStatus) where.invoiceStatus = invoiceStatus;
+  if (duplicateStatus) where.duplicateStatus = duplicateStatus;
   if (dateFrom || dateTo) {
     const orderAtFilter: Record<string, Date> = {};
     if (dateFrom) orderAtFilter.gte = new Date(dateFrom);
@@ -51,6 +53,7 @@ export async function GET(req: NextRequest) {
         storeName: true, receiverName: true, receiverPhone: true,
         productNamesRaw: true, itemCount: true, paidAmount: true,
         orderAt: true, invoiceStatus: true, createdAt: true,
+        duplicateStatus: true, duplicateGroupId: true,
       },
     }),
     prisma.externalOrder.count({ where }),

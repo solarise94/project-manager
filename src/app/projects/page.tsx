@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { RepresentativeSelect } from "@/components/representative-select";
@@ -118,6 +118,35 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     enabled: status === "authenticated",
   });
 
+  const { data: filterOptions } = useQuery<{ representatives: { id: string; name: string }[]; customers: { id: string; name: string }[] }>({
+    queryKey: ["projects-filter-options"],
+    queryFn: async () => {
+      const res = await fetch("/api/projects/filter-options");
+      if (!res.ok) throw new Error("Failed to load filter options");
+      return res.json();
+    },
+    enabled: status === "authenticated",
+  });
+
+  const { data: channelsData } = useQuery<{ channels: { id: string; name: string; isDefault: boolean }[] }>({
+    queryKey: ["procurement-channels"],
+    queryFn: async () => {
+      const res = await fetch("/api/procurement-channels");
+      if (!res.ok) throw new Error("Failed to load channels");
+      return res.json();
+    },
+    enabled: status === "authenticated",
+  });
+  const channels = channelsData?.channels || [];
+
+  // Derive default procurement source from channels
+  const defaultProcurementSource = channels.find((c) => c.isDefault)?.name || "";
+
+  const repOptions = filterOptions?.representatives || [];
+  const custOptions = filterOptions?.customers || [];
+  const repLabelMap = new Map(repOptions.map((r) => [r.id, r.name]));
+  const custLabelMap = new Map(custOptions.map((c) => [c.id, c.name]));
+
   const createMutation = useMutation({
     mutationFn: async (payload: typeof form) => {
       const res = await fetch("/api/projects", {
@@ -143,17 +172,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
   if (status === "loading") return null;
 
   const projects = data?.projects || [];
-
-  const uniqueReps = [...new Map(
-    projects
-      .filter((p) => p.rep || p.representative)
-      .map((p) => p.rep ? [p.rep.id, p.rep.name] as const : [`_text:${p.representative}`, p.representative!] as const)
-  ).entries()];
-  const uniqueCusts = [...new Map(
-    projects
-      .filter((p) => p.cust || p.client)
-      .map((p) => p.cust ? [p.cust.id, p.cust.name] as const : [`_text:${p.client}`, p.client!] as const)
-  ).entries()];
 
   const filtered = projects.filter((p) => {
     if (repFilter !== "ALL") {
@@ -233,7 +251,12 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
           <p className="text-muted-foreground">管理您的科研项目</p>
         </div>
         {!isRepresentative && (
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={open} onOpenChange={(v) => {
+            if (v && defaultProcurementSource && !form.procurementSource) {
+              setForm((prev) => ({ ...prev, procurementSource: defaultProcurementSource }));
+            }
+            setOpen(v);
+          }}>
             <DialogTrigger render={<Button />}>
               <Plus className="mr-2 h-4 w-4" />
               新建项目
@@ -249,6 +272,9 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   name: "项目名称", description: "项目描述", orderNumber: "订单号",
                   organization: "单位", client: "客户", representative: "代表",
                   status: "状态", startDate: "开始日期", endDate: "结束日期",
+                  progress: "项目进度", projectType: "项目类型", projectContent: "项目内容",
+                  quantity: "数量", procurementSource: "采购渠道", brand: "品牌",
+                  techSupport: "技术支持", budgetAmount: "项目金额", budgetCost: "项目成本",
                 }}
                 fallbackPlugin="project.smart-fill"
                 onApply={async (fields) => {
@@ -271,6 +297,30 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                     } else {
                       updates[key] = value;
                     }
+                  }
+
+                  // Normalize numeric fields to avoid number/string confusion
+                  const numFields = ["progress", "quantity", "budgetAmount", "budgetCost"] as const;
+                  for (const k of numFields) {
+                    const v = updates[k];
+                    if (v === undefined || v === null || v === "") continue;
+                    // Clean common formatting: %, ¥, commas, 元, whitespace
+                    const cleaned = String(v).replace(/[%¥￥,\s元]/g, "").trim();
+                    if (!cleaned) continue;
+                    const n = Number(cleaned);
+                    if (Number.isFinite(n)) {
+                      updates[k] = k === "progress" ? Math.max(0, Math.min(100, Math.round(n))) : String(n);
+                    } else {
+                      // Unparseable — delete to avoid corrupting the form
+                      delete updates[k];
+                    }
+                  }
+
+                  // Normalize projectType to match Select options
+                  if (typeof updates.projectType === "string") {
+                    const pt = updates.projectType;
+                    if (/商品|货物|产品/.test(pt)) updates.projectType = "商品";
+                    else if (/服务|技术|实验/.test(pt)) updates.projectType = "服务";
                   }
 
                   // --- Phase 2: Decide whether org creation should be skipped ---
@@ -456,7 +506,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                 <Label>初始状态</Label>
                 <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v || "NOT_STARTED" })}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <span>{STATUS_CONFIG[form.status]?.label || "未开始"}</span>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="NOT_STARTED">未开始</SelectItem>
@@ -482,7 +532,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   <div className="space-y-2">
                     <Label>项目类型</Label>
                     <Select value={form.projectType || ""} onValueChange={(v) => setForm({ ...form, projectType: v || "" })}>
-                      <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+                      <SelectTrigger><span>{form.projectType || "选择类型"}</span></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="商品">商品</SelectItem>
                         <SelectItem value="服务">服务</SelectItem>
@@ -501,7 +551,15 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   </div>
                   <div className="space-y-2">
                     <Label>采购渠道</Label>
-                    <Input value={form.procurementSource} onChange={(e) => setForm({ ...form, procurementSource: e.target.value })} placeholder="笙源/高精等" />
+                    <Select value={form.procurementSource} onValueChange={(v) => setForm({ ...form, procurementSource: v || "" })}>
+                      <SelectTrigger><span>{form.procurementSource || "选择渠道"}</span></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">无</SelectItem>
+                        {channels.map((c) => (
+                          <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -580,32 +638,28 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
               <SelectItem value="1y">最近一年</SelectItem>
             </SelectContent>
           </Select>
-          {uniqueReps.length > 0 && (
-            <Select value={repFilter} onValueChange={(v) => setRepFilter(v || "ALL")}>
-              <SelectTrigger className="w-[130px]">
-                <SelectDisplay label="代表" valueLabel={repFilter === "ALL" ? "全部代表" : uniqueReps.find(([id]) => id === repFilter)?.[1] || "未知"} placeholder="代表" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部代表</SelectItem>
-                {uniqueReps.map(([id, name]) => (
-                  <SelectItem key={id} value={id}>{name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {uniqueCusts.length > 0 && (
-            <Select value={custFilter} onValueChange={(v) => setCustFilter(v || "ALL")}>
-              <SelectTrigger className="w-[130px]">
-                <SelectDisplay label="客户" valueLabel={custFilter === "ALL" ? "全部客户" : uniqueCusts.find(([id]) => id === custFilter)?.[1] || "未知"} placeholder="客户" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部客户</SelectItem>
-                {uniqueCusts.map(([id, name]) => (
-                  <SelectItem key={id} value={id}>{name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <Select value={repFilter} onValueChange={(v) => setRepFilter(v || "ALL")} disabled={repOptions.length === 0}>
+            <SelectTrigger className="w-[130px]">
+              <SelectDisplay label="代表" valueLabel={repFilter === "ALL" ? "全部代表" : repLabelMap.get(repFilter) || "未知"} placeholder="代表" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">全部代表</SelectItem>
+              {repOptions.map((r) => (
+                <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={custFilter} onValueChange={(v) => setCustFilter(v || "ALL")} disabled={custOptions.length === 0}>
+            <SelectTrigger className="w-[130px]">
+              <SelectDisplay label="客户" valueLabel={custFilter === "ALL" ? "全部客户" : custLabelMap.get(custFilter) || "未知"} placeholder="客户" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">全部客户</SelectItem>
+              {custOptions.map((c) => (
+                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="flex border rounded-md overflow-hidden">
             <button
               className={`px-3 py-2 ${view === "board" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}

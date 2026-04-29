@@ -26,6 +26,7 @@ model User {
   activities ActivityLog[]
   reviewsCreated OrganizationReviewTask[] @relation("ReviewCreatedBy")
   reviewsReviewed OrganizationReviewTask[] @relation("ReviewReviewedBy")
+  reviewedOrders  ExternalOrder[]          @relation("OrderReview")
   devLogs  DevLog[]
   invoicesCreated ProjectInvoice[]
   externalOrderImportBatches ExternalOrderImportBatch[]
@@ -52,6 +53,16 @@ model Representative {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   projects       Project[]
+}
+
+model ProcurementChannel {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isDefault   Boolean  @default(false)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Organization {
@@ -430,6 +441,15 @@ model ExternalOrder {
   importBatchId         String
   rawJson               String?
   invoiceStatus         String                        @default("NONE")
+  duplicateGroupId      String?
+  duplicateStatus       String                        @default("UNREVIEWED")
+  mergedIntoId          String?
+  mergedInto            ExternalOrder?                @relation("OrderMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom            ExternalOrder[]               @relation("OrderMerge")
+  reviewNote            String?
+  reviewedAt            DateTime?
+  reviewedById          String?
+  reviewedBy            User?                         @relation("OrderReview", fields: [reviewedById], references: [id], onDelete: SetNull)
   createdAt             DateTime                      @default(now())
   updatedAt             DateTime                      @updatedAt
   invoiceRequests       ExternalOrderInvoiceRequest[]
@@ -439,6 +459,8 @@ model ExternalOrder {
   @@index([receiverPhone])
   @@index([orderAt])
   @@index([importBatchId])
+  @@index([duplicateStatus])
+  @@index([duplicateGroupId])
 }
 
 model ExternalOrderInvoiceRequest {
@@ -593,6 +615,11 @@ model CrmVisitCheckin {
   mapProvider     String?
   photoCount      Int                @default(0)
   status          String             @default("DRAFT") // DRAFT, COMPLETED
+  voiceUrl        String?
+  transcript      String?
+  summaryTitle    String?
+  summary         String?
+  asrStatus       String             @default("NONE") // NONE | UPLOADED | TRANSCRIBING | DONE | FAILED
   completedAt     DateTime?
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
@@ -600,6 +627,7 @@ model CrmVisitCheckin {
 
   @@index([profileId, createdAt])
   @@index([userId])
+  @@index([asrStatus])
 }
 
 model CrmVisitMedia {

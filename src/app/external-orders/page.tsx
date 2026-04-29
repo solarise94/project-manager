@@ -52,6 +52,10 @@ interface ExternalOrder {
   scheduledDeliveryText: string | null;
   orderType: string | null;
   invoiceStatus: string;
+  duplicateStatus: string;
+  duplicateGroupId: string | null;
+  mergedIntoId: string | null;
+  reviewNote: string | null;
   rawJson: string | null;
   createdAt: string;
 }
@@ -67,6 +71,12 @@ const INV_STATUS_LABELS: Record<string, string> = {
 };
 const INV_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   DRAFT: "secondary", REQUESTED: "default", ISSUED: "outline", CANCELLED: "destructive",
+};
+const DEDUP_STATUS_LABELS: Record<string, string> = {
+  ALL: "全部", UNREVIEWED: "待审查", UNIQUE: "唯一", DUPLICATE: "已确认重复", MERGED: "已合并", IGNORED: "已忽略",
+};
+const DEDUP_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  UNREVIEWED: "default", DUPLICATE: "destructive", UNIQUE: "secondary", MERGED: "outline", IGNORED: "outline",
 };
 
 function formatAmount(n: number): string {
@@ -104,6 +114,7 @@ export default function ExternalOrdersPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("ALL");
+  const [duplicateStatusFilter, setDuplicateStatusFilter] = useState("ALL");
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
@@ -132,11 +143,12 @@ export default function ExternalOrdersPage() {
   }, []);
 
   const { data: listData, isLoading } = useQuery<{ orders: ExternalOrder[]; total: number }>({
-    queryKey: ["external-orders", debouncedSearch, invoiceStatusFilter, page],
+    queryKey: ["external-orders", debouncedSearch, invoiceStatusFilter, duplicateStatusFilter, page],
     queryFn: async () => {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (invoiceStatusFilter !== "ALL") params.set("invoiceStatus", invoiceStatusFilter);
+      if (duplicateStatusFilter !== "ALL") params.set("duplicateStatus", duplicateStatusFilter);
       const res = await fetch(`/api/external-orders?${params}`);
       if (!res.ok) throw new Error("加载失败");
       return res.json();
@@ -180,7 +192,10 @@ export default function ExternalOrdersPage() {
   });
 
   // Detail + invoices
-  const { data: detailData } = useQuery<{ order: ExternalOrder & { invoiceRequests: InvoiceRecord[] } }>({
+  const { data: detailData } = useQuery<{
+    order: ExternalOrder & { invoiceRequests: InvoiceRecord[]; reviewedBy?: { id: string; name: string } | null; mergedInto?: { id: string; externalOrderNo: string; source: string } | null };
+    duplicateGroup: Array<{ id: string; externalOrderNo: string; source: string; platform: string | null; receiverName: string | null; receiverPhone: string | null; paidAmount: number | null; orderAt: string | null; productNamesRaw: string | null; duplicateStatus: string }>;
+  }>({
     queryKey: ["external-order-detail", detailOrder?.id],
     queryFn: async () => {
       const res = await fetch(`/api/external-orders/${detailOrder!.id}`);
@@ -190,6 +205,10 @@ export default function ExternalOrdersPage() {
     enabled: !!detailOrder,
   });
   const detailInvoices: InvoiceRecord[] = detailData?.order?.invoiceRequests || [];
+  const duplicateGroup = detailData?.duplicateGroup || [];
+  const detailOrderData = (detailData?.order ?? detailOrder) as ExternalOrder;
+  const detailReviewedBy = detailData?.order?.reviewedBy;
+  const detailMergedInto = detailData?.order?.mergedInto;
 
   const invalidateDetail = useCallback(() => {
     if (detailOrder) {
@@ -197,6 +216,7 @@ export default function ExternalOrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["external-orders"] });
     }
   }, [queryClient, detailOrder]);
+
 
   const statusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
@@ -242,6 +262,52 @@ export default function ExternalOrdersPage() {
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  const dedupMutation = useMutation({
+    mutationFn: async ({ id, duplicateStatus, reviewNote }: { id: string; duplicateStatus: string; reviewNote?: string }) => {
+      const res = await fetch(`/api/external-orders/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duplicateStatus, reviewNote }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "操作失败");
+      return data;
+    },
+    onSuccess: () => { toast.success("去重状态已更新"); invalidateDetail(); },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const mergeMutation = useMutation({
+    mutationFn: async ({ sourceId, masterId }: { sourceId: string; masterId: string }) => {
+      const res = await fetch(`/api/external-orders/${sourceId}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ masterId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "合并失败");
+      return data;
+    },
+    onSuccess: () => { toast.success("合并完成"); invalidateDetail(); },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const scanDuplicatesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/external-orders/duplicates?scan=1");
+      if (!res.ok) throw new Error("扫描失败");
+      return res.json();
+    },
+    onSuccess: (data: { groups: Array<{ orders: Array<unknown> }> }) => {
+      toast.success(`扫描完成，发现 ${data.groups.length} 个疑似重复组`);
+      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const [dedupReviewNote, setDedupReviewNote] = useState("");
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
 
   const copyText = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); toast.success("已复制到剪贴板"); }
@@ -300,9 +366,15 @@ export default function ExternalOrdersPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">外部订单</h1>
-        <Button size="sm" onClick={() => setImportOpen(true)}>
-          <Upload className="mr-1 h-3.5 w-3.5" /> 导入订单
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" disabled={scanDuplicatesMutation.isPending} onClick={() => scanDuplicatesMutation.mutate()}>
+            {scanDuplicatesMutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+            扫描重复
+          </Button>
+          <Button size="sm" onClick={() => setImportOpen(true)}>
+            <Upload className="mr-1 h-3.5 w-3.5" /> 导入订单
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
@@ -323,6 +395,17 @@ export default function ExternalOrdersPage() {
             <SelectItem value="DRAFT">草稿</SelectItem>
             <SelectItem value="REQUESTED">已申请</SelectItem>
             <SelectItem value="ISSUED">已开票</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={duplicateStatusFilter} onValueChange={(v) => { if (v) { setDuplicateStatusFilter(v); setPage(1); } }}>
+          <SelectTrigger className="w-32 h-9"><SelectDisplay label="去重" valueLabel={DEDUP_STATUS_LABELS[duplicateStatusFilter] || "未知"} /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="UNREVIEWED">待审查</SelectItem>
+            <SelectItem value="DUPLICATE">已确认重复</SelectItem>
+            <SelectItem value="UNIQUE">唯一</SelectItem>
+            <SelectItem value="MERGED">已合并</SelectItem>
+            <SelectItem value="IGNORED">已忽略</SelectItem>
           </SelectContent>
         </Select>
         {orders.length > 0 && (
@@ -369,6 +452,15 @@ export default function ExternalOrdersPage() {
                     <Badge variant={INVOICE_STATUS_VARIANTS[order.invoiceStatus] || "outline"} className="text-[10px] shrink-0">
                       {INVOICE_STATUS_LABELS[order.invoiceStatus] || order.invoiceStatus}
                     </Badge>
+                    {order.duplicateGroupId && order.duplicateStatus === "UNREVIEWED" && (
+                      <Badge variant="default" className="text-[10px] shrink-0 bg-amber-100 text-amber-700 hover:bg-amber-100">疑似重复</Badge>
+                    )}
+                    {order.duplicateStatus === "DUPLICATE" && (
+                      <Badge variant="destructive" className="text-[10px] shrink-0">已确认重复</Badge>
+                    )}
+                    {order.duplicateStatus === "MERGED" && (
+                      <Badge variant="outline" className="text-[10px] shrink-0">已合并</Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0 text-sm">
                     {order.paidAmount != null && <span className="font-medium">¥{formatAmount(order.paidAmount)}</span>}
@@ -462,6 +554,108 @@ export default function ExternalOrdersPage() {
                 </Button>
               </div>
               <OrderDetail order={detailOrder} />
+
+              {/* Dedup Review Panel */}
+              {(duplicateGroup.length > 0 || detailOrderData.duplicateGroupId || detailOrderData.mergedIntoId || detailMergedInto) && (
+                <div className="border-t pt-3 space-y-2">
+                  <h4 className="text-sm font-medium">去重审查</h4>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={DEDUP_STATUS_VARIANTS[detailOrderData.duplicateStatus] || "outline"} className="text-[10px]">
+                      {DEDUP_STATUS_LABELS[detailOrderData.duplicateStatus] || detailOrderData.duplicateStatus}
+                    </Badge>
+                    {detailReviewedBy && (
+                      <span className="text-xs text-muted-foreground">审查人：{detailReviewedBy.name}</span>
+                    )}
+                    {detailMergedInto && (
+                      <span className="text-xs text-muted-foreground">
+                        已合并到：{detailMergedInto.externalOrderNo}（{detailMergedInto.source}）
+                      </span>
+                    )}
+                  </div>
+
+                  {duplicateGroup.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">疑似重复订单：</p>
+                      {duplicateGroup.map((dup) => (
+                        <div key={dup.id} className="flex items-center gap-2 text-xs p-2 bg-muted/50 rounded">
+                          <span className="font-mono">{dup.externalOrderNo}</span>
+                          <span className="text-muted-foreground">{dup.source}</span>
+                          {dup.receiverName && <span className="text-muted-foreground">{dup.receiverName}</span>}
+                          {dup.paidAmount != null && <span>¥{formatAmount(dup.paidAmount)}</span>}
+                          {dup.duplicateStatus !== "UNREVIEWED" && (
+                            <Badge variant={DEDUP_STATUS_VARIANTS[dup.duplicateStatus] || "outline"} className="text-[10px]">
+                              {DEDUP_STATUS_LABELS[dup.duplicateStatus]}
+                            </Badge>
+                          )}
+                          {mergeTargetId === dup.id ? (
+                            <span className="text-amber-600 text-[10px] ml-auto">确认将发票合并到此订单？</span>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  {detailOrderData.duplicateStatus !== "MERGED" && !detailMergedInto && (
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {detailOrderData.duplicateStatus === "UNREVIEWED" && (
+                        <>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => dedupMutation.mutate({ id: detailOrderData.id, duplicateStatus: "UNIQUE", reviewNote: dedupReviewNote || undefined })}>
+                            标记唯一
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => dedupMutation.mutate({ id: detailOrderData.id, duplicateStatus: "DUPLICATE", reviewNote: dedupReviewNote || undefined })}>
+                            标记重复
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => dedupMutation.mutate({ id: detailOrderData.id, duplicateStatus: "IGNORED", reviewNote: dedupReviewNote || undefined })}>
+                            忽略此组
+                          </Button>
+                        </>
+                      )}
+                      {detailOrderData.duplicateStatus === "DUPLICATE" && duplicateGroup.length > 0 && (
+                        <>
+                          {mergeTargetId ? (
+                            <>
+                              <Button size="sm" className="h-7 text-xs" disabled={mergeMutation.isPending} onClick={() => mergeMutation.mutate({ sourceId: detailOrderData.id, masterId: mergeTargetId })}>
+                                {mergeMutation.isPending ? "合并中..." : "确认合并"}
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setMergeTargetId(null)}>取消</Button>
+                            </>
+                          ) : (
+                            duplicateGroup.map((dup) => (
+                              <Button key={dup.id} size="sm" variant="outline" className="h-7 text-xs" onClick={() => setMergeTargetId(dup.id)}>
+                                合并到 {dup.externalOrderNo}
+                              </Button>
+                            ))
+                          )}
+                        </>
+                      )}
+                      {(detailOrderData.duplicateStatus === "DUPLICATE" || detailOrderData.duplicateStatus === "UNIQUE" || detailOrderData.duplicateStatus === "IGNORED") && (
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => dedupMutation.mutate({ id: detailOrderData.id, duplicateStatus: "UNREVIEWED", reviewNote: dedupReviewNote || undefined })}>
+                          撤销标记
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-2">
+                    <Textarea
+                      value={dedupReviewNote}
+                      onChange={(e) => setDedupReviewNote(e.target.value)}
+                      placeholder="审查备注（保存时随操作一起提交）"
+                      rows={1} className="text-xs resize-none flex-1"
+                    />
+                    {dedupReviewNote && (
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { dedupMutation.mutate({ id: detailOrderData.id, duplicateStatus: detailOrderData.duplicateStatus, reviewNote: dedupReviewNote }); setDedupReviewNote(""); }}>
+                        保存备注
+                      </Button>
+                    )}
+                  </div>
+                  {detailOrderData.reviewNote && (
+                    <p className="text-xs text-muted-foreground">备注：{detailOrderData.reviewNote}</p>
+                  )}
+                </div>
+              )}
+
               <div className="border-t pt-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-medium">开票申请</h4>

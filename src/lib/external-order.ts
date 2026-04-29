@@ -324,6 +324,22 @@ export function buildInvoicePrefillFromOrder(order: {
   };
 }
 
+export const DUPLICATE_STATUS = {
+  UNREVIEWED: "UNREVIEWED",
+  UNIQUE: "UNIQUE",
+  DUPLICATE: "DUPLICATE",
+  MERGED: "MERGED",
+  IGNORED: "IGNORED",
+} as const;
+
+export const VALID_DUPLICATE_TRANSITIONS: Record<string, string[]> = {
+  UNREVIEWED: ["UNIQUE", "DUPLICATE", "IGNORED"],
+  UNIQUE: ["UNREVIEWED"],
+  DUPLICATE: ["UNREVIEWED", "MERGED"],
+  IGNORED: ["UNREVIEWED"],
+  MERGED: [],
+};
+
 const STATUS_PRIORITY: Record<string, number> = {
   ISSUED: 4, REQUESTED: 3, DRAFT: 2, CANCELLED: 1, NONE: 0,
 };
@@ -349,4 +365,261 @@ export async function syncOrderInvoiceStatus(
     where: { id: externalOrderId },
     data: { invoiceStatus: highest },
   });
+}
+
+// --- Dedup ---
+
+export interface DuplicateGroup {
+  groupKey: string;
+  matchRule: string;
+  confidence: number;
+  orders: Array<{
+    id: string;
+    externalOrderNo: string;
+    source: string;
+    platform: string | null;
+    receiverName: string | null;
+    receiverPhone: string | null;
+    paidAmount: number | null;
+    orderAt: Date | null;
+    productNamesRaw: string | null;
+    duplicateStatus: string;
+  }>;
+}
+
+function normalize(s: string | null): string {
+  return (s || "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function isClose(a: number | null, b: number | null, tolerance: number): boolean {
+  if (a == null || b == null || a === 0 || b === 0) return false;
+  return Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b)) <= tolerance;
+}
+
+function daysBetween(a: Date | null, b: Date | null): number | null {
+  if (!a || !b) return null;
+  return Math.abs(a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24);
+}
+
+function productOverlap(a: string | null, b: string | null): number {
+  if (!a || !b) return 0;
+  const wordsA = new Set(a.split(/[,，;；、\s]+/).filter(Boolean));
+  const wordsB = new Set(b.split(/[,，;；、\s]+/).filter(Boolean));
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  let overlap = 0;
+  for (const w of wordsA) {
+    if (wordsB.has(w)) overlap++;
+  }
+  return overlap / Math.min(wordsA.size, wordsB.size);
+}
+
+interface OrderPair {
+  id: string;
+  externalOrderNo: string;
+  source: string;
+  platform: string | null;
+  merchantOrderNo: string | null;
+  receiverName: string | null;
+  receiverPhone: string | null;
+  paidAmount: number | null;
+  orderAt: Date | null;
+  productNamesRaw: string | null;
+  duplicateGroupId: string | null;
+  duplicateStatus: string;
+}
+
+export async function computeDuplicateGroups(
+  prisma: PrismaClient,
+  forceScan: boolean,
+): Promise<DuplicateGroup[]> {
+  const orders = await prisma.externalOrder.findMany({
+    where: { mergedIntoId: null },
+    select: {
+      id: true,
+      externalOrderNo: true,
+      source: true,
+      platform: true,
+      merchantOrderNo: true,
+      receiverName: true,
+      receiverPhone: true,
+      paidAmount: true,
+      orderAt: true,
+      productNamesRaw: true,
+      duplicateGroupId: true,
+      duplicateStatus: true,
+    },
+  });
+
+  // forceScan: re-scan UNREVIEWED orders only (skip manually reviewed ones)
+  const manualStatuses = new Set(["UNIQUE", "IGNORED", "DUPLICATE", "MERGED"]);
+  const reviewedIds = new Set(orders.filter((o) => manualStatuses.has(o.duplicateStatus)).map((o) => o.id));
+
+  let ungrouped = orders.filter((o) => !o.duplicateGroupId && !reviewedIds.has(o.id));
+  let rescanIds: string[] = [];
+  if (forceScan) {
+    // Also include UNREVIEWED orders that already have a group (re-scan them)
+    rescanIds = orders.filter((o) => o.duplicateGroupId && o.duplicateStatus === "UNREVIEWED").map((o) => o.id);
+    if (rescanIds.length > 0) {
+      // Clear stale groupIds before re-scan
+      await prisma.externalOrder.updateMany({
+        where: { id: { in: rescanIds } },
+        data: { duplicateGroupId: null },
+      });
+      ungrouped = [...ungrouped, ...orders.filter((o) => rescanIds.includes(o.id))];
+    }
+  }
+
+  if (ungrouped.length === 0) {
+    // Return existing groups
+    const existing = orders.filter((o) => o.duplicateGroupId);
+    return groupOrdersByKey(existing);
+  }
+
+  // Assign group slugs to ungrouped orders
+  const ungroupedMutable = ungrouped.map((o) => ({ ...o, _group: "" })) as Array<OrderPair & { _group: string }>;
+  const parent = new Map<string, string>();
+
+  function find(k: string): string {
+    let p = parent.get(k);
+    while (p && parent.has(p)) {
+      const gp = parent.get(p);
+      if (!gp) break;
+      p = gp;
+    }
+    return p || k;
+  }
+
+  function union(a: string, b: string) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+
+  // Layer 1: Strong rules — same externalOrderNo across sources
+  const byOrderNo = new Map<string, Array<typeof ungroupedMutable[0]>>();
+  for (const o of ungroupedMutable) {
+    const key = normalize(o.externalOrderNo);
+    if (!byOrderNo.has(key)) byOrderNo.set(key, []);
+    byOrderNo.get(key)!.push(o);
+  }
+  for (const [, group] of byOrderNo) {
+    const distinctSources = new Set(group.map((o) => o.source));
+    if (distinctSources.size > 1) {
+      for (let i = 1; i < group.length; i++) union(group[0].id, group[i].id);
+    }
+  }
+
+  // Layer 1 extra: merchantOrderNo matches another order's externalOrderNo
+  for (const o of ungroupedMutable) {
+    if (!o.merchantOrderNo) continue;
+    const key = normalize(o.merchantOrderNo);
+    const others = byOrderNo.get(key);
+    if (others) {
+      for (const other of others) {
+        if (other.id !== o.id && other.source !== o.source) {
+          union(o.id, other.id);
+        }
+      }
+    }
+  }
+
+  // Layer 2: Weak rules
+  for (let i = 0; i < ungroupedMutable.length; i++) {
+    for (let j = i + 1; j < ungroupedMutable.length; j++) {
+      const a = ungroupedMutable[i];
+      const b = ungroupedMutable[j];
+      if (a.source === b.source) continue;
+      if (find(a.id) === find(b.id)) continue;
+
+      let score = 0;
+      const nameA = normalize(a.receiverName);
+      const nameB = normalize(b.receiverName);
+      const phoneA = normalize(a.receiverPhone);
+      const phoneB = normalize(b.receiverPhone);
+
+      if (nameA && nameA === nameB) {
+        if (phoneA && phoneA === phoneB) {
+          score = 0.9;
+        } else if (isClose(a.paidAmount, b.paidAmount, 0.05) && daysBetween(a.orderAt, b.orderAt) !== null && daysBetween(a.orderAt, b.orderAt)! <= 7) {
+          score = 0.7;
+        } else {
+          score = 0.4;
+        }
+      }
+      if (score < 0.5 && phoneA && phoneA === phoneB && productOverlap(a.productNamesRaw, b.productNamesRaw) >= 0.5) {
+        score = 0.6;
+      }
+
+      if (score >= 0.5) {
+        union(a.id, b.id);
+      }
+    }
+  }
+
+  // Collect groups
+  const groupMap = new Map<string, string[]>(); // rootId -> memberIds
+  for (const o of ungroupedMutable) {
+    const root = find(o.id);
+    if (root !== o.id || parent.has(o.id)) {
+      if (!groupMap.has(root)) groupMap.set(root, []);
+      groupMap.get(root)!.push(o.id);
+    }
+  }
+
+  // Persist groupIds
+  const groupKeyMap = new Map<string, string>();
+  for (const [root, members] of groupMap) {
+    const all = [root, ...members];
+    const groupKey = `dup_${all.sort().join("_").slice(0, 40)}`;
+    for (const id of all) {
+      groupKeyMap.set(id, groupKey);
+    }
+  }
+
+  if (groupKeyMap.size > 0) {
+    const updates: Array<Promise<unknown>> = [];
+    for (const [id, gk] of groupKeyMap) {
+      updates.push(
+        prisma.externalOrder.update({
+          where: { id },
+          data: { duplicateGroupId: gk, duplicateStatus: "UNREVIEWED" },
+        }),
+      );
+    }
+    await Promise.all(updates);
+  }
+
+  // Merge existing + new groups and return
+  // For orders that were scanned (ungrouped + rescanIds), only use newly assigned groupId;
+  // orders not in this scan preserve their existing duplicateGroupId.
+  const scannedIds = new Set(ungrouped.map((o) => o.id));
+  if (rescanIds.length > 0) for (const rid of rescanIds) scannedIds.add(rid);
+
+  const allOrders = orders.map((o) => ({
+    ...o,
+    duplicateGroupId: scannedIds.has(o.id)
+      ? (groupKeyMap.get(o.id) || null)
+      : o.duplicateGroupId,
+  }));
+  return groupOrdersByKey(allOrders);
+}
+
+function groupOrdersByKey(orders: Array<{ duplicateGroupId: string | null } & OrderPair>): DuplicateGroup[] {
+  const map = new Map<string, DuplicateGroup>();
+  for (const o of orders) {
+    const gk = o.duplicateGroupId;
+    if (!gk) continue;
+    if (!map.has(gk)) {
+      map.set(gk, {
+        groupKey: gk,
+        matchRule: "auto",
+        confidence: 0.8,
+        orders: [],
+      });
+    }
+    const { duplicateGroupId: _gid, ...rest } = o;
+    void _gid;
+    map.get(gk)!.orders.push(rest);
+  }
+  return Array.from(map.values()).filter((g) => g.orders.length > 1);
 }

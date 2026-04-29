@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { validateCheckinVoiceUrl } from "@/lib/crm/media";
 
 export async function PATCH(
   req: NextRequest,
@@ -24,12 +25,24 @@ export async function PATCH(
   const body = await req.json();
   const data: Record<string, unknown> = {};
 
+  // Accept voice URL (audio upload) — validate path and extension
+  if (body.voiceUrl) {
+    if (typeof body.voiceUrl !== "string" || !validateCheckinVoiceUrl(body.voiceUrl, checkinId)) {
+      return NextResponse.json({ error: "无效的语音文件路径" }, { status: 400 });
+    }
+    data.voiceUrl = body.voiceUrl;
+    if (!checkin.voiceUrl && checkin.asrStatus === "NONE") {
+      data.asrStatus = "UPLOADED";
+    }
+  }
+
   if (body.status === "COMPLETED") {
     const hasGeo = checkin.lat != null && checkin.lng != null;
     const hasPhoto = checkin.media.length > 0;
-    if (!hasGeo && !hasPhoto) {
+    const hasValidVoice = !!(data.voiceUrl || (checkin.voiceUrl && validateCheckinVoiceUrl(checkin.voiceUrl, checkinId)));
+    if (!hasGeo && !hasPhoto && !hasValidVoice) {
       return NextResponse.json(
-        { error: "完成签到需要定位成功或至少上传1张照片" },
+        { error: "完成签到需要定位成功、至少上传1张照片或上传录音" },
         { status: 400 }
       );
     }

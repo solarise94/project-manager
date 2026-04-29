@@ -3,7 +3,7 @@
 export interface FormFieldSchema {
   key: string;
   label: string;
-  type: "string" | "date" | "enum";
+  type: "string" | "date" | "enum" | "number";
   required?: boolean;
   enumValues?: Record<string, string>;
   searchable?: boolean;

@@ -29,6 +29,15 @@ export const projectCreateSchema: FormSchema = {
     },
     { key: "startDate", label: "开始日期", type: "date", normalizer: "date" },
     { key: "endDate", label: "结束日期", type: "date", normalizer: "date" },
+    { key: "progress", label: "项目进度", type: "number" },
+    { key: "projectType", label: "项目类型", type: "enum", enumValues: { "商品": "商品", "服务": "服务" } },
+    { key: "projectContent", label: "项目内容", type: "string" },
+    { key: "quantity", label: "数量", type: "number" },
+    { key: "procurementSource", label: "采购渠道", type: "string" },
+    { key: "brand", label: "品牌", type: "string" },
+    { key: "techSupport", label: "技术支持", type: "string" },
+    { key: "budgetAmount", label: "项目金额", type: "number" },
+    { key: "budgetCost", label: "项目成本", type: "number" },
   ],
 };
 

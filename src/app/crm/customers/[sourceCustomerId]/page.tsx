@@ -15,7 +15,7 @@ import { INTERACTION_TYPE_LABELS, ADDRESS_SOURCE_LABELS, RELATION_STRENGTH_LABEL
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmInteractionItem, CrmVisitCheckinItem, CrmCustomerAddressItem, CrmRelationItem } from "@/lib/crm/types";
 import { toast } from "sonner";
-import { ArrowLeft, Phone, Mail, Building2, Pencil } from "lucide-react";
+import { ArrowLeft, Phone, Mail, Building2, Pencil, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { CustomerEditDialog } from "@/components/crm/customer-edit-dialog";
@@ -189,6 +189,62 @@ function InteractionsTab({ profileId, interactions, sourceCustomerId }: { profil
   );
 }
 
+function NearbyPois({ lat, lng }: { lat: number; lng: number }) {
+  const [enabled, setEnabled] = useState(false);
+  const { data, isFetching } = useQuery({
+    queryKey: ["reverse-geocode", lat, lng],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/maps/reverse-geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lng }),
+      });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled,
+    staleTime: Infinity,
+  });
+
+  if (!enabled) {
+    return (
+      <button className="text-xs text-muted-foreground hover:text-foreground mt-1" onClick={() => setEnabled(true)}>
+        查看附近地点
+      </button>
+    );
+  }
+
+  if (isFetching) {
+    return <p className="text-xs text-muted-foreground mt-1">加载中...</p>;
+  }
+
+  const result = data?.result;
+  const pois = (result?.pois ?? []) as Array<{ name: string; distance: number }>;
+  if (!result || (!result.formattedAddress && pois.length === 0)) {
+    return <p className="text-xs text-muted-foreground mt-1">未找到附近地点</p>;
+  }
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      {result.formattedAddress && (
+        <p className="text-xs text-muted-foreground">推荐地址：{result.formattedAddress}</p>
+      )}
+      {pois.length > 0 && (
+        <div className="text-xs text-muted-foreground">
+          <span>附近地点：</span>
+          {pois.slice(0, 5).map((p, i) => (
+            <span key={i}>
+              {i > 0 && "、"}
+              {p.name}
+              {p.distance > 0 && <span className="text-muted-foreground/60">{Math.round(p.distance)}m</span>}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CheckinsTab({ profileId, checkins, sourceCustomerId }: { profileId: string; checkins: CrmVisitCheckinItem[]; sourceCustomerId: string }) {
   return (
     <div>
@@ -211,8 +267,20 @@ function CheckinsTab({ profileId, checkins, sourceCustomerId }: { profileId: str
                   <span className="text-xs text-muted-foreground ml-auto">{c.user.name}</span>
                 </div>
                 {c.addressSnapshot && <p className="text-sm">{c.addressSnapshot}</p>}
+                {c.lat != null && c.lng != null && <NearbyPois lat={c.lat} lng={c.lng} />}
+                {c.summaryTitle && <p className="text-sm font-medium mt-1">{c.summaryTitle}</p>}
+                {c.summary && <p className="text-xs text-muted-foreground mt-0.5">{c.summary}</p>}
+                {c.transcript && (
+                  <details className="mt-1">
+                    <summary className="text-xs text-muted-foreground cursor-pointer">查看转写文本</summary>
+                    <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1 max-h-24 overflow-y-auto">{c.transcript}</p>
+                  </details>
+                )}
+                {c.asrStatus === "TRANSCRIBING" && <p className="text-xs text-muted-foreground mt-1"><Loader2 className="h-3 w-3 inline animate-spin mr-1" />识别中...</p>}
+                {c.asrStatus === "FAILED" && <p className="text-xs text-red-500 mt-1">语音识别失败</p>}
                 <div className="text-xs text-muted-foreground mt-1">
                   {c.lat != null ? `${c.lat.toFixed(6)}, ${c.lng!.toFixed(6)}` : "无定位"}
+                  {c.voiceUrl && " · 有录音"}
                   {` · ${c.photoCount || 0} 张照片`}
                 </div>
                 {c.media?.length > 0 && (

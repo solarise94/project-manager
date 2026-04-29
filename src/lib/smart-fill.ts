@@ -8,6 +8,15 @@ export interface SmartFillResult {
   status?: string;
   startDate?: string;
   endDate?: string;
+  progress?: number;
+  projectType?: string;
+  projectContent?: string;
+  quantity?: number;
+  procurementSource?: string;
+  brand?: string;
+  techSupport?: string;
+  budgetAmount?: number;
+  budgetCost?: number;
 }
 
 function splitLine(line: string): string[] {
@@ -41,6 +50,23 @@ function mapStatus(statusStr: string): string | undefined {
   return map[statusStr] || undefined;
 }
 
+function parseNumber(s: string): number | undefined {
+  if (!s) return undefined;
+  const cleaned = s.replace(/[%¥￥,\s元]/g, "").trim();
+  if (!cleaned) return undefined;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseProgress(s: string): number | undefined {
+  if (!s) return undefined;
+  // Handle "30%" or plain number
+  const cleaned = s.replace(/%/g, "").trim();
+  const n = Number(cleaned);
+  if (Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(n)));
+  return undefined;
+}
+
 export function parseSmartFill(text: string): SmartFillResult {
   const lines = text.trim().split(/\n/).filter((l) => l.trim());
   if (lines.length === 0) throw new Error("请输入文本内容");
@@ -55,41 +81,72 @@ export function parseSmartFill(text: string): SmartFillResult {
 
   const result: SmartFillResult = {};
 
-  // Column mapping based on the template:
+  // Column mapping (Feishu export):
   // 0: orderNumber, 1: internal code, 2: organization, 3: client, 4: representative,
-  // 5: contact, 6: type, 7: name, 8: quantity, 9: spec, 10: sub-unit, 11: status,
-  // 12: startDate, 13: endDate
+  // 5: techSupport, 6: projectType, 7: projectContent, 8: quantity,
+  // 9: procurementSource, 10: brand, 11: progress/status,
+  // 12: startDate, 13: endDate, 14: (unused),
+  // 15: budgetAmount, 16-17: progress payments, 18: budgetCost
 
   if (cols[0]) result.orderNumber = cols[0];
   if (cols[2]) result.organization = cols[2];
   if (cols[3]) result.client = cols[3];
   if (cols[4]) result.representative = cols[4];
+  if (cols[5]) result.techSupport = cols[5];
+  if (cols[6]) {
+    const rawType = cols[6];
+    if (/商品|货物|产品/.test(rawType)) result.projectType = "商品";
+    else if (/服务|技术|实验/.test(rawType)) result.projectType = "服务";
+    else result.projectType = rawType;
+  }
+  if (cols[7]) result.projectContent = cols[7];
+  if (cols[8]) result.quantity = parseNumber(cols[8]);
+  if (cols[9]) result.procurementSource = cols[9];
+  if (cols[10]) result.brand = cols[10];
 
-  // Combine type and name for the project name
-  const typeStr = cols[6] || "";
+  // Build project name from projectContent (preferred) or fallback
   const contentStr = cols[7] || "";
   if (contentStr) {
     result.name = contentStr;
-    if (typeStr) {
-      result.description = `类型：${typeStr}${cols[8] ? `，数量：${cols[8]}` : ""}${cols[9] ? `，规格：${cols[9]}` : ""}`;
+    const typeStr = cols[6] || "";
+    const parts: string[] = [];
+    if (typeStr) parts.push(`类型：${typeStr}`);
+    if (result.quantity != null) parts.push(`数量：${result.quantity}`);
+    if (parts.length > 0) {
+      result.description = parts.join("，");
+    }
+  } else {
+    // Legacy fallback: name from col 7 of old template
+    const oldName = cols[7] || "";
+    if (oldName) {
+      result.name = oldName;
+      const oldType = cols[6] || "";
+      if (oldType) {
+        result.description = `类型：${oldType}${cols[8] ? `，数量：${cols[8]}` : ""}${cols[9] ? `，规格：${cols[9]}` : ""}`;
+      }
     }
   }
 
+  // Col 11: could be progress (number/percentage) or status text
   if (cols[11]) {
-    const mapped = mapStatus(cols[11]);
-    if (mapped) result.status = mapped;
+    const progress = parseProgress(cols[11]);
+    if (progress !== undefined) {
+      result.progress = progress;
+    } else {
+      const mapped = mapStatus(cols[11]);
+      if (mapped) result.status = mapped;
+    }
   }
 
-  // Date handling: first date = startDate, second date = endDate (if present)
-  const dateCols = cols.slice(12).filter((c) => c && /^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(c.trim()));
-  if (dateCols.length >= 1) {
-    const s = convertDate(dateCols[0]);
-    if (s) result.startDate = s;
-  }
-  if (dateCols.length >= 2) {
-    const e = convertDate(dateCols[1]);
-    if (e) result.endDate = e;
-  }
+  // Date handling: cols 12 and 13
+  const dateStart = convertDate(cols[12]);
+  if (dateStart) result.startDate = dateStart;
+  const dateEnd = convertDate(cols[13]);
+  if (dateEnd) result.endDate = dateEnd;
+
+  // Budget fields (cols 15, 18)
+  if (cols[15]) result.budgetAmount = parseNumber(cols[15]);
+  if (cols[18]) result.budgetCost = parseNumber(cols[18]);
 
   return result;
 }

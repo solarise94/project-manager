@@ -79,6 +79,11 @@ export interface CrmVisitCheckinItem {
   mapProvider: string | null;
   photoCount: number;
   status: string;
+  voiceUrl: string | null;
+  transcript: string | null;
+  summaryTitle: string | null;
+  summary: string | null;
+  asrStatus: string;
   completedAt: string | null;
   createdAt: string;
   media: CrmVisitMediaItem[];

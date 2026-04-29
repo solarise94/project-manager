@@ -19,5 +19,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Geocode failed" }, { status: 502 });
   }
 
-  return NextResponse.json({ result: { address: result.address, province: result.province, city: result.city, district: result.district } });
+  return NextResponse.json({
+    result: {
+      address: result.address,
+      formattedAddress: result.formattedAddress,
+      province: result.province,
+      city: result.city,
+      district: result.district,
+      pois: result.pois,
+    },
+  });
 }

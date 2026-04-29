@@ -39,7 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { RepresentativeSelect } from "@/components/representative-select";
@@ -152,6 +152,16 @@ export default function ProjectDetailPage() {
       return res.json();
     },
   });
+
+  const { data: channelsData } = useQuery<{ channels: { id: string; name: string }[] }>({
+    queryKey: ["procurement-channels"],
+    queryFn: async () => {
+      const res = await fetch("/api/procurement-channels");
+      if (!res.ok) throw new Error("Failed to load channels");
+      return res.json();
+    },
+  });
+  const channels = channelsData?.channels || [];
 
   const updateMutation = useMutation({
     mutationFn: async (payload: Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }>) => {
@@ -591,7 +601,7 @@ export default function ProjectDetailPage() {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">状态</label>
                     <Select value={editForm.status || "NOT_STARTED"} onValueChange={(v) => setEditForm({ ...editForm, status: v || "NOT_STARTED" })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger><span>{STATUS_CONFIG[editForm.status || "NOT_STARTED"]?.label || "未开始"}</span></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="NOT_STARTED">未开始</SelectItem>
                         <SelectItem value="IN_PROGRESS">进行中</SelectItem>
@@ -665,7 +675,7 @@ export default function ProjectDetailPage() {
                     <div className="space-y-2">
                       <label className="text-sm font-medium">项目类型</label>
                       <Select value={editForm.projectType || ""} onValueChange={(v) => setEditForm({ ...editForm, projectType: v })}>
-                        <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+                        <SelectTrigger><span>{editForm.projectType || "选择类型"}</span></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="商品">商品</SelectItem>
                           <SelectItem value="服务">服务</SelectItem>
@@ -684,7 +694,18 @@ export default function ProjectDetailPage() {
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">采购渠道</label>
-                      <Input value={editForm.procurementSource || ""} onChange={(e) => setEditForm({ ...editForm, procurementSource: e.target.value })} placeholder="笙源/高精等" />
+                      <Select value={editForm.procurementSource || ""} onValueChange={(v) => setEditForm({ ...editForm, procurementSource: v || "" })}>
+                        <SelectTrigger><span>{editForm.procurementSource || "选择渠道"}</span></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">无</SelectItem>
+                          {editForm.procurementSource && !channels.some((c) => c.name === editForm.procurementSource) && (
+                            <SelectItem value={editForm.procurementSource}>历史：{editForm.procurementSource}</SelectItem>
+                          )}
+                          {channels.map((c) => (
+                            <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -920,7 +941,7 @@ export default function ProjectDetailPage() {
                                   onValueChange={(newStatus) => { if (newStatus) updateTicketMutation.mutate({ ticketId: ticket.id, status: newStatus }); }}
                                 >
                                   <SelectTrigger className="h-7 text-xs w-auto min-w-[80px]">
-                                    <SelectValue />
+                                    <span>{ticket.status === "OPEN" ? "打开" : ticket.status === "IN_PROGRESS" ? "处理中" : ticket.status === "CLOSED" ? "已关闭" : ticket.status}</span>
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="OPEN">打开</SelectItem>
@@ -1105,7 +1126,7 @@ export default function ProjectDetailPage() {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">优先级</label>
                     <Select value={ticketForm.priority} onValueChange={(v) => setTicketForm({ ...ticketForm, priority: v || "MEDIUM" })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger><span>{ticketForm.priority === "LOW" ? "低" : ticketForm.priority === "MEDIUM" ? "中" : ticketForm.priority === "HIGH" ? "高" : ticketForm.priority === "URGENT" ? "紧急" : "中"}</span></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="LOW">低</SelectItem>
                         <SelectItem value="MEDIUM">中</SelectItem>

@@ -24,6 +24,15 @@ const projectSmartFill: FormDraftPlugin = {
     if (result.status) fields.status = result.status;
     if (result.startDate) fields.startDate = result.startDate;
     if (result.endDate) fields.endDate = result.endDate;
+    if (result.progress != null) fields.progress = result.progress;
+    if (result.projectType) fields.projectType = result.projectType;
+    if (result.projectContent) fields.projectContent = result.projectContent;
+    if (result.quantity != null) fields.quantity = result.quantity;
+    if (result.procurementSource) fields.procurementSource = result.procurementSource;
+    if (result.brand) fields.brand = result.brand;
+    if (result.techSupport) fields.techSupport = result.techSupport;
+    if (result.budgetAmount != null) fields.budgetAmount = result.budgetAmount;
+    if (result.budgetCost != null) fields.budgetCost = result.budgetCost;
 
     if (!result.name) warnings.push("未能解析出项目名称");
     if (!result.orderNumber) warnings.push("未能解析出订单号");

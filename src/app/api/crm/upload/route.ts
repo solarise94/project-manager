@@ -7,8 +7,16 @@ import path from "path";
 
 const MAX_MB = parseInt(process.env.CRM_VISIT_PHOTO_MAX_MB || "10", 10);
 
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
-const ALLOWED_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"]);
+const ALLOWED_MIME_PREFIXES = ["image/", "audio/"];
+const ALLOWED_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".webm", ".ogg", ".mp3", ".m4a", ".wav", ".aac"]);
+
+function isAllowedMime(mime: string): boolean {
+  return ALLOWED_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix));
+}
+
+function isAudioMime(mime: string): boolean {
+  return mime.startsWith("audio/");
+}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -28,10 +36,12 @@ export async function POST(req: NextRequest) {
 
   const ext = path.extname(file.name).toLowerCase() || ".jpg";
   if (!ALLOWED_EXT.has(ext)) {
-    return NextResponse.json({ error: "仅支持 jpg/png/webp/heic 图片格式" }, { status: 400 });
+    return NextResponse.json({ error: "不支持的文件格式" }, { status: 400 });
   }
-  if (file.type && !ALLOWED_MIME.has(file.type)) {
-    return NextResponse.json({ error: "仅支持 jpg/png/webp/heic 图片格式" }, { status: 400 });
+  const EXT_MIME: Record<string, string> = { ".webm": "audio/webm", ".ogg": "audio/ogg", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav", ".aac": "audio/aac", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".heic": "image/heic", ".heif": "image/heif" };
+  const mime = file.type || EXT_MIME[ext] || "application/octet-stream";
+  if (mime && !isAllowedMime(mime)) {
+    return NextResponse.json({ error: "不支持的文件格式" }, { status: 400 });
   }
 
   const checkin = await prisma.crmVisitCheckin.findUnique({ where: { id: checkinId } });
@@ -50,12 +60,18 @@ export async function POST(req: NextRequest) {
   await writeFile(filepath, buffer);
 
   const url = `/uploads/crm/${checkinId}/${filename}`;
+  const audio = isAudioMime(mime);
+
+  if (audio) {
+    // Audio: don't create CrmVisitMedia, don't increment photoCount
+    return NextResponse.json({ media: { id: "", checkinId, url, mimeType: mime, size: file.size, createdAt: new Date().toISOString() }, audio: true }, { status: 201 });
+  }
 
   const media = await prisma.crmVisitMedia.create({
     data: {
       checkinId,
       url,
-      mimeType: file.type || "image/jpeg",
+      mimeType: mime,
       size: file.size,
     },
   });
@@ -65,5 +81,5 @@ export async function POST(req: NextRequest) {
     data: { photoCount: { increment: 1 } },
   });
 
-  return NextResponse.json({ media }, { status: 201 });
+  return NextResponse.json({ media, audio: false }, { status: 201 });
 }
