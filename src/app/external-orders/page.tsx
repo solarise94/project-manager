@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -57,7 +57,7 @@ interface ExternalOrder {
 }
 
 const INVOICE_STATUS_LABELS: Record<string, string> = {
-  NONE: "未开票", DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票",
+  ALL: "全部状态", NONE: "未开票", DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票",
 };
 const INVOICE_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   NONE: "outline", DRAFT: "secondary", REQUESTED: "default", ISSUED: "outline",
@@ -316,7 +316,7 @@ export default function ExternalOrdersPage() {
           />
         </div>
         <Select value={invoiceStatusFilter} onValueChange={(v) => { if (v) { setInvoiceStatusFilter(v); setPage(1); } }}>
-          <SelectTrigger className="w-32 h-9"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-32 h-9"><SelectDisplay label="开票" valueLabel={INVOICE_STATUS_LABELS[invoiceStatusFilter] || "未知"} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部状态</SelectItem>
             <SelectItem value="NONE">未开票</SelectItem>

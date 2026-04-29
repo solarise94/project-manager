@@ -16,7 +16,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 
@@ -44,6 +44,7 @@ export default function DevLogsPage() {
   const router = useRouter();
   const { data: session, status: authStatus } = useSession();
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const DEVLOG_STATUS_LABELS: Record<string, string> = { ALL: "全部", DRAFT: "草稿", PUBLISHED: "已发布", ARCHIVED: "已归档" };
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -140,7 +141,7 @@ export default function DevLogsPage() {
           <Input placeholder="搜索..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v || "ALL")}>
-          <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-28"><SelectDisplay label="状态" valueLabel={DEVLOG_STATUS_LABELS[statusFilter] || "未知"} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部</SelectItem>
             <SelectItem value="DRAFT">草稿</SelectItem>

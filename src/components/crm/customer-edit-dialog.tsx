@@ -48,10 +48,14 @@ export function CustomerEditDialog({
 
   useEffect(() => {
     if (!open || !customerId) return;
-    setLoading(true);
-    fetch(`/api/customers/${customerId}`)
-      .then((r) => r.json())
-      .then((data) => {
+    let cancelled = false;
+
+    void (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/customers/${customerId}`);
+        const data = await res.json();
+        if (cancelled) return;
         if (data.customer) {
           const c = data.customer;
           const f: CustomerEditForm = {
@@ -69,8 +73,12 @@ export function CustomerEditDialog({
           setForm(f);
           setOriginal(f);
         }
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [open, customerId]);
 
   const mutation = useMutation({

@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { RelationTypeBadge } from "@/components/crm/badges";
 import { CRM_RELATION_TYPES, RELATION_TYPE_LABELS, RELATION_STRENGTH_LABELS } from "@/lib/crm/constants";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRelationItem } from "@/lib/crm/types";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { useState } from "react";
@@ -59,7 +59,7 @@ function RelationsList() {
           className="max-w-xs"
         />
         <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v === "ALL" ? "" : (v || ""))}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="全部类型" /></SelectTrigger>
+          <SelectTrigger className="w-40"><SelectDisplay label="类型" valueLabel={!typeFilter || typeFilter === "ALL" ? "全部类型" : RELATION_TYPE_LABELS[typeFilter] || "未知"} placeholder="全部类型" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部类型</SelectItem>
             {CRM_RELATION_TYPES.map((t) => (
@@ -79,11 +79,11 @@ function RelationsList() {
             <Card key={r.id}>
               <CardContent className="pt-4">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Link href={`/crm/customers/${r.fromCustomerId}`} className="text-sm font-medium text-blue-600 hover:underline">
+                  <Link href={`/crm/customers/${r.fromCustomerId}`} className="text-sm font-medium text-primary hover:underline">
                     {r.fromCustomer.name}
                   </Link>
-                  <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                  <Link href={`/crm/customers/${r.toCustomerId}`} className="text-sm font-medium text-blue-600 hover:underline">
+                  <span className="text-muted-foreground mx-1">→</span>
+                  <Link href={`/crm/customers/${r.toCustomerId}`} className="text-sm font-medium text-primary hover:underline">
                     {r.toCustomer.name}
                   </Link>
                   <RelationTypeBadge type={r.type} />

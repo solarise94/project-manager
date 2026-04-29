@@ -15,7 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
 import { toast } from "sonner";
@@ -63,6 +63,7 @@ export default function OrganizationReviewsPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const [statusFilter, setStatusFilter] = useState("PENDING");
+  const REVIEW_STATUS_LABELS: Record<string, string> = { PENDING: "待审核", APPROVED: "已通过", REJECTED: "已拒绝", CANCELLED: "已取消" };
   const [search, setSearch] = useState("");
   const [approveOpen, setApproveOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -167,7 +168,7 @@ export default function OrganizationReviewsPage() {
           <Input placeholder="搜索..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v || "PENDING")}>
-          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-32"><SelectDisplay label="状态" valueLabel={REVIEW_STATUS_LABELS[statusFilter] || "未知"} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="PENDING">待审核</SelectItem>
             <SelectItem value="APPROVED">已通过</SelectItem>

@@ -28,6 +28,26 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   )
 }
 
+function SelectDisplay({
+  label,
+  valueLabel,
+  placeholder,
+}: {
+  label: string
+  valueLabel?: string
+  placeholder?: string
+}) {
+  const display = valueLabel || placeholder || ""
+  return (
+    <>
+      <span className="shrink-0 text-muted-foreground">{label}：</span>
+      <span className={display ? "truncate" : "truncate text-muted-foreground"}>
+        {display}
+      </span>
+    </>
+  )
+}
+
 function SelectTrigger({
   className,
   size = "default",
@@ -190,6 +210,7 @@ function SelectScrollDownButton({
 export {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectGroup,
   SelectItem,
   SelectLabel,

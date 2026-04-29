@@ -4,10 +4,11 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { INTERACTION_TYPE_LABELS } from "@/lib/crm/constants";
 import { StageBadge } from "@/components/crm/badges";
 import type { CrmDashboardStats } from "@/lib/crm/types";
-import { Users, ClipboardList, AlertTriangle, MapPin } from "lucide-react";
+import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 export default function CrmDashboardPage() {
@@ -21,6 +22,8 @@ export default function CrmDashboardPage() {
 }
 
 function CrmDashboard() {
+  const { data: session } = useSession();
+  const isRep = session?.user?.role === "REPRESENTATIVE";
   const { data, isLoading } = useQuery<{ stats: CrmDashboardStats }>({
     queryKey: ["crm-dashboard"],
     queryFn: () => fetch("/api/crm/dashboard").then((r) => r.json()),
@@ -82,11 +85,75 @@ function CrmDashboard() {
         </Card>
       </div>
 
-      <div className="flex gap-3">
-        <Link href="/crm/customers" className="text-sm text-blue-600 hover:underline">客户池 →</Link>
-        <Link href="/crm/follow-ups" className="text-sm text-blue-600 hover:underline">跟进工作台 →</Link>
-        <Link href="/crm/relations" className="text-sm text-blue-600 hover:underline">关系网络 →</Link>
-        <Link href="/crm/graph" className="text-sm text-blue-600 hover:underline">关系图谱 →</Link>
+      <div className="space-y-4">
+        <h2 className="text-sm font-medium text-muted-foreground">工作台</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Link href="/crm/customers">
+            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <Users className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">客户池</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">管理客户档案和销售阶段</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/crm/customer-applications">
+            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <ClipboardCheck className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{isRep ? "申请新增客户" : "客户申请审核"}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{isRep ? "提交或查看客户准入进度" : "处理代表提交的新客户申请"}</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/crm/follow-ups">
+            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <CalendarClock className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">跟进工作台</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">查看和完成待办跟进任务</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+        <div>
+          <h3 className="text-xs font-medium text-muted-foreground mb-2">分析工具</h3>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/crm/relations">
+              <Button variant="outline" size="sm">
+                <Network className="h-4 w-4 mr-1.5" />
+                关系网络
+              </Button>
+            </Link>
+            <Link href="/crm/graph">
+              <Button variant="outline" size="sm">
+                <Share2 className="h-4 w-4 mr-1.5" />
+                关系图谱
+              </Button>
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

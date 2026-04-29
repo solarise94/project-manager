@@ -4,11 +4,12 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, Clock, AlertCircle, TrendingUp } from "lucide-react";
+import { FolderOpen, FolderPlus, Clock, AlertCircle, TrendingUp, Users, UserPlus, ClipboardList, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 import type { DashboardStats } from "@/lib/types";
+import Link from "next/link";
 
 const STATUS_COLORS: Record<string, string> = {
   NOT_STARTED: "#94a3b8",
@@ -23,6 +24,25 @@ const STATUS_LABELS: Record<string, string> = {
   COMPLETED: "已完成",
   ON_HOLD: "暂停",
 };
+
+type QuickAction = { label: string; href: string; icon: React.ElementType; description: string };
+
+function getQuickActions(role: string | undefined): QuickAction[] {
+  if (role === "REPRESENTATIVE") {
+    return [
+      { label: "我的项目", href: "/projects", icon: FolderOpen, description: "查看参与的项目" },
+      { label: "我的工单", href: "/tickets", icon: AlertCircle, description: "查看分配的工单" },
+      { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: "提交或查看客户准入申请" },
+      { label: "跟进工作台", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
+    ];
+  }
+  return [
+    { label: "新建项目", href: "/projects?create=1", icon: FolderPlus, description: "创建新的科研项目" },
+    { label: "待处理工单", href: "/tickets", icon: AlertCircle, description: "需要关注的工单" },
+    { label: "CRM 客户池", href: "/crm/customers", icon: Users, description: "管理客户档案" },
+    { label: "客户申请审核", href: "/crm/customer-applications", icon: ClipboardList, description: "处理新客户申请" },
+  ];
+}
 
 function StatCard({
   title,
@@ -106,6 +126,30 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">仪表盘</h1>
         <p className="text-muted-foreground">欢迎回来，{session.user.name}</p>
+      </div>
+
+      <div>
+        <h2 className="text-sm font-medium text-muted-foreground mb-3">常用操作</h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {getQuickActions(session.user.role).map((action) => (
+            <Link key={action.label} href={action.href}>
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <action.icon className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{action.label}</p>
+                      <p className="text-xs text-muted-foreground truncate">{action.description}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

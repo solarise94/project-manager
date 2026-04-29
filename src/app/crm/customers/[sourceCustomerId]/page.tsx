@@ -362,7 +362,7 @@ function RelationsTab({ customerId, customerName }: { customerId: string; custom
         <CardContent className="pt-4 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 mb-1">
-              <Link href={`/crm/customers/${otherCustomer.id}`} className="text-sm font-medium text-blue-600 hover:underline">
+              <Link href={`/crm/customers/${otherCustomer.id}`} className="text-sm font-medium text-primary hover:underline">
                 {otherCustomer.name}
               </Link>
               <span className="text-xs text-muted-foreground">({otherCustomer.customerCode})</span>

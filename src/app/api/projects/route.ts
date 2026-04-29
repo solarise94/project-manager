@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     // Derive representative text from DB when representativeId is provided
     let repName: string | null = null;
@@ -187,6 +187,7 @@ export async function POST(req: NextRequest) {
         representativeId: representativeId || null,
         customerId: customerId || null,
         status: status || "NOT_STARTED",
+        progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
         projectType: projectType || null,

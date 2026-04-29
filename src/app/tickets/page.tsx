@@ -7,7 +7,7 @@ import { Ticket, Filter, ArrowRight } from "lucide-react";
 import { TicketItem } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 
 const PRIORITY_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   LOW: { label: "低", variant: "secondary" },
@@ -25,6 +25,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
 export default function TicketsPage() {
   const { status } = useSession();
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const TICKET_STATUS_LABELS: Record<string, string> = { ALL: "全部状态", OPEN: "打开", IN_PROGRESS: "处理中", CLOSED: "已关闭" };
 
   const { data, isLoading } = useQuery<{ tickets: TicketItem[] }>({
     queryKey: ["tickets", statusFilter],
@@ -53,7 +54,7 @@ export default function TicketsPage() {
           <Filter className="h-4 w-4 text-muted-foreground" />
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v || "ALL")}>
             <SelectTrigger className="w-[140px]">
-              <SelectValue placeholder="全部状态" />
+              <SelectDisplay label="状态" valueLabel={TICKET_STATUS_LABELS[statusFilter]} placeholder="全部状态" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">全部状态</SelectItem>

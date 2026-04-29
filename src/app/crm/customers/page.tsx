@@ -6,10 +6,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { StageBadge, ImportanceBadge } from "@/components/crm/badges";
 import { ActivateProfileDialog } from "@/components/crm/activate-profile-dialog";
+import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 import { CRM_STAGES, STAGE_LABELS, CRM_IMPORTANCE, IMPORTANCE_LABELS } from "@/lib/crm/constants";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmCustomerProfileItem } from "@/lib/crm/types";
@@ -48,9 +49,12 @@ function CustomerPool() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">CRM 客户池</h1>
-        {!isRep && <ActivateProfileDialog />}
+        <div className="flex items-center gap-2 flex-wrap">
+          <CustomerApplicationFormDialog />
+          {!isRep && <ActivateProfileDialog />}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -64,7 +68,7 @@ function CustomerPool() {
           />
         </div>
         <Select value={stage} onValueChange={(v) => setStage(v || "ALL")}>
-          <SelectTrigger className="w-[130px]"><SelectValue placeholder="阶段" /></SelectTrigger>
+          <SelectTrigger className="w-[130px]"><SelectDisplay label="阶段" valueLabel={stage === "ALL" ? "全部阶段" : STAGE_LABELS[stage] || "未知"} placeholder="阶段" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部阶段</SelectItem>
             {CRM_STAGES.map((s) => (
@@ -73,7 +77,7 @@ function CustomerPool() {
           </SelectContent>
         </Select>
         <Select value={importance} onValueChange={(v) => setImportance(v || "ALL")}>
-          <SelectTrigger className="w-[130px]"><SelectValue placeholder="重要度" /></SelectTrigger>
+          <SelectTrigger className="w-[130px]"><SelectDisplay label="重要度" valueLabel={importance === "ALL" ? "全部重要度" : IMPORTANCE_LABELS[importance] || "未知"} placeholder="重要度" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部重要度</SelectItem>
             {CRM_IMPORTANCE.map((i) => (
@@ -105,7 +109,7 @@ function CustomerPool() {
               {profiles.map((p) => (
                 <tr key={p.id} className="border-t hover:bg-muted/30">
                   <td className="p-3">
-                    <Link href={`/crm/customers/${p.sourceCustomerId}`} className="text-blue-600 hover:underline font-medium">
+                    <Link href={`/crm/customers/${p.sourceCustomerId}`} className="text-primary hover:underline font-medium">
                       {p.sourceCustomer.name}
                     </Link>
                     <div className="text-xs text-muted-foreground">{p.sourceCustomer.customerCode}</div>

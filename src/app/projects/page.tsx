@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ProjectItem } from "@/lib/types";
@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { RepresentativeSelect } from "@/components/representative-select";
@@ -43,6 +43,20 @@ const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; va
 };
 
 export default function ProjectsPage() {
+  return (
+    <Suspense fallback={<div className="p-6">加载中...</div>}>
+      <ProjectsPageShell />
+    </Suspense>
+  );
+}
+
+function ProjectsPageShell() {
+  const searchParams = useSearchParams();
+  const createParam = searchParams.get("create") === "1";
+  return <ProjectsPageInner key={createParam ? "create" : "default"} defaultOpen={createParam} />;
+}
+
+function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
   const router = useRouter();
   const { status, data: session } = useSession();
   const queryClient = useQueryClient();
@@ -53,7 +67,15 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("NOT_STARTED,IN_PROGRESS");
   const [dateRange, setDateRange] = useState<string>("ALL");
   const [archivedFilter, setArchivedFilter] = useState<string>("active");
-  const [open, setOpen] = useState(false);
+  const [repFilter, setRepFilter] = useState("ALL");
+  const [custFilter, setCustFilter] = useState("ALL");
+  const ARCHIVED_LABELS: Record<string, string> = { active: "活跃", archived: "已归档", deleted: "已删除" };
+  const STATUS_FILTER_LABELS: Record<string, string> = {
+    "NOT_STARTED,IN_PROGRESS": "活跃", NOT_STARTED: "未开始", IN_PROGRESS: "进行中",
+    COMPLETED: "已完成", ON_HOLD: "暂停", ALL: "全部状态",
+  };
+  const DATE_LABELS: Record<string, string> = { ALL: "全部时间", "7d": "最近7天", "30d": "最近30天", "90d": "最近90天", "1y": "最近一年" };
+  const [open, setOpen] = useState(defaultOpen);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [customerOrgId, setCustomerOrgId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -66,6 +88,7 @@ export default function ProjectsPage() {
     representativeId: "",
     customerId: "",
     status: "NOT_STARTED",
+    progress: 0,
     startDate: "",
     endDate: "",
     projectType: "",
@@ -105,49 +128,14 @@ export default function ProjectsPage() {
       if (!res.ok) throw new Error("Failed to create project");
       return res.json();
     },
-    onMutate: () => {
-      // Capture state snapshot before React batches any updates
-      return {
-        snap: {
-          custId: form.customerId,
-          orgId: selectedOrgId,
-          orgName: form.organization,
-          custHadOrg: !!customerOrgId,
-        },
-      };
-    },
-    onSuccess: async (data, _variables, context) => {
-      // Use the snapshot captured at submit time, not current state
-      const snap = (context as { snap: { custId: string; orgId: string; orgName: string; custHadOrg: boolean } }).snap;
+    onSuccess: () => {
       toast.success("项目创建成功");
       setOpen(false);
-
-      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", startDate: "", endDate: "", projectType: "", projectContent: "", quantity: "", procurementSource: "", brand: "", techSupport: "", budgetAmount: "", budgetCost: "" });
+      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", progress: 0, startDate: "", endDate: "", projectType: "", projectContent: "", quantity: "", procurementSource: "", brand: "", techSupport: "", budgetAmount: "", budgetCost: "" });
       setSelectedOrgId("");
       setCustomerOrgId(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-
-      if (snap.custId && snap.orgId && !snap.custHadOrg && data?.project) {
-        const confirmed = confirm(`是否将单位「${snap.orgName}」同步关联到客户主数据？`);
-        if (confirmed) {
-          try {
-            const linkRes = await fetch(`/api/customers/${snap.custId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ organizationId: snap.orgId, organization: snap.orgName }),
-            });
-            if (linkRes.ok) {
-              toast.success("客户已关联到该单位");
-              queryClient.invalidateQueries({ queryKey: ["customers-list"] });
-            } else {
-              toast.warning("客户关联单位失败，项目已创建成功");
-            }
-          } catch {
-            toast.warning("客户关联单位失败，项目已创建成功");
-          }
-        }
-      }
     },
     onError: () => toast.error("创建项目失败"),
   });
@@ -156,16 +144,67 @@ export default function ProjectsPage() {
 
   const projects = data?.projects || [];
 
+  const uniqueReps = [...new Map(
+    projects
+      .filter((p) => p.rep || p.representative)
+      .map((p) => p.rep ? [p.rep.id, p.rep.name] as const : [`_text:${p.representative}`, p.representative!] as const)
+  ).entries()];
+  const uniqueCusts = [...new Map(
+    projects
+      .filter((p) => p.cust || p.client)
+      .map((p) => p.cust ? [p.cust.id, p.cust.name] as const : [`_text:${p.client}`, p.client!] as const)
+  ).entries()];
+
+  const filtered = projects.filter((p) => {
+    if (repFilter !== "ALL") {
+      const repMatch = repFilter.startsWith("_text:")
+        ? p.representative === repFilter.slice(6)
+        : p.rep?.id === repFilter;
+      if (!repMatch) return false;
+    }
+    if (custFilter !== "ALL") {
+      const custMatch = custFilter.startsWith("_text:")
+        ? p.client === custFilter.slice(6)
+        : p.cust?.id === custFilter;
+      if (!custMatch) return false;
+    }
+    return true;
+  });
+
+  const hasPersonFilter = repFilter !== "ALL" || custFilter !== "ALL";
+
   const grouped = {
-    NOT_STARTED: projects.filter((p) => p.status === "NOT_STARTED"),
-    IN_PROGRESS: projects.filter((p) => p.status === "IN_PROGRESS"),
-    COMPLETED: projects.filter((p) => p.status === "COMPLETED"),
-    ON_HOLD: projects.filter((p) => p.status === "ON_HOLD"),
+    NOT_STARTED: filtered.filter((p) => p.status === "NOT_STARTED"),
+    IN_PROGRESS: filtered.filter((p) => p.status === "IN_PROGRESS"),
+    COMPLETED: filtered.filter((p) => p.status === "COMPLETED"),
+    ON_HOLD: filtered.filter((p) => p.status === "ON_HOLD"),
   };
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim()) return;
+
+    if (form.customerId && selectedOrgId && !customerOrgId) {
+      const confirmed = confirm(`是否将单位「${form.organization}」同步关联到客户主数据？`);
+      if (confirmed) {
+        try {
+          const res = await fetch(`/api/customers/${form.customerId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ organizationId: selectedOrgId, organization: form.organization }),
+          });
+          if (res.ok) {
+            toast.success("客户已关联到该单位");
+            queryClient.invalidateQueries({ queryKey: ["customers-list"] });
+          } else {
+            toast.warning("客户关联单位失败，将继续创建项目");
+          }
+        } catch {
+          toast.warning("客户关联单位失败，将继续创建项目");
+        }
+      }
+    }
+
     createMutation.mutate(form);
   }
 
@@ -285,14 +324,11 @@ export default function ProjectsPage() {
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({
                             name: clientEntity.name.trim(),
-                            organizationId: newSelectedOrgId || undefined,
-                            organization: newSelectedOrgId ? (updates.organization as string || "") : undefined,
                           }),
                         });
                         if (res.ok) {
                           const data = await res.json();
                           newCustomerId = data.customer.id;
-                          if (newSelectedOrgId) newCustomerOrgId = newSelectedOrgId;
                         } else {
                           const err = await res.json().catch(() => ({}));
                           toast.error(err.error || "客户创建失败，请在表单中手动选择");
@@ -376,10 +412,16 @@ export default function ProjectsPage() {
                     value={form.customerId}
                     displayValue={form.client}
                     onChange={(id, name, org, orgId) => {
-                      setForm({ ...form, customerId: id || "", client: name, organization: org || "" });
+                      setForm((prev) => ({
+                        ...prev,
+                        customerId: id || "",
+                        client: name,
+                        organization: orgId ? (org || "") : prev.organization,
+                      }));
                       setCustomerOrgId(orgId || null);
-                      // If customer has an org, lock to it; otherwise clear selectedOrgId
-                      setSelectedOrgId(orgId || "");
+                      if (orgId) {
+                        setSelectedOrgId(orgId);
+                      }
                     }}
                   />
                 </div>
@@ -423,6 +465,16 @@ export default function ProjectsPage() {
                     <SelectItem value="ON_HOLD">暂停</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>项目进度 ({form.progress}%)</Label>
+                <Input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={form.progress}
+                  onChange={(e) => setForm({ ...form, progress: Number(e.target.value) })}
+                />
               </div>
               <details className="border rounded-lg p-3 space-y-3">
                 <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">财务 / 商品信息</summary>
@@ -495,7 +547,7 @@ export default function ProjectsPage() {
         <div className="flex gap-2 flex-wrap">
           <Select value={archivedFilter} onValueChange={(v) => setArchivedFilter(v || "active")}>
             <SelectTrigger className="w-[110px]">
-              <SelectValue placeholder="筛选" />
+              <SelectDisplay label="归档" valueLabel={ARCHIVED_LABELS[archivedFilter]} placeholder="筛选" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="active">活跃</SelectItem>
@@ -505,7 +557,7 @@ export default function ProjectsPage() {
           </Select>
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v || "NOT_STARTED,IN_PROGRESS")}>
             <SelectTrigger className="w-[130px]">
-              <SelectValue placeholder="状态" />
+              <SelectDisplay label="状态" valueLabel={STATUS_FILTER_LABELS[statusFilter]} placeholder="状态" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="NOT_STARTED,IN_PROGRESS">活跃</SelectItem>
@@ -518,7 +570,7 @@ export default function ProjectsPage() {
           </Select>
           <Select value={dateRange} onValueChange={(v) => setDateRange(v || "ALL")}>
             <SelectTrigger className="w-[130px]">
-              <SelectValue placeholder="时间" />
+              <SelectDisplay label="时间" valueLabel={DATE_LABELS[dateRange]} placeholder="时间" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">全部时间</SelectItem>
@@ -528,6 +580,32 @@ export default function ProjectsPage() {
               <SelectItem value="1y">最近一年</SelectItem>
             </SelectContent>
           </Select>
+          {uniqueReps.length > 0 && (
+            <Select value={repFilter} onValueChange={(v) => setRepFilter(v || "ALL")}>
+              <SelectTrigger className="w-[130px]">
+                <SelectDisplay label="代表" valueLabel={repFilter === "ALL" ? "全部代表" : uniqueReps.find(([id]) => id === repFilter)?.[1] || "未知"} placeholder="代表" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">全部代表</SelectItem>
+                {uniqueReps.map(([id, name]) => (
+                  <SelectItem key={id} value={id}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {uniqueCusts.length > 0 && (
+            <Select value={custFilter} onValueChange={(v) => setCustFilter(v || "ALL")}>
+              <SelectTrigger className="w-[130px]">
+                <SelectDisplay label="客户" valueLabel={custFilter === "ALL" ? "全部客户" : uniqueCusts.find(([id]) => id === custFilter)?.[1] || "未知"} placeholder="客户" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">全部客户</SelectItem>
+                {uniqueCusts.map(([id, name]) => (
+                  <SelectItem key={id} value={id}>{name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <div className="flex border rounded-md overflow-hidden">
             <button
               className={`px-3 py-2 ${view === "board" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
@@ -542,14 +620,14 @@ export default function ProjectsPage() {
               <ListIcon className="h-4 w-4" />
             </button>
           </div>
-          {!isRepresentative && projects.length > 0 && (
+          {!isRepresentative && filtered.length > 0 && (
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                const text = getFeishuProjectHeader() + "\n" + projectsToFeishuText(projects);
+                const text = getFeishuProjectHeader() + "\n" + projectsToFeishuText(filtered);
                 navigator.clipboard.writeText(text).then(
-                  () => toast.success(`已复制 ${projects.length} 条项目到剪贴板`),
+                  () => toast.success(`已复制 ${filtered.length} 条项目到剪贴板`),
                   () => toast.error("复制失败"),
                 );
               }}
@@ -567,9 +645,31 @@ export default function ProjectsPage() {
             <Skeleton key={i} className="h-40" />
           ))}
         </div>
-      ) : projects.length === 0 ? (
-        <div className="rounded-lg border bg-card p-12 text-center">
-          <p className="text-muted-foreground">暂无项目，点击右上角创建</p>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border bg-card p-12 text-center space-y-3">
+          {hasPersonFilter || search || statusFilter !== "NOT_STARTED,IN_PROGRESS" || dateRange !== "ALL" || archivedFilter !== "active" ? (
+            <>
+              <p className="text-muted-foreground">当前筛选无结果</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setRepFilter("ALL");
+                  setCustFilter("ALL");
+                  setSearch("");
+                  setStatusFilter("NOT_STARTED,IN_PROGRESS");
+                  setDateRange("ALL");
+                  setArchivedFilter("active");
+                }}
+              >
+                清除筛选
+              </Button>
+            </>
+          ) : (
+            <p className="text-muted-foreground">
+              {isRepresentative ? "暂无项目" : "暂无项目，点击右上角创建"}
+            </p>
+          )}
         </div>
       ) : view === "board" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -585,8 +685,31 @@ export default function ProjectsPage() {
                     {list.length}
                   </Badge>
                 </div>
-                <div className="space-y-3">
-                  {list.map((project) => (
+                <div className={hasPersonFilter ? "space-y-1.5" : "space-y-3"}>
+                  {list.map((project) => {
+                    const owner = project.members?.find((m) => m.role === "OWNER")?.user;
+                    return hasPersonFilter ? (
+                      <Card
+                        key={project.id}
+                        className={`cursor-pointer hover:shadow-md transition-shadow ${project.deleted ? "opacity-60 border-red-200" : ""} ${project.archived && !project.deleted ? "opacity-80 border-gray-200" : ""}`}
+                        onClick={() => router.push(`/projects/${project.id}`)}
+                      >
+                        <CardContent className="px-3 py-2 flex items-center gap-3 min-w-0">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{project.name}</p>
+                            <Progress value={project.progress} className="h-1 mt-1" />
+                          </div>
+                          {owner && (
+                            <div
+                              className="h-6 w-6 shrink-0 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center"
+                              title={owner.name}
+                            >
+                              {owner.name?.slice(0, 2)?.toUpperCase()}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ) : (
                     <Card
                       key={project.id}
                       className={`cursor-pointer hover:shadow-md transition-shadow ${project.deleted ? "opacity-60 border-red-200" : ""} ${project.archived && !project.deleted ? "opacity-80 border-gray-200" : ""}`}
@@ -632,7 +755,8 @@ export default function ProjectsPage() {
                         )}
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -640,7 +764,7 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {projects.map((project) => (
+          {filtered.map((project) => (
             <Card
               key={project.id}
               className={`cursor-pointer hover:shadow-md transition-shadow ${project.deleted ? "opacity-60 border-red-200" : ""} ${project.archived && !project.deleted ? "opacity-80 border-gray-200" : ""}`}

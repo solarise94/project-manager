@@ -100,7 +100,7 @@ function TaskCard({ task, onComplete, isPending, isOverdue }: { task: CrmFollowU
           <p className="text-sm font-medium truncate">{task.title}</p>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
             {task.profile && (
-              <Link href={`/crm/customers/${task.profile.sourceCustomerId}`} className="text-blue-600 hover:underline">
+              <Link href={`/crm/customers/${task.profile.sourceCustomerId}`} className="text-primary hover:underline">
                 {task.profile.sourceCustomer.name}
               </Link>
             )}

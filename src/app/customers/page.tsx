@@ -12,7 +12,9 @@ import {
   Trash2,
   Merge,
   Users,
+  ExternalLink,
 } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,22 +28,18 @@ import {
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/organization-select";
-import { DraftInputPanel } from "@/components/draft-input-panel";
 import type { CustomerItem } from "@/lib/types";
 
 const emptyForm = {
   name: "",
-  principal: "",
-  email: "",
-  wechat: "",
   organization: "",
-  address: "",
   miniProgramId: "",
   organizationId: "",
   organizationSiteId: "",
@@ -64,7 +62,7 @@ export default function CustomersPage() {
 
   const isReadOnly = session?.user?.role === "REPRESENTATIVE";
 
-  const { data, isLoading, error } = useQuery<{ customers: CustomerItem[] }>({
+  const { data, isLoading, error } = useQuery<{ customers: (CustomerItem & { crmProfile?: { id: string; sourceCustomerId: string } | null })[] }>({
     queryKey: ["customers", showArchived],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -77,7 +75,7 @@ export default function CustomersPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: async (payload: typeof emptyForm) => {
+    mutationFn: async (payload: typeof emptyForm & { principal?: string; email?: string; wechat?: string; address?: string }) => {
       const res = await fetch("/api/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -177,8 +175,7 @@ export default function CustomersPage() {
     (c) =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.customerCode.toLowerCase().includes(search.toLowerCase()) ||
-      (c.organization || "").toLowerCase().includes(search.toLowerCase()) ||
-      (c.email || "").toLowerCase().includes(search.toLowerCase())
+      (c.organization || "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -188,7 +185,7 @@ export default function CustomersPage() {
           <Users className="h-6 w-6" />
           客户管理
         </h1>
-        <p className="text-muted-foreground">管理客户联系方式和客户关系信息</p>
+        <p className="text-muted-foreground">查看客户主数据、项目绑定、归档、合并和 CRM 入口</p>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -204,7 +201,7 @@ export default function CustomersPage() {
         {!isReadOnly && (
           <Select value={showArchived ? "all" : "active"} onValueChange={(v) => setShowArchived(v === "all")}>
             <SelectTrigger className="w-32">
-              <SelectValue />
+              <SelectDisplay label="归档" valueLabel={showArchived ? "含已归档" : "活跃"} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="active">活跃</SelectItem>
@@ -242,14 +239,17 @@ export default function CustomersPage() {
                 <th className="text-left px-4 py-3 font-medium">编号</th>
                 <th className="text-left px-4 py-3 font-medium">客户</th>
                 <th className="text-left px-4 py-3 font-medium hidden md:table-cell">单位</th>
-                <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">联系方式</th>
                 <th className="text-left px-4 py-3 font-medium">项目</th>
                 <th className="text-left px-4 py-3 font-medium hidden md:table-cell">状态</th>
+                <th className="text-left px-4 py-3 font-medium">CRM</th>
                 {!isReadOnly && <th className="text-right px-4 py-3 font-medium">操作</th>}
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filtered.map((c) => (
+              {filtered.map((c) => {
+                const hasCrm = !!c.crmProfile;
+                const sourceCustomerId = c.crmProfile?.sourceCustomerId || c.id;
+                return (
                 <tr key={c.id} className={`hover:bg-muted/50 ${c.archived ? "opacity-60 bg-muted/20" : ""}`}>
                   <td className="px-4 py-3 text-xs text-muted-foreground font-mono">{c.customerCode}</td>
                   <td className="px-4 py-3">
@@ -257,19 +257,10 @@ export default function CustomersPage() {
                       <div className="h-8 w-8 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center shrink-0">
                         {c.name.slice(0, 2)}
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{c.name}</span>
-                        {c.principal && <span className="text-xs text-muted-foreground">负责人: {c.principal}</span>}
-                      </div>
+                      <span className="font-medium">{c.name}</span>
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{c.organization || "-"}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <div className="flex flex-col text-xs text-muted-foreground">
-                      {c.email && <span>{c.email}</span>}
-                      {c.wechat && <span>微信: {c.wechat}</span>}
-                    </div>
-                  </td>
                   <td className="px-4 py-3">
                     <Badge variant="secondary" className="text-xs">{c._count?.projects ?? 0} 个</Badge>
                   </td>
@@ -282,6 +273,23 @@ export default function CustomersPage() {
                       <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">活跃</Badge>
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    {hasCrm ? (
+                      <Link href={`/crm/customers/${sourceCustomerId}`}>
+                        <Button variant="outline" size="sm">
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          查看 CRM
+                        </Button>
+                      </Link>
+                    ) : !isReadOnly ? (
+                      <Link href="/crm/customers">
+                        <Button variant="outline" size="sm">
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          去 CRM 客户池
+                        </Button>
+                      </Link>
+                    ) : null}
+                  </td>
                   {!isReadOnly && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -289,11 +297,7 @@ export default function CustomersPage() {
                           setEditing(c);
                           setEditForm({
                             name: c.name,
-                            principal: c.principal || "",
-                            email: c.email || "",
-                            wechat: c.wechat || "",
                             organization: c.organization || "",
-                            address: c.address || "",
                             miniProgramId: c.miniProgramId || "",
                             organizationId: c.organizationId || "",
                             organizationSiteId: c.organizationSiteId || "",
@@ -337,132 +341,43 @@ export default function CustomersPage() {
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Create Dialog */}
+      {/* Create Dialog — simplified: name + org + miniProgramId only */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>新增客户</DialogTitle></DialogHeader>
-          <DraftInputPanel
-            formKey="customer.create"
-            fieldLabels={{
-              name: "客户姓名",
-              organization: "单位",
-              principal: "课题组负责人",
-              email: "邮箱",
-              wechat: "微信",
-              address: "通讯地址",
-            }}
-            onApply={async (fields) => {
-              const updates: Partial<typeof emptyForm> = {};
-              if (typeof fields.name === "string" && fields.name.trim()) updates.name = fields.name.trim();
-              if (typeof fields.principal === "string") updates.principal = fields.principal.trim();
-              if (typeof fields.email === "string") updates.email = fields.email.trim();
-              if (typeof fields.wechat === "string") updates.wechat = fields.wechat.trim();
-              if (typeof fields.address === "string") updates.address = fields.address.trim();
-              // Handle organization entity
-              const orgField = fields.organization;
-              if (orgField && typeof orgField === "object" && "matched" in orgField) {
-                const entity = orgField as { id?: string; name: string; matched: boolean; address?: string; shouldCreate?: boolean };
-                if (entity.matched && entity.id) {
-                  updates.organizationId = entity.id;
-                  updates.organization = entity.name;
-                  updates.organizationRawInput = entity.name;
-                  if (entity.address) updates.address = entity.address;
-                } else if (entity.shouldCreate && entity.name.trim()) {
-                  try {
-                    const res = await fetch("/api/organizations/quick-create", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ canonicalName: entity.name.trim() }),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      updates.organizationId = data.organization.id;
-                      updates.organization = data.organization.canonicalName;
-                      updates.organizationRawInput = data.organization.canonicalName;
-                      if (data.organization.address) updates.address = data.organization.address;
-                    } else {
-                      const err = await res.json().catch(() => ({}));
-                      toast.error(err.error || "单位创建失败，请手动选择");
-                      // Clear org binding — creation failed
-                      updates.organizationId = "";
-                      updates.organizationSiteId = "";
-                    }
-                  } catch {
-                    toast.error("单位创建失败");
-                    updates.organizationId = "";
-                    updates.organizationSiteId = "";
-                  }
-                } else {
-                  // Unmatched, user declined create — clear org binding
-                  updates.organizationId = "";
-                  updates.organizationSiteId = "";
-                  updates.organization = entity.name;
-                  updates.organizationRawInput = entity.name;
-                }
-              } else if (typeof orgField === "string" && orgField.trim()) {
-                // Plain text org — clear any previous binding
-                updates.organizationId = "";
-                updates.organizationSiteId = "";
-                updates.organization = orgField.trim();
-                updates.organizationRawInput = orgField.trim();
-              }
-              setForm((prev) => ({ ...prev, ...updates }));
-            }}
-          />
           <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; createMutation.mutate(form); }} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>客户姓名 *</Label>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-              </div>
-              <div className="space-y-2">
-                <Label>课题组负责人</Label>
-                <Input value={form.principal} onChange={(e) => setForm({ ...form, principal: e.target.value })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>邮箱</Label>
-                <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>微信</Label>
-                <Input value={form.wechat} onChange={(e) => setForm({ ...form, wechat: e.target.value })} />
-              </div>
+            <div className="space-y-2">
+              <Label>客户姓名 *</Label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
             </div>
             <div className="space-y-2">
               <Label>客户单位</Label>
               <OrganizationSelect
                 value={form.organizationId}
                 displayValue={form.organization || undefined}
-                onChange={(id, name, address) => {
+                onChange={(id, name) => {
                   setForm({
                     ...form,
                     organization: name,
                     organizationId: id || "",
                     organizationSiteId: "",
                     organizationRawInput: name,
-                    // When selecting an org, always sync address (even if empty);
-                    // when clearing org selection, keep current address
-                    address: id ? (address || "") : form.address,
                   });
                 }}
               />
             </div>
             <div className="space-y-2">
-              <Label>通讯地址</Label>
-              <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-            </div>
-            <div className="space-y-2">
               <Label>小程序 ID</Label>
               <Input value={form.miniProgramId} onChange={(e) => setForm({ ...form, miniProgramId: e.target.value })} />
             </div>
+            <p className="text-xs text-muted-foreground">联系信息（邮箱、微信、地址、课题组负责人）请通过 CRM 管理。</p>
             <Button type="submit" className="w-full" disabled={createMutation.isPending}>
               {createMutation.isPending ? "创建中..." : "创建客户"}
             </Button>
@@ -470,7 +385,7 @@ export default function CustomersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Dialog */}
+      {/* Edit Dialog — simplified: name + org + miniProgramId only */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>编辑客户信息</DialogTitle></DialogHeader>
@@ -485,51 +400,31 @@ export default function CustomersPage() {
             if (Object.keys(updates).length === 0) { setEditOpen(false); return; }
             updateMutation.mutate({ id: editing.id, ...updates });
           }} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>客户姓名 *</Label>
-                <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
-              </div>
-              <div className="space-y-2">
-                <Label>课题组负责人</Label>
-                <Input value={editForm.principal} onChange={(e) => setEditForm({ ...editForm, principal: e.target.value })} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>邮箱</Label>
-                <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>微信</Label>
-                <Input value={editForm.wechat} onChange={(e) => setEditForm({ ...editForm, wechat: e.target.value })} />
-              </div>
+            <div className="space-y-2">
+              <Label>客户姓名 *</Label>
+              <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
             </div>
             <div className="space-y-2">
               <Label>客户单位</Label>
               <OrganizationSelect
                 value={editForm.organizationId}
                 displayValue={editForm.organization || undefined}
-                onChange={(id, name, address) => {
+                onChange={(id, name) => {
                   setEditForm({
                     ...editForm,
                     organization: name,
                     organizationId: id || "",
                     organizationSiteId: "",
                     organizationRawInput: name,
-                    address: id ? (address || "") : editForm.address,
                   });
                 }}
               />
             </div>
             <div className="space-y-2">
-              <Label>通讯地址</Label>
-              <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
-            </div>
-            <div className="space-y-2">
               <Label>小程序 ID</Label>
               <Input value={editForm.miniProgramId} onChange={(e) => setEditForm({ ...editForm, miniProgramId: e.target.value })} />
             </div>
+            <p className="text-xs text-muted-foreground">联系信息请通过 CRM 档案编辑。</p>
             <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
               <Pencil className="mr-2 h-4 w-4" />
               {updateMutation.isPending ? "保存中..." : "保存修改"}

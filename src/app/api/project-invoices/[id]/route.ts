@@ -102,10 +102,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ error: "已申请状态只能修改备注或变更状态" }, { status: 400 });
     }
-    const updated = await prisma.projectInvoice.update({
-      where: { id },
-      data,
-      include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
+    const updated = await prisma.$transaction(async (tx) => {
+      const inv = await tx.projectInvoice.update({
+        where: { id },
+        data,
+        include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
+      });
+      if (status && status !== currentStatus) {
+        const STATUS_LABEL: Record<string, string> = { DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票", CANCELLED: "已取消" };
+        await tx.activityLog.create({
+          data: {
+            type: "INVOICE_UPDATED",
+            content: `开票申请状态从「${STATUS_LABEL[currentStatus] || currentStatus}」变更为「${STATUS_LABEL[status] || status}」`,
+            metadata: JSON.stringify({ invoiceId: id, oldStatus: currentStatus, newStatus: status }),
+            projectId: invoice.projectId,
+            userId: session.user.id,
+          },
+        });
+      }
+      return inv;
     });
     return NextResponse.json({ invoice: updated });
   }
@@ -173,36 +188,56 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
   }
 
-  // Items: replace semantics
-  if (items !== undefined) {
-    const itemRows = items.filter((it) => it.itemName?.trim());
+  // Items: replace semantics (precompute rows, apply inside transaction)
+  const itemRows = items !== undefined
+    ? items.filter((it) => it.itemName?.trim()).map((it, i) => ({
+        invoiceId: id,
+        sortOrder: i,
+        itemName: it.itemName.trim(),
+        spec: it.spec?.trim() || null,
+        unit: it.unit?.trim() || null,
+        quantity: it.quantity ?? null,
+        amount: it.amount || 0,
+      }))
+    : undefined;
+
+  if (itemRows !== undefined) {
     data.totalAmount = itemRows.reduce((sum, it) => sum + (it.amount || 0), 0);
-    // Delete old items and create new ones in a transaction
-    await prisma.projectInvoiceItem.deleteMany({ where: { invoiceId: id } });
-    if (itemRows.length > 0) {
-      await prisma.projectInvoiceItem.createMany({
-        data: itemRows.map((it, i) => ({
-          invoiceId: id,
-          sortOrder: i,
-          itemName: it.itemName.trim(),
-          spec: it.spec?.trim() || null,
-          unit: it.unit?.trim() || null,
-          quantity: it.quantity ?? null,
-          amount: it.amount || 0,
-        })),
-      });
-    }
   }
 
   if (Object.keys(data).length === 0 && items === undefined) {
     return NextResponse.json({ error: "无更新内容" }, { status: 400 });
   }
 
-  const updated = await prisma.projectInvoice.update({
-    where: { id },
-    data,
-    include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
+  const updatedDraft = await prisma.$transaction(async (tx) => {
+    if (itemRows !== undefined) {
+      await tx.projectInvoiceItem.deleteMany({ where: { invoiceId: id } });
+      if (itemRows.length > 0) {
+        await tx.projectInvoiceItem.createMany({ data: itemRows });
+      }
+    }
+
+    const inv = await tx.projectInvoice.update({
+      where: { id },
+      data,
+      include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
+    });
+
+    if (status && status !== currentStatus) {
+      const STATUS_LABEL: Record<string, string> = { DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票", CANCELLED: "已取消" };
+      await tx.activityLog.create({
+        data: {
+          type: "INVOICE_UPDATED",
+          content: `开票申请状态从「${STATUS_LABEL[currentStatus] || currentStatus}」变更为「${STATUS_LABEL[status] || status}」`,
+          metadata: JSON.stringify({ invoiceId: id, oldStatus: currentStatus, newStatus: status }),
+          projectId: invoice.projectId,
+          userId: session.user.id,
+        },
+      });
+    }
+
+    return inv;
   });
 
-  return NextResponse.json({ invoice: updated });
+  return NextResponse.json({ invoice: updatedDraft });
 }

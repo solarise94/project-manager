@@ -159,36 +159,50 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (manualSellerBankAccount?.trim()) sellerSnapshot.sellerBankAccount = manualSellerBankAccount.trim();
   }
 
-  const invoice = await prisma.projectInvoice.create({
-    data: {
-      projectId,
-      contactName: contactName?.trim() || null,
-      projectCode: projectCode?.trim() || null,
-      ...sellerSnapshot,
-      buyerOrganizationId: buyerOrganizationId || null,
-      buyerOrganizationName: buyerOrganizationName.trim(),
-      buyerTaxId: buyerTaxId?.trim() || null,
-      buyerTaxIdFromLookup: !!taxIdFromLookup,
-      invoiceType: invoiceType === "SPECIAL" ? "SPECIAL" : "NORMAL",
-      contentSummary: contentSummary?.trim() || null,
-      totalAmount,
-      remark: remark?.trim() || null,
-      createdById: session.user.id,
-      items: {
-        create: itemRows.map((it, i) => ({
-          sortOrder: i,
-          itemName: it.itemName.trim(),
-          spec: it.spec?.trim() || null,
-          unit: it.unit?.trim() || null,
-          quantity: it.quantity ?? null,
-          amount: it.amount || 0,
-        })),
+  const invoice = await prisma.$transaction(async (tx) => {
+    const inv = await tx.projectInvoice.create({
+      data: {
+        projectId,
+        contactName: contactName?.trim() || null,
+        projectCode: projectCode?.trim() || null,
+        ...sellerSnapshot,
+        buyerOrganizationId: buyerOrganizationId || null,
+        buyerOrganizationName: buyerOrganizationName.trim(),
+        buyerTaxId: buyerTaxId?.trim() || null,
+        buyerTaxIdFromLookup: !!taxIdFromLookup,
+        invoiceType: invoiceType === "SPECIAL" ? "SPECIAL" : "NORMAL",
+        contentSummary: contentSummary?.trim() || null,
+        totalAmount,
+        remark: remark?.trim() || null,
+        createdById: session.user.id,
+        items: {
+          create: itemRows.map((it, i) => ({
+            sortOrder: i,
+            itemName: it.itemName.trim(),
+            spec: it.spec?.trim() || null,
+            unit: it.unit?.trim() || null,
+            quantity: it.quantity ?? null,
+            amount: it.amount || 0,
+          })),
+        },
       },
-    },
-    include: {
-      items: { orderBy: { sortOrder: "asc" } },
-      createdBy: { select: { id: true, name: true } },
-    },
+      include: {
+        items: { orderBy: { sortOrder: "asc" } },
+        createdBy: { select: { id: true, name: true } },
+      },
+    });
+
+    await tx.activityLog.create({
+      data: {
+        type: "INVOICE_CREATED",
+        content: `创建了开票申请：${buyerOrganizationName.trim()} / ¥${totalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`,
+        metadata: JSON.stringify({ invoiceId: inv.id, totalAmount, buyerOrganizationName: buyerOrganizationName.trim() }),
+        projectId,
+        userId: session.user.id,
+      },
+    });
+
+    return inv;
   });
 
   return NextResponse.json({ invoice }, { status: 201 });

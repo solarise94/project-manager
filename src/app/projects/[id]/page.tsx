@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   Sparkles,
   ClipboardCopy,
+  Receipt,
 } from "lucide-react";
 import { ProjectItem, TimelineItem, TicketItem, TicketReplyItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,33 @@ const ACTIVITY_ICONS: Record<string, React.ElementType> = {
   TICKET_UPDATED: Ticket,
   MEMBER_ADDED: Circle,
   PLUGIN_MESSAGE: Sparkles,
+  INVOICE_CREATED: Receipt,
+  INVOICE_UPDATED: Receipt,
 };
+
+function safeParseMetadata(metadata: string | null): Record<string, unknown> {
+  if (!metadata) return {};
+  try {
+    const parsed = JSON.parse(metadata);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    return parsed;
+  } catch { return {}; }
+}
+
+function metaStr(m: Record<string, unknown>, key: string, fallback = ""): string {
+  const v = m[key];
+  return typeof v === "string" ? v : fallback;
+}
+
+function getTimelineWeight(item: TimelineItem): "high" | "medium" | "low" {
+  const high = new Set(["COMMENT_ADDED", "FILE_UPLOADED", "TICKET_CREATED", "TICKET_UPDATED", "INVOICE_CREATED", "INVOICE_UPDATED", "STATUS_CHANGED"]);
+  const medium = new Set(["PROJECT_CREATED", "PROJECT_UPDATED", "REPRESENTATIVE_CHANGED", "PROJECT_ARCHIVED", "PROJECT_UNARCHIVED", "MEMBER_ADDED"]);
+  if (high.has(item.type)) return "high";
+  if (medium.has(item.type)) return "medium";
+  if (item.type === "PROGRESS_UPDATED") return "low";
+  if (item.kind === "plugin") return "high";
+  return "medium";
+}
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -95,6 +122,7 @@ export default function ProjectDetailPage() {
   const [sliderValue, setSliderValue] = useState<number | undefined>(undefined);
   const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
   const [replyContent, setReplyContent] = useState<Record<string, string>>({});
+  const [showLowWeight, setShowLowWeight] = useState(false);
   const [pluginRunning, setPluginRunning] = useState(false);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -311,6 +339,23 @@ export default function ProjectDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["tickets", projectId] });
       queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
     },
+  });
+
+  const deleteTicketMutation = useMutation({
+    mutationFn: async (ticketId: string) => {
+      const res = await fetch(`/api/tickets/${ticketId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete ticket");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("工单已删除");
+      queryClient.invalidateQueries({ queryKey: ["tickets", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+      queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
+    },
+    onError: () => toast.error("删除工单失败"),
   });
 
   const replyMutation = useMutation({
@@ -833,19 +878,24 @@ export default function ProjectDetailPage() {
               ) : timeline.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">暂无动态</div>
               ) : (
-                <div className="space-y-0">
-                  {timeline.map((item, index) => {
+                (() => {
+                  const importantItems = timeline.filter((item) => getTimelineWeight(item) !== "low");
+                  const lowItems = timeline.filter((item) => getTimelineWeight(item) === "low");
+                  const visibleItems = showLowWeight ? timeline : importantItems;
+                  const HiddenTimelineItem = ({ item, isLast }: { item: TimelineItem; isLast: boolean }) => {
                     const Icon = ACTIVITY_ICONS[item.type] || Activity;
                     const isComment = item.kind === "comment";
                     const isPlugin = item.kind === "plugin";
                     const isTicketEvent = item.type === "TICKET_CREATED" || item.type === "TICKET_UPDATED";
-                    const meta = item.metadata ? JSON.parse(item.metadata) : {};
-                    const ticketId = meta.ticketId || meta.ticket?.id;
+                    const meta = safeParseMetadata(item.metadata);
+                    const ticketId = metaStr(meta, "ticketId") || metaStr(meta.ticket as Record<string, unknown> | undefined ?? {}, "id");
                     const ticket = ticketId ? tickets.find((t) => t.id === ticketId) : null;
+                    const mPluginName = metaStr(meta, "pluginName") || "插件";
+                    const mFormat = metaStr(meta, "format");
 
                     return (
-                      <div key={item.id} className="relative pl-8 pb-6 last:pb-0">
-                        {index !== timeline.length - 1 && (
+                      <div className="relative pl-8 pb-6 last:pb-0">
+                        {!isLast && (
                           <div className="absolute left-[11px] top-6 bottom-0 w-px bg-border" />
                         )}
                         <div className="absolute left-0 top-0 h-6 w-6 rounded-full bg-muted flex items-center justify-center">
@@ -854,7 +904,7 @@ export default function ProjectDetailPage() {
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             {isPlugin ? (
-                              <span className="font-medium text-sm text-muted-foreground">{meta.pluginName || "插件"}</span>
+                              <span className="font-medium text-sm text-muted-foreground">{mPluginName}</span>
                             ) : item.user ? (
                               <span className="font-medium text-sm">{item.user.name}</span>
                             ) : null}
@@ -890,15 +940,14 @@ export default function ProjectDetailPage() {
                             <div className="bg-muted rounded-lg p-3 space-y-1">
                               <Badge variant="secondary" className="text-[10px] gap-1">
                                 <Sparkles className="h-2.5 w-2.5" />
-                                {meta.pluginName || "插件"}
+                                {mPluginName}
                               </Badge>
                               <div className="text-sm space-y-1">
-                                {meta.format === "markdown"
+                                {mFormat === "markdown"
                                   ? item.content.split("\n").map((line: string, li: number) => {
                                       if (line.trim() === "") return <div key={li} className="h-1" />;
                                       const isList = line.startsWith("- ");
                                       const text = isList ? line.slice(2) : line;
-                                      // Split on **bold** markers, render as React elements
                                       const parts = text.split(/(\*\*.+?\*\*)/g).map((seg, si) => {
                                         if (seg.startsWith("**") && seg.endsWith("**")) {
                                           return <strong key={si}>{seg.slice(2, -2)}</strong>;
@@ -912,23 +961,47 @@ export default function ProjectDetailPage() {
                               </div>
                             </div>
                           )}
-                          {item.kind === "attachment" && item.metadata && (
-                            <div className="flex items-center gap-2 bg-muted rounded-lg p-3">
-                              <FileText className="h-4 w-4 text-muted-foreground" />
-                              <span className="text-sm">{JSON.parse(item.metadata).filename}</span>
-                              <a href={JSON.parse(item.metadata).url} download className="ml-auto">
-                                <Download className="h-4 w-4 text-muted-foreground hover:text-foreground" />
-                              </a>
-                            </div>
-                          )}
+                          {item.kind === "attachment" && item.metadata && (() => {
+                            const attMeta = safeParseMetadata(item.metadata);
+                            return (
+                              <div className="flex items-center gap-2 bg-muted rounded-lg p-3">
+                                <FileText className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm">{metaStr(attMeta, "filename")}</span>
+                                <a href={metaStr(attMeta, "url")} download className="ml-auto">
+                                  <Download className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                                </a>
+                              </div>
+                            );
+                          })()}
                           <span className="text-xs text-muted-foreground">
                             {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true, locale: zhCN })}
                           </span>
                         </div>
                       </div>
                     );
-                  })}
-                </div>
+                  };
+                  return (
+                    <>
+                      <div className="max-h-[520px] overflow-y-auto pr-2 space-y-0">
+                        {visibleItems.map((item, index) => (
+                          <HiddenTimelineItem key={item.id} item={item} isLast={index === visibleItems.length - 1} />
+                        ))}
+                      </div>
+                      {lowItems.length > 0 && (
+                        <div className="pt-3 text-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-muted-foreground"
+                            onClick={() => setShowLowWeight(!showLowWeight)}
+                          >
+                            {showLowWeight ? "折叠进度/系统动态" : `显示 ${lowItems.length} 条进度/系统动态`}
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()
               )}
             </CardContent>
           </Card>
@@ -1100,7 +1173,7 @@ export default function ProjectDetailPage() {
                               </p>
                             )}
                           </div>
-                          {!project.deleted && (
+                          {!project.deleted && !isRep && (
                             <DropdownMenu>
                               <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="shrink-0" />}>
                                 <MoreHorizontal className="h-4 w-4" />
@@ -1119,6 +1192,18 @@ export default function ProjectDetailPage() {
                                 {!isRep && ticket.status !== "OPEN" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "OPEN" })}>
                                     重新打开
+                                  </DropdownMenuItem>
+                                )}
+                                {!isRep && (
+                                  <DropdownMenuItem
+                                    className="text-red-600"
+                                    onClick={() => {
+                                      if (confirm(`确认删除工单 "${ticket.title}"？此操作不可撤销。`)) {
+                                        deleteTicketMutation.mutate(ticket.id);
+                                      }
+                                    }}
+                                  >
+                                    删除工单
                                   </DropdownMenuItem>
                                 )}
                               </DropdownMenuContent>
@@ -1196,17 +1281,18 @@ export default function ProjectDetailPage() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {attachments.map((item) => {
-                  const meta = item.metadata ? JSON.parse(item.metadata) : {};
-                  const isImage = meta.mimeType?.startsWith("image/");
+                  const meta = safeParseMetadata(item.metadata);
+                  const mimeType = metaStr(meta, "mimeType");
+                  const isImage = mimeType.startsWith("image/");
                   return (
                     <Card key={item.id}>
                       <CardContent className="p-4 flex items-center gap-3">
                         {isImage ? <ImageIcon className="h-8 w-8 text-blue-500" /> : <FileText className="h-8 w-8 text-muted-foreground" />}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{meta.filename}</p>
-                          <p className="text-xs text-muted-foreground">{(meta.size / 1024).toFixed(1)} KB</p>
+                          <p className="text-sm font-medium truncate">{metaStr(meta, "filename")}</p>
+                          <p className="text-xs text-muted-foreground">{((meta.size as number | undefined ?? 0) / 1024).toFixed(1)} KB</p>
                         </div>
-                        <a href={meta.url} download>
+                        <a href={metaStr(meta, "url")} download>
                           <Download className="h-4 w-4 text-muted-foreground hover:text-foreground" />
                         </a>
                       </CardContent>

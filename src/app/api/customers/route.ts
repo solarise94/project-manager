@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         archived: false,
         ...(search ? { name: { contains: search } } : {}),
       },
-      include: { org: { select: { canonicalName: true } } },
+      include: { org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
       orderBy: { createdAt: "desc" },
     });
 
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 
   const customers = await prisma.customer.findMany({
     where,
-    include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } } },
+    include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
     orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
     ...(limitParam ? { take: Math.min(parseInt(limitParam, 10) || 500, 500) } : {}),
   });

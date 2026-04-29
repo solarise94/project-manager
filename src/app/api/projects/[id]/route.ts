@@ -268,6 +268,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           userId: session.user.id,
         },
       });
+
+      // Create notification for project owner (not self, no email)
+      const progressOwner = await prisma.projectMember.findFirst({
+        where: { projectId: id, role: "OWNER" },
+        include: { user: { select: { id: true, name: true } } },
+      });
+      if (progressOwner && progressOwner.user.id !== session.user.id) {
+        await prisma.notification.create({
+          data: {
+            userId: progressOwner.user.id,
+            title: "项目进度更新",
+            content: `项目 "${existing.name}" 进度从 ${existing.progress}% 更新为 ${progress}%`,
+            type: "PROGRESS",
+            link: `/projects/${id}`,
+            emailStatus: null,
+          },
+        });
+      }
     }
 
     // Log representative change

@@ -88,6 +88,7 @@ export function ProjectInvoiceSection({
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["project-invoices", projectId] });
+    queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
   }, [queryClient, projectId]);
 
   const statusMutation = useMutation({

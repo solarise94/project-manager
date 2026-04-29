@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RelationGraph } from "@/components/crm/relation-graph";
 import { CRM_STAGES, STAGE_LABELS, CRM_RELATION_TYPES, RELATION_TYPE_LABELS } from "@/lib/crm/constants";
@@ -76,7 +76,7 @@ function GraphView() {
         <h1 className="text-lg font-bold">关系图谱</h1>
         <div className="ml-auto flex items-center gap-3 flex-wrap">
           <Select value={stageFilter} onValueChange={(v) => setStageFilter(v || "ALL")}>
-            <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue placeholder="阶段" /></SelectTrigger>
+            <SelectTrigger className="w-[120px] h-8 text-xs"><SelectDisplay label="阶段" valueLabel={stageFilter === "ALL" ? "全部阶段" : STAGE_LABELS[stageFilter] || "未知"} placeholder="阶段" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="ALL">全部阶段</SelectItem>
               {CRM_STAGES.map((s) => (

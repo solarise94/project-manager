@@ -9,4 +9,5 @@ export const crmKeys = {
   assignees: () => ["crm-assignees"] as const,
   customers: () => ["customers"] as const,
   customersList: () => ["customers-list"] as const,
+  customerApplications: () => ["crm-customer-applications"] as const,
 };

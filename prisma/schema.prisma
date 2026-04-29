@@ -37,6 +37,8 @@ model User {
   crmCheckinsCreated         CrmVisitCheckin[]      @relation("CrmCheckinCreatedBy")
   crmAddressesVerified       CrmCustomerAddress[]   @relation("CrmAddressVerifiedBy")
   customerRelationsCreated   CustomerRelation[]
+  crmApplicationsSubmitted    CrmCustomerApplication[] @relation("CrmApplicationsSubmitted")
+  crmApplicationsReviewed     CrmCustomerApplication[] @relation("CrmApplicationsReviewed")
 }
 
 model Representative {
@@ -124,6 +126,7 @@ model Customer {
   mergedFrom           Customer[]         @relation("CustomerMerge")
   projects             Project[]
   crmProfile           CrmCustomerProfile?
+  crmApplications      CrmCustomerApplication[] @relation("CrmApplicationsCreatedCustomer")
   relationsFrom        CustomerRelation[] @relation("RelationsFrom")
   relationsTo          CustomerRelation[] @relation("RelationsTo")
   createdAt            DateTime           @default(now())
@@ -506,6 +509,7 @@ model CrmCustomerProfile {
   followUpTasks      CrmFollowUpTask[]
   addresses          CrmCustomerAddress[]
   visitCheckins      CrmVisitCheckin[]
+  applications       CrmCustomerApplication[] @relation("CrmApplicationsCreatedProfile")
 
   @@index([ownerUserId])
   @@index([stage])
@@ -608,6 +612,36 @@ model CrmVisitMedia {
   createdAt DateTime        @default(now())
 
   @@index([checkinId])
+}
+
+model CrmCustomerApplication {
+  id                 String             @id @default(cuid())
+  name               String
+  principal          String?
+  email              String?
+  wechat             String?
+  organization       String?
+  organizationId     String?
+  organizationSiteId String?
+  address            String?
+  miniProgramId      String?
+  notes              String?
+  status             String             @default("PENDING") // PENDING, APPROVED, REJECTED
+  submittedByUserId  String
+  submittedByUser    User               @relation("CrmApplicationsSubmitted", fields: [submittedByUserId], references: [id])
+  reviewedByUserId   String?
+  reviewedByUser     User?              @relation("CrmApplicationsReviewed", fields: [reviewedByUserId], references: [id])
+  reviewedAt         DateTime?
+  reviewNote         String?
+  createdCustomerId  String?
+  createdCustomer    Customer?          @relation("CrmApplicationsCreatedCustomer", fields: [createdCustomerId], references: [id])
+  createdCrmProfileId String?
+  createdCrmProfile  CrmCustomerProfile? @relation("CrmApplicationsCreatedProfile", fields: [createdCrmProfileId], references: [id])
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([submittedByUserId])
+  @@index([status])
 }
 
 model CustomerRelation {

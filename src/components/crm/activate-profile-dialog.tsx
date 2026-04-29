@@ -70,12 +70,12 @@ export function ActivateProfileDialog() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || "激活失败");
+        throw new Error(data.error || "操作失败");
       }
       return res.json();
     },
     onSuccess: async () => {
-      toast.success("CRM 档案已激活");
+      toast.success("已纳入 CRM 管理");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: crmKeys.profiles() }),
         queryClient.invalidateQueries({ queryKey: crmKeys.dashboard() }),
@@ -103,12 +103,12 @@ export function ActivateProfileDialog() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || "批量激活失败");
+        throw new Error(data.error || "批量操作失败");
       }
       return res.json() as Promise<{ created: number }>;
     },
     onSuccess: async (data) => {
-      toast.success(`已激活 ${data.created} 位客户`);
+      toast.success(`已将 ${data.created} 位客户纳入 CRM`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: crmKeys.profiles() }),
         queryClient.invalidateQueries({ queryKey: crmKeys.dashboard() }),
@@ -125,10 +125,10 @@ export function ActivateProfileDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button />}>
-        <UserPlus className="h-4 w-4 mr-1" />激活 CRM 档案
+        <UserPlus className="h-4 w-4 mr-1" />从已有客户加入 CRM
       </DialogTrigger>
       <DialogContent>
-        <DialogHeader><DialogTitle>激活 CRM 客户档案</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>纳入 CRM 管理</DialogTitle></DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); mutation.mutate(); }} className="space-y-4">
           {canAssign && (batchCountData?.count ?? 0) > 0 && (
             <div className="bg-muted/50 rounded-lg p-3 text-sm">
@@ -142,7 +142,7 @@ export function ActivateProfileDialog() {
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">确认？</span>
                     <Button type="button" size="sm" variant="destructive" onClick={() => { batchMutation.mutate(); setConfirmBatch(false); }} disabled={batchMutation.isPending}>
-                      {batchMutation.isPending ? "激活中..." : "确认全部激活"}
+                      {batchMutation.isPending ? "处理中..." : "确认全部加入"}
                     </Button>
                     <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmBatch(false)}>取消</Button>
                   </div>
@@ -153,15 +153,25 @@ export function ActivateProfileDialog() {
           <div>
             <label className="text-sm font-medium">选择客户 *</label>
             <Select value={selectedCustomerId} onValueChange={(v) => setSelectedCustomerId(v || "")}>
-              <SelectTrigger>
-                {selectedCustomer
-                  ? <span>{selectedCustomer.name} ({selectedCustomer.customerCode}){selectedCustomer.organization ? ` - ${selectedCustomer.organization}` : ""}</span>
-                  : <span className="text-muted-foreground">选择客户</span>}
+              <SelectTrigger className="w-full min-w-0">
+                {selectedCustomer ? (
+                  <span className="block min-w-0 flex-1 truncate text-left">
+                    {selectedCustomer.name} ({selectedCustomer.customerCode})
+                    {selectedCustomer.organization ? ` - ${selectedCustomer.organization}` : ""}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">选择客户</span>
+                )}
               </SelectTrigger>
               <SelectContent>
                 {customers.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name} ({c.customerCode}){c.organization ? ` - ${c.organization}` : ""}
+                  <SelectItem key={c.id} value={c.id} className="min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{c.name} ({c.customerCode})</div>
+                      {c.organization && (
+                        <div className="truncate text-xs text-muted-foreground">{c.organization}</div>
+                      )}
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -211,7 +221,7 @@ export function ActivateProfileDialog() {
             </div>
           </div>
           <Button type="submit" disabled={mutation.isPending || !selectedCustomerId} className="w-full">
-            {mutation.isPending ? "激活中..." : "激活"}
+            {mutation.isPending ? "处理中..." : "加入 CRM"}
           </Button>
         </form>
       </DialogContent>

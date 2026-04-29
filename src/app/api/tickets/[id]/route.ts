@@ -99,3 +99,52 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Failed to update ticket" }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await params;
+
+  try {
+    const existing = await prisma.ticket.findUnique({
+      where: { id },
+      include: { project: { select: { deleted: true } } },
+    });
+    if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (existing.project?.deleted) {
+      return NextResponse.json({ error: "项目已删除，无法删除工单" }, { status: 400 });
+    }
+
+    if (isRepresentative(session.user.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    if (session.user.role !== "ADMIN") {
+      try {
+        await assertProjectMember(existing.projectId, session.user.id);
+      } catch {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
+    await prisma.$transaction([
+      prisma.ticket.delete({ where: { id } }),
+      prisma.activityLog.create({
+        data: {
+          type: "TICKET_UPDATED",
+          content: `删除了工单 "${existing.title}"`,
+          metadata: JSON.stringify({ ticketId: id, title: existing.title }),
+          projectId: existing.projectId,
+          userId: session.user.id,
+        },
+      }),
+    ]);
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Failed to delete ticket" }, { status: 500 });
+  }
+}
