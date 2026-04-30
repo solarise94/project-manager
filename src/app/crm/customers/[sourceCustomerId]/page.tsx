@@ -180,6 +180,17 @@ function InteractionsTab({ profileId, interactions, sourceCustomerId }: { profil
                 </div>
                 <p className="text-sm font-medium">{i.summary}</p>
                 {i.detail && <p className="text-sm text-muted-foreground mt-1">{i.detail}</p>}
+                {i.summaryTitle && <p className="text-sm font-medium mt-1">AI: {i.summaryTitle}</p>}
+                {i.summaryNote && <p className="text-xs text-muted-foreground mt-0.5">{i.summaryNote}</p>}
+                {i.transcript && (
+                  <details className="mt-1">
+                    <summary className="text-xs text-muted-foreground cursor-pointer">查看转写文本</summary>
+                    <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1 max-h-24 overflow-y-auto">{i.transcript}</p>
+                  </details>
+                )}
+                {i.asrStatus === "TRANSCRIBING" && <p className="text-xs text-muted-foreground mt-1"><Loader2 className="h-3 w-3 inline animate-spin mr-1" />识别中...</p>}
+                {i.asrStatus === "FAILED" && <p className="text-xs text-red-500 mt-1">语音识别失败</p>}
+                {i.voiceUrl && <span className="text-xs text-muted-foreground mt-1">· 有录音</span>}
               </CardContent>
             </Card>
           ))}
@@ -191,7 +202,7 @@ function InteractionsTab({ profileId, interactions, sourceCustomerId }: { profil
 
 function NearbyPois({ lat, lng }: { lat: number; lng: number }) {
   const [enabled, setEnabled] = useState(false);
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, error } = useQuery({
     queryKey: ["reverse-geocode", lat, lng],
     queryFn: async () => {
       const res = await fetch("/api/crm/maps/reverse-geocode", {
@@ -199,11 +210,13 @@ function NearbyPois({ lat, lng }: { lat: number; lng: number }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lat, lng }),
       });
-      if (!res.ok) return null;
-      return res.json();
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "请求失败");
+      return json;
     },
     enabled,
     staleTime: Infinity,
+    retry: false,
   });
 
   if (!enabled) {
@@ -216,6 +229,10 @@ function NearbyPois({ lat, lng }: { lat: number; lng: number }) {
 
   if (isFetching) {
     return <p className="text-xs text-muted-foreground mt-1">加载中...</p>;
+  }
+
+  if (error) {
+    return <p className="text-xs text-red-500 mt-1">{error instanceof Error ? error.message : "请求失败"}</p>;
   }
 
   const result = data?.result;
@@ -268,19 +285,9 @@ function CheckinsTab({ profileId, checkins, sourceCustomerId }: { profileId: str
                 </div>
                 {c.addressSnapshot && <p className="text-sm">{c.addressSnapshot}</p>}
                 {c.lat != null && c.lng != null && <NearbyPois lat={c.lat} lng={c.lng} />}
-                {c.summaryTitle && <p className="text-sm font-medium mt-1">{c.summaryTitle}</p>}
-                {c.summary && <p className="text-xs text-muted-foreground mt-0.5">{c.summary}</p>}
-                {c.transcript && (
-                  <details className="mt-1">
-                    <summary className="text-xs text-muted-foreground cursor-pointer">查看转写文本</summary>
-                    <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1 max-h-24 overflow-y-auto">{c.transcript}</p>
-                  </details>
-                )}
-                {c.asrStatus === "TRANSCRIBING" && <p className="text-xs text-muted-foreground mt-1"><Loader2 className="h-3 w-3 inline animate-spin mr-1" />识别中...</p>}
-                {c.asrStatus === "FAILED" && <p className="text-xs text-red-500 mt-1">语音识别失败</p>}
+                {c.voiceUrl && <p className="text-xs text-muted-foreground mt-1">历史录音（已迁移至沟通记录）</p>}
                 <div className="text-xs text-muted-foreground mt-1">
                   {c.lat != null ? `${c.lat.toFixed(6)}, ${c.lng!.toFixed(6)}` : "无定位"}
-                  {c.voiceUrl && " · 有录音"}
                   {` · ${c.photoCount || 0} 张照片`}
                 </div>
                 {c.media?.length > 0 && (

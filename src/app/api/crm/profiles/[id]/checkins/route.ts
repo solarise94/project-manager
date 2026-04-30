@@ -57,8 +57,8 @@ export async function POST(
 
   if (lat != null && lng != null) {
     const geo = await reverseGeocode(lat, lng);
-    if (geo) {
-      addressSnapshot = geo.address;
+    if (geo.result) {
+      addressSnapshot = geo.result.address;
       mapProvider = "tencent";
     }
   }

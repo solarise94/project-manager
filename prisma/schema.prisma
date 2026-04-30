@@ -573,10 +573,16 @@ model CrmInteraction {
   relatedProjectId String?
   createdByUserId  String
   createdByUser    User               @relation("CrmInteractionsCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  voiceUrl         String?
+  transcript       String?
+  summaryTitle     String?
+  summaryNote      String?
+  asrStatus        String             @default("NONE") // NONE | UPLOADED | TRANSCRIBING | DONE | FAILED
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
   @@index([profileId, happenedAt])
+  @@index([asrStatus])
 }
 
 model CrmFollowUpTask {

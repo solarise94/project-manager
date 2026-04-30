@@ -42,6 +42,11 @@ export interface CrmInteractionItem {
   relatedProjectId: string | null;
   createdByUserId: string;
   createdByUser: { id: string; name: string };
+  voiceUrl: string | null;
+  transcript: string | null;
+  summaryTitle: string | null;
+  summaryNote: string | null;
+  asrStatus: string;
   createdAt: string;
 }
 

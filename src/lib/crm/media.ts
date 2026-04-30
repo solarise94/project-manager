@@ -3,14 +3,17 @@ import { existsSync } from "fs";
 
 const AUDIO_EXTS = new Set([".webm", ".ogg", ".mp3", ".m4a", ".wav", ".aac"]);
 
-export function getCheckinDir(checkinId: string): string {
-  return path.join(process.cwd(), "public", "uploads", "crm", checkinId);
+export type MediaOwnerType = "checkin" | "interaction";
+
+export function getMediaDir(ownerId: string, ownerType: MediaOwnerType = "checkin"): string {
+  const dirName = ownerType === "interaction" ? "interactions" : "crm";
+  return path.join(process.cwd(), "public", "uploads", dirName, ownerId);
 }
 
-export function validateCheckinVoiceUrl(voiceUrl: string, checkinId: string): boolean {
-  // Must be a relative path under /uploads/crm/{checkinId}/
+export function validateVoiceUrl(voiceUrl: string, ownerId: string, ownerType: MediaOwnerType = "checkin"): boolean {
   if (!voiceUrl.startsWith("/")) return false;
-  const expectedPrefix = `/uploads/crm/${checkinId}/`;
+  const dirName = ownerType === "interaction" ? "interactions" : "crm";
+  const expectedPrefix = `/uploads/${dirName}/${ownerId}/`;
   if (!voiceUrl.startsWith(expectedPrefix)) return false;
 
   const filename = voiceUrl.slice(expectedPrefix.length);
@@ -23,7 +26,20 @@ export function validateCheckinVoiceUrl(voiceUrl: string, checkinId: string): bo
   return existsSync(filePath);
 }
 
-export function resolveCheckinFilePath(voiceUrl: string, checkinId: string): string | null {
-  if (!validateCheckinVoiceUrl(voiceUrl, checkinId)) return null;
+export function resolveFilePath(voiceUrl: string, ownerId: string, ownerType: MediaOwnerType = "checkin"): string | null {
+  if (!validateVoiceUrl(voiceUrl, ownerId, ownerType)) return null;
   return path.join(process.cwd(), "public", voiceUrl.slice(1));
+}
+
+// Backward-compatible wrappers for existing checkin-only code
+export function validateCheckinVoiceUrl(voiceUrl: string, checkinId: string): boolean {
+  return validateVoiceUrl(voiceUrl, checkinId, "checkin");
+}
+
+export function resolveCheckinFilePath(voiceUrl: string, checkinId: string): string | null {
+  return resolveFilePath(voiceUrl, checkinId, "checkin");
+}
+
+export function getCheckinDir(checkinId: string): string {
+  return getMediaDir(checkinId, "checkin");
 }

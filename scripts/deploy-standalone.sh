@@ -39,12 +39,15 @@ MINIMAX_MODEL_VALUE="${MINIMAX_MODEL:-}"
 TAVILY_API_KEY_VALUE="${TAVILY_API_KEY:-}"
 TENCENTCLOUD_SECRET_ID_VALUE="${TENCENTCLOUD_SECRET_ID:-}"
 TENCENTCLOUD_SECRET_KEY_VALUE="${TENCENTCLOUD_SECRET_KEY:-}"
+TENCENT_MAP_KEY_VALUE="${TENCENT_MAP_KEY:-}"
+NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE="${NEXT_PUBLIC_TENCENT_MAP_KEY:-}"
 
 # Persistent config files live next to the database, survive deploys.
 SMTP_CONF="$(dirname "${RUNTIME_DB}")/smtp.conf"
 MINIMAX_CONF="$(dirname "${RUNTIME_DB}")/minimax.conf"
 TAVILY_CONF="$(dirname "${RUNTIME_DB}")/tavily.conf"
 TENCENT_ASR_CONF="$(dirname "${RUNTIME_DB}")/tencent-asr.conf"
+TENCENT_MAP_CONF="$(dirname "${RUNTIME_DB}")/tencent-map.conf"
 
 cd "${REPO_DIR}"
 
@@ -195,6 +198,25 @@ for TC_SOURCE in "${TENCENT_ASR_CONF}" "${EXISTING_ENV_FILE}"; do
   done < <(grep -E '^TENCENTCLOUD_SECRET_(ID|KEY)=' "${TC_SOURCE}" || true)
 done
 
+# Read Tencent Map config: shell env > tencent-map.conf > existing .env
+for TM_SOURCE in "${TENCENT_MAP_CONF}" "${EXISTING_ENV_FILE}"; do
+  [[ -f "${TM_SOURCE}" ]] || continue
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"
+    value="${value#\"}"
+    case "${key}" in
+      TENCENT_MAP_KEY)             [[ -z "${TENCENT_MAP_KEY_VALUE}" ]]             && TENCENT_MAP_KEY_VALUE="${value}" ;;
+      NEXT_PUBLIC_TENCENT_MAP_KEY) [[ -z "${NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE}" ]] && NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^(TENCENT_MAP_KEY|NEXT_PUBLIC_TENCENT_MAP_KEY)=' "${TM_SOURCE}" || true)
+done
+
+if [[ -n "${TENCENT_MAP_KEY_VALUE}" ]]; then
+  echo "  Tencent Map Key: configured"
+else
+  echo "  Tencent Map Key: not configured"
+fi
+
 echo "[6/8] Writing runtime .env..."
 cat > "${TARGET_DIR}/.env" <<EOF
 # Runtime database for this deployed instance only.
@@ -219,6 +241,9 @@ TAVILY_API_KEY="${TAVILY_API_KEY_VALUE}"
 # Tencent Cloud ASR settings — sourced from tencent-asr.conf next to the database.
 TENCENTCLOUD_SECRET_ID="${TENCENTCLOUD_SECRET_ID_VALUE}"
 TENCENTCLOUD_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY_VALUE}"
+# Tencent Map settings — sourced from tencent-map.conf next to the database.
+TENCENT_MAP_KEY="${TENCENT_MAP_KEY_VALUE}"
+NEXT_PUBLIC_TENCENT_MAP_KEY="${NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE}"
 # Standalone server bind settings.
 PORT="${PORT}"
 HOSTNAME="${BIND_HOST}"
