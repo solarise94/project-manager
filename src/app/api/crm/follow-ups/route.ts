@@ -51,7 +51,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "profileId, title, and dueAt are required" }, { status: 400 });
   }
 
-  const profile = await prisma.crmCustomerProfile.findUnique({ where: { id: profileId } });
+  const profile = await prisma.crmCustomerProfile.findUnique({
+    where: { id: profileId },
+    select: { ownerUserId: true, assignmentStatus: true, sourceCustomer: { select: { id: true, name: true } } },
+  });
   if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
   const isScopedRole = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
@@ -59,6 +62,9 @@ export async function POST(req: NextRequest) {
     const scope = await buildCrmWhereForRole(session.user.id, session.user.role);
     const ids = extractScopedUserIds(scope);
     if (ids && !ids.includes(profile.ownerUserId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (profile.assignmentStatus !== "ASSIGNED") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
@@ -98,6 +104,21 @@ export async function POST(req: NextRequest) {
 
     return created;
   });
+
+  // Notify the assignee (skip if assigning to self)
+  if (finalOwner !== session.user.id) {
+    const customerName = profile.sourceCustomer.name;
+    const dueDateStr = new Date(dueAt).toLocaleDateString("zh-CN");
+    prisma.notification.create({
+      data: {
+        userId: finalOwner,
+        title: "有新的跟进任务",
+        content: `客户 ${customerName} 有新的跟进任务: ${title}，截止 ${dueDateStr}`,
+        type: "CRM_FOLLOW_UP",
+        link: `/crm/customers/${profile.sourceCustomer.id}`,
+      },
+    }).catch(() => {});
+  }
 
   return NextResponse.json({ task }, { status: 201 });
 }

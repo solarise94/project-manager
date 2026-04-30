@@ -4,18 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
-
-async function generateCustomerCode(): Promise<string> {
-  const count = await prisma.customer.count();
-  // Start from count+1, retry up to 10 times on collision
-  for (let i = 0; i < 10; i++) {
-    const code = `KH-${String(count + 1 + i).padStart(6, "0")}`;
-    const exists = await prisma.customer.findUnique({ where: { customerCode: code }, select: { id: true } });
-    if (!exists) return code;
-  }
-  // Fallback: use timestamp-based but still numeric
-  return `KH-${String(Date.now() % 1000000).padStart(6, "0")}`;
-}
+import { generateCustomerCode } from "@/lib/customer-code";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);

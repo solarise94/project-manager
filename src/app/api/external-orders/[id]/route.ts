@@ -25,6 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       },
       reviewedBy: { select: { id: true, name: true } },
       mergedInto: { select: { id: true, externalOrderNo: true, source: true } },
+      customer: { select: { id: true, name: true, customerCode: true } },
     },
   });
 

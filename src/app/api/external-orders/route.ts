@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
         productNamesRaw: true, itemCount: true, paidAmount: true,
         orderAt: true, invoiceStatus: true, createdAt: true,
         duplicateStatus: true, duplicateGroupId: true,
+        customerId: true, customer: { select: { id: true, name: true, customerCode: true } },
       },
     }),
     prisma.externalOrder.count({ where }),

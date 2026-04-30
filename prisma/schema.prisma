@@ -144,6 +144,7 @@ model Customer {
   mergedFrom           Customer[]         @relation("CustomerMerge")
   projects             Project[]
   crmProfile           CrmCustomerProfile?
+  externalOrders       ExternalOrder[]
   crmApplications      CrmCustomerApplication[] @relation("CrmApplicationsCreatedCustomer")
   relationsFrom        CustomerRelation[] @relation("RelationsFrom")
   relationsTo          CustomerRelation[] @relation("RelationsTo")
@@ -460,6 +461,8 @@ model ExternalOrder {
   createdAt             DateTime                      @default(now())
   updatedAt             DateTime                      @updatedAt
   invoiceRequests       ExternalOrderInvoiceRequest[]
+  customerId            String?
+  customer              Customer?                      @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   @@unique([source, externalOrderNo])
   @@index([externalOrderNo])
@@ -468,6 +471,7 @@ model ExternalOrder {
   @@index([importBatchId])
   @@index([duplicateStatus])
   @@index([duplicateGroupId])
+  @@index([customerId])
 }
 
 model ExternalOrderInvoiceRequest {

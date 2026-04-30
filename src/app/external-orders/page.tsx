@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Search, Upload, Copy, FileDown,
-  Send, CheckCircle2, XCircle, MessageSquare, Pencil, ClipboardCopy,
+  Send, CheckCircle2, XCircle, MessageSquare, Pencil, ClipboardCopy, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,8 @@ interface ExternalOrder {
   mergedIntoId: string | null;
   reviewNote: string | null;
   rawJson: string | null;
+  customerId: string | null;
+  customer?: { id: string; name: string; customerCode: string } | null;
   createdAt: string;
 }
 
@@ -118,6 +120,14 @@ export default function ExternalOrdersPage() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+
+  // Clear selection when page, search, or filters change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedOrderIds(new Set());
+  }, [page, debouncedSearch, invoiceStatusFilter, duplicateStatusFilter]);
+
   const [importOpen, setImportOpen] = useState(false);
   const [importSource, setImportSource] = useState("微信小商店");
   const [importText, setImportText] = useState("");
@@ -131,6 +141,7 @@ export default function ExternalOrdersPage() {
     contactName: string; buyerOrgId: string; buyerOrgName: string;
     invoiceType: string; contentSummary: string; remark: string; items: InvoiceItem[];
   }>>({});
+  const [batchInvoiceCreateUrl, setBatchInvoiceCreateUrl] = useState<string | null>(null);
 
   const [editRemarkId, setEditRemarkId] = useState<string | null>(null);
   const [editRemarkText, setEditRemarkText] = useState("");
@@ -309,6 +320,45 @@ export default function ExternalOrdersPage() {
   const [dedupReviewNote, setDedupReviewNote] = useState("");
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
 
+  // Batch selection helpers
+  const toggleOrderSelect = useCallback((id: string) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectableIds = orders.map((o) => o.id).join(",");
+  const toggleSelectAllOrders = useCallback(() => {
+    if (orders.length === 0) return;
+    const allSelected = orders.every((o) => selectedOrderIds.has(o.id));
+    setSelectedOrderIds(allSelected ? new Set() : new Set(orders.map((o) => o.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectableIds, selectedOrderIds]);
+
+  const batchDeleteMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/external-orders/batch-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selectedOrderIds] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "删除失败");
+      return data as { deleted: number; skipped: Array<{ id: string; reason: string }> };
+    },
+    onSuccess: (data) => {
+      toast.success(`已删除 ${data.deleted} 条`);
+      if (data.skipped.length > 0) {
+        data.skipped.slice(0, 3).forEach((s) => toast.warning(`${s.id.slice(-6)}: ${s.reason}`));
+      }
+      setSelectedOrderIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const copyText = useCallback(async (text: string) => {
     try { await navigator.clipboard.writeText(text); toast.success("已复制到剪贴板"); }
     catch { toast.error("复制失败"); }
@@ -409,31 +459,113 @@ export default function ExternalOrdersPage() {
           </SelectContent>
         </Select>
         {orders.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9"
-            onClick={async () => {
-              try {
-                const params = new URLSearchParams({ exportAll: "1" });
-                if (debouncedSearch) params.set("search", debouncedSearch);
-                if (invoiceStatusFilter !== "ALL") params.set("invoiceStatus", invoiceStatusFilter);
-                const res = await fetch(`/api/external-orders?${params}`);
-                if (!res.ok) throw new Error("fetch failed");
-                const data = await res.json();
-                const allOrders: ExternalOrder[] = data.orders || [];
-                if (allOrders.length === 0) { toast.error("没有可导出的订单"); return; }
-                const text = getFeishuProjectHeader() + "\n" + externalOrdersToFeishuText(allOrders);
-                await navigator.clipboard.writeText(text);
-                toast.success(`已复制 ${allOrders.length} 条订单到剪贴板`);
-              } catch {
-                toast.error("导出失败");
-              }
-            }}
-          >
-            <ClipboardCopy className="mr-1 h-3.5 w-3.5" />
-            导出飞书（全部{total > pageSize ? ` ${total}条` : ""})
-          </Button>
+          <>
+            <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none h-9">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+                checked={orders.length > 0 && orders.every((o) => selectedOrderIds.has(o.id))}
+                onChange={toggleSelectAllOrders}
+              />
+              全选本页
+            </label>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={async () => {
+                try {
+                  if (selectedOrderIds.size > 0) {
+                    const selected = orders.filter((o) => selectedOrderIds.has(o.id));
+                    const text = getFeishuProjectHeader() + "\n" + externalOrdersToFeishuText(selected);
+                    await navigator.clipboard.writeText(text);
+                    toast.success(`已复制 ${selected.length} 条订单到剪贴板`);
+                  } else {
+                    const params = new URLSearchParams({ exportAll: "1" });
+                    if (debouncedSearch) params.set("search", debouncedSearch);
+                    if (invoiceStatusFilter !== "ALL") params.set("invoiceStatus", invoiceStatusFilter);
+                    const res = await fetch(`/api/external-orders?${params}`);
+                    if (!res.ok) throw new Error("fetch failed");
+                    const data = await res.json();
+                    const allOrders: ExternalOrder[] = data.orders || [];
+                    if (allOrders.length === 0) { toast.error("没有可导出的订单"); return; }
+                    const text = getFeishuProjectHeader() + "\n" + externalOrdersToFeishuText(allOrders);
+                    await navigator.clipboard.writeText(text);
+                    toast.success(`已复制 ${allOrders.length} 条订单到剪贴板`);
+                  }
+                } catch {
+                  toast.error("导出失败");
+                }
+              }}
+            >
+              <ClipboardCopy className="mr-1 h-3.5 w-3.5" />
+              {selectedOrderIds.size > 0 ? `导出已选 ${selectedOrderIds.size} 条` : `导出飞书（全部${total > pageSize ? ` ${total}条` : ""})`}
+            </Button>
+            {selectedOrderIds.size > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9"
+                  onClick={() => {
+                    const selected = orders.filter((o) => selectedOrderIds.has(o.id));
+                    if (selected.length < 2) { toast.error("合并开票至少需要选择 2 条订单"); return; }
+                    const mergedOrders = selected.filter((o) => o.duplicateStatus === "MERGED" || o.mergedIntoId);
+                    if (mergedOrders.length > 0) {
+                      toast.error(`以下订单已合并，无法开票：${mergedOrders.map((o) => o.externalOrderNo).join("、")}`);
+                      return;
+                    }
+                    const names = [...new Set(selected.map((o) => o.receiverName).filter(Boolean))];
+                    const stores = [...new Set(selected.map((o) => o.storeName).filter(Boolean))];
+                    const products = [...new Set(selected.map((o) => o.productNamesRaw).filter(Boolean))];
+                    const firstOrder = selected[0];
+                    const draft: Partial<{
+                      contactName: string; buyerOrgName: string;
+                      invoiceType: string; contentSummary: string; remark: string; items: InvoiceItem[];
+                    }> = {
+                      contactName: (names.length === 1 ? names[0] : (names[0] || "")) || "",
+                      buyerOrgName: (stores.length === 1 ? stores[0] : (stores[0] || "")) || "",
+                      contentSummary: products.join("、"),
+                      remark: `合并开票订单：${selected.map((o) => o.externalOrderNo).join("、")}`,
+                      items: selected.map((o) => ({
+                        itemName: o.productNamesRaw || o.externalOrderNo,
+                        spec: "",
+                        unit: "",
+                        quantity: String(o.itemCount || 1),
+                        amount: String(o.paidAmount || 0),
+                      })),
+                    };
+                    setBatchInvoiceCreateUrl(`/api/external-orders/${firstOrder.id}/invoices`);
+                    setEditingInvoice(null);
+                    setInvoiceDefaults({
+                      contactName: draft.contactName || firstOrder.receiverName || "",
+                      buyerOrgName: draft.buyerOrgName,
+                      invoiceType: draft.invoiceType,
+                      contentSummary: draft.contentSummary,
+                      remark: draft.remark,
+                      items: draft.items,
+                    });
+                    setInvoiceDialogOpen(true);
+                  }}
+                >
+                  <FileDown className="mr-1 h-3.5 w-3.5" />
+                  合并开票 ({selectedOrderIds.size})
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-9"
+                  disabled={batchDeleteMutation.isPending}
+                  onClick={() => {
+                    if (!confirm(`确认删除选中的 ${selectedOrderIds.size} 条外部订单？此操作不可恢复。`)) return;
+                    batchDeleteMutation.mutate();
+                  }}
+                >
+                  {batchDeleteMutation.isPending ? "删除中..." : `删除已选 (${selectedOrderIds.size})`}
+                </Button>
+              </>
+            )}
+          </>
         )}
       </div>
 
@@ -448,6 +580,13 @@ export default function ExternalOrdersPage() {
               <CardContent className="p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 shrink-0"
+                      checked={selectedOrderIds.has(order.id)}
+                      onChange={() => toggleOrderSelect(order.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                     <span className="text-sm font-mono">{order.externalOrderNo}</span>
                     <Badge variant={INVOICE_STATUS_VARIANTS[order.invoiceStatus] || "outline"} className="text-[10px] shrink-0">
                       {INVOICE_STATUS_LABELS[order.invoiceStatus] || order.invoiceStatus}
@@ -460,6 +599,9 @@ export default function ExternalOrdersPage() {
                     )}
                     {order.duplicateStatus === "MERGED" && (
                       <Badge variant="outline" className="text-[10px] shrink-0">已合并</Badge>
+                    )}
+                    {order.customerId && order.customer && (
+                      <Badge variant="outline" className="text-[10px] shrink-0 bg-green-50 text-green-700 border-green-200">已绑定：{order.customer.name}</Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0 text-sm">
@@ -554,6 +696,9 @@ export default function ExternalOrdersPage() {
                 </Button>
               </div>
               <OrderDetail order={detailOrder} />
+
+              {/* Customer Binding */}
+              <CustomerBindSection order={detailOrderData} />
 
               {/* Dedup Review Panel */}
               {(duplicateGroup.length > 0 || detailOrderData.duplicateGroupId || detailOrderData.mergedIntoId || detailMergedInto) && (
@@ -692,7 +837,7 @@ export default function ExternalOrdersPage() {
         </DialogContent>
       </Dialog>
 
-      {detailOrder && (
+      {detailOrder && !batchInvoiceCreateUrl && (
         <InvoiceFormDialog
           open={invoiceDialogOpen}
           onOpenChange={setInvoiceDialogOpen}
@@ -705,7 +850,128 @@ export default function ExternalOrdersPage() {
           aiDraftUrl={null}
         />
       )}
+      {batchInvoiceCreateUrl && (
+        <InvoiceFormDialog
+          open={invoiceDialogOpen}
+          onOpenChange={(v) => { setInvoiceDialogOpen(v); if (!v) { setBatchInvoiceCreateUrl(null); setInvoiceDefaults({}); } }}
+          editingInvoice={null}
+          createUrl={batchInvoiceCreateUrl}
+          patchUrlPrefix="/api/external-order-invoices"
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+            setSelectedOrderIds(new Set());
+          }}
+          defaultValues={invoiceDefaults}
+          showProjectCode={false}
+          aiDraftUrl={null}
+        />
+      )}
 
+    </div>
+  );
+}
+
+function CustomerBindSection({ order }: { order: ExternalOrder }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"create" | "bind">("create");
+  const [bindCustomerId, setBindCustomerId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [formName, setFormName] = useState(order.receiverName || "");
+  const [formPrincipal, setFormPrincipal] = useState(order.receiverPhone || "");
+  const [formWechat, setFormWechat] = useState("");
+  const [formAddress, setFormAddress] = useState(order.receiverAddress || "");
+  const [formOrganization, setFormOrganization] = useState(order.storeName || "");
+
+  const isMerged = order.duplicateStatus === "MERGED" || !!order.mergedIntoId;
+
+  const { data: customerList } = useQuery<{ customers: { id: string; name: string; customerCode: string; principal: string | null }[] }>({
+    queryKey: ["customers-search", customerSearch],
+    queryFn: () => fetch(`/api/customers/list?search=${encodeURIComponent(customerSearch)}`).then((r) => r.json()),
+    enabled: open && mode === "bind",
+  });
+
+  const bindMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, unknown> = mode === "bind"
+        ? { mode: "bind", customerId: bindCustomerId }
+        : { mode: "create", name: formName, principal: formPrincipal, wechat: formWechat, address: formAddress, organization: formOrganization };
+      const res = await fetch(`/api/external-orders/${order.id}/customer`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || "操作失败"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success(mode === "create" ? "客户已创建并绑定" : "客户已绑定");
+      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["external-order-detail", order.id] });
+      setOpen(false);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  if (order.customerId && order.customer) {
+    return (
+      <div className="flex items-center gap-2 text-sm py-2">
+        <span className="text-muted-foreground">已绑定客户：</span>
+        <a href={`/customers`} className="text-primary hover:underline font-medium">{order.customer.name}</a>
+        <span className="text-xs text-muted-foreground">({order.customer.customerCode})</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="py-2">
+      {isMerged ? (
+        <p className="text-xs text-muted-foreground">该订单已合并，请在主订单上处理客户</p>
+      ) : (
+        <>
+          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <UserPlus className="h-4 w-4 mr-1" />{order.customerId ? "已绑定" : "添加/绑定客户"}
+          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader><DialogTitle>{mode === "create" ? "新建客户" : "绑定已有客户"}</DialogTitle></DialogHeader>
+              <div className="flex gap-2 mb-4">
+                <Button size="sm" variant={mode === "create" ? "default" : "outline"} onClick={() => setMode("create")}>新建客户</Button>
+                <Button size="sm" variant={mode === "bind" ? "default" : "outline"} onClick={() => setMode("bind")}>绑定已有客户</Button>
+              </div>
+
+              {mode === "create" && (
+                <div className="space-y-3">
+                  <div><label className="text-sm font-medium">客户名称 *</label><Input value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="从订单收件人预填" /></div>
+                  <div><label className="text-sm font-medium">联系人/电话</label><Input value={formPrincipal} onChange={(e) => setFormPrincipal(e.target.value)} placeholder="从订单电话预填" /></div>
+                  <div><label className="text-sm font-medium">微信</label><Input value={formWechat} onChange={(e) => setFormWechat(e.target.value)} /></div>
+                  <div><label className="text-sm font-medium">地址</label><Input value={formAddress} onChange={(e) => setFormAddress(e.target.value)} placeholder="从订单地址预填" /></div>
+                  <div><label className="text-sm font-medium">单位</label><Input value={formOrganization} onChange={(e) => setFormOrganization(e.target.value)} placeholder="从订单门店预填" /></div>
+                  <Button onClick={() => bindMutation.mutate()} disabled={!formName.trim() || bindMutation.isPending} className="w-full">
+                    {bindMutation.isPending ? "创建中..." : "创建并绑定"}
+                  </Button>
+                </div>
+              )}
+
+              {mode === "bind" && (
+                <div className="space-y-3">
+                  <Input placeholder="搜索客户..." value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} />
+                  <div className="border rounded-md max-h-48 overflow-y-auto">
+                    {customerList?.customers.map((c) => (
+                      <div key={c.id} className={`flex items-center justify-between p-2 cursor-pointer hover:bg-muted ${bindCustomerId === c.id ? "bg-primary/10" : ""}`} onClick={() => setBindCustomerId(c.id)}>
+                        <div><div className="text-sm font-medium">{c.name}</div><div className="text-xs text-muted-foreground">{c.customerCode}{c.principal ? ` · ${c.principal}` : ""}</div></div>
+                        {bindCustomerId === c.id && <CheckCircle2 className="h-4 w-4 text-primary" />}
+                      </div>
+                    ))}
+                    {customerList?.customers.length === 0 && <p className="text-xs text-muted-foreground p-3 text-center">暂无匹配客户</p>}
+                  </div>
+                  <Button onClick={() => bindMutation.mutate()} disabled={!bindCustomerId || bindMutation.isPending} className="w-full">
+                    {bindMutation.isPending ? "绑定中..." : "确认绑定"}
+                  </Button>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
     </div>
   );
 }

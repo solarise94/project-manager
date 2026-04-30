@@ -26,6 +26,8 @@ export async function POST(req: NextRequest) {
   });
 
   const toMark: string[] = [];
+  // Track per-owner count for aggregated notifications
+  const ownerMarkedCount = new Map<string, number>();
 
   for (const p of profiles) {
     const [lastCheckin, lastVisitInteraction] = await Promise.all([
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
     const lastActivity = lastCheckin?.createdAt ?? lastVisitInteraction?.happenedAt ?? null;
     if (!lastActivity || lastActivity < thresholdDate) {
       toMark.push(p.id);
+      ownerMarkedCount.set(p.ownerUserId, (ownerMarkedCount.get(p.ownerUserId) || 0) + 1);
     }
   }
 
@@ -65,6 +68,19 @@ export async function POST(req: NextRequest) {
         })),
       }),
     ]);
+
+    // Aggregated notifications per owner
+    for (const [ownerUserId, count] of ownerMarkedCount) {
+      prisma.notification.create({
+        data: {
+          userId: ownerUserId,
+          title: "客户流失预警",
+          content: `有 ${count} 个客户超过 ${thresholdDays} 天未拜访，已进入待收回客户池`,
+          type: "CRM_REFLOW_WARNING",
+          link: "/crm/customer-pool?assignmentStatus=RECALL_CANDIDATE",
+        },
+      }).catch(() => {});
+    }
   }
 
   return NextResponse.json({ markedCount: toMark.length });

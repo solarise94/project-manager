@@ -52,6 +52,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
       }
 
+      // Migrate external orders bound to the source customer
+      await tx.externalOrder.updateMany({
+        where: { customerId: sourceId },
+        data: { customerId: targetId },
+      });
+
       // Mark source as deleted + merged
       await tx.customer.update({
         where: { id: sourceId },

@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import {
@@ -86,6 +87,11 @@ function ApplicationList() {
   const [ownerUserId, setOwnerUserId] = useState("");
   const [bindTargetId, setBindTargetId] = useState("");
   const [actionType, setActionType] = useState<"approve" | "reject" | "bind">("approve");
+
+  // Batch state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchOwnerUserId, setBatchOwnerUserId] = useState("");
+  const [batchReviewNote, setBatchReviewNote] = useState("");
 
   const isAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
 
@@ -176,6 +182,81 @@ function ApplicationList() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const batchApproveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/crm/customer-applications/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "approve",
+          ids: [...selectedIds],
+          ownerUserId: batchOwnerUserId || undefined,
+          reviewNote: batchReviewNote || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "批量审核失败");
+      return data as { approved: number; rejected: number; skipped: Array<{ id: string; reason: string }>; errors: Array<{ id: string; error: string }> };
+    },
+    onSuccess: (data) => {
+      const parts: string[] = [];
+      if (data.approved > 0) parts.push(`${data.approved} 条已通过`);
+      if (data.skipped.length > 0) parts.push(`${data.skipped.length} 条已跳过`);
+      if (data.errors.length > 0) parts.push(`${data.errors.length} 条失败`);
+      toast.success(parts.join("，"));
+      if (data.errors.length > 0) {
+        data.errors.slice(0, 3).forEach((e) => toast.error(`${e.id.slice(-6)}: ${e.error}`));
+      }
+      pendingInvalidations();
+      setSelectedIds(new Set());
+      setBatchReviewNote("");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const batchRejectMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/crm/customer-applications/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reject",
+          ids: [...selectedIds],
+          reviewNote: batchReviewNote || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "批量驳回失败");
+      return data as { approved: number; rejected: number; skipped: Array<{ id: string; reason: string }>; errors: Array<{ id: string; error: string }> };
+    },
+    onSuccess: (data) => {
+      const parts: string[] = [];
+      if (data.rejected > 0) parts.push(`${data.rejected} 条已驳回`);
+      if (data.skipped.length > 0) parts.push(`${data.skipped.length} 条已跳过`);
+      if (data.errors.length > 0) parts.push(`${data.errors.length} 条失败`);
+      toast.success(parts.join("，"));
+      pendingInvalidations();
+      setSelectedIds(new Set());
+      setBatchReviewNote("");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const pendingIds = applications.filter((a) => a.status === "PENDING").map((a) => a.id);
+    if (pendingIds.length === 0) return;
+    const allSelected = pendingIds.every((id) => selectedIds.has(id));
+    setSelectedIds(allSelected ? new Set() : new Set(pendingIds));
+  };
+
   const resetReview = () => {
     setReviewOpen(false);
     setReviewing(null);
@@ -231,9 +312,75 @@ function ApplicationList() {
               ? `待审核 ${pendingCount} 条申请`
               : "查看您提交的客户申请进度"}
           </p>
+          {isAdmin && pendingCount > 0 && (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+                checked={applications.filter((a) => a.status === "PENDING").every((a) => selectedIds.has(a.id))}
+                onChange={toggleSelectAll}
+              />
+              全选本页待审核
+            </label>
+          )}
         </div>
         {!isAdmin && <CustomerApplicationFormDialog />}
       </div>
+
+      {/* Batch action bar */}
+      {isAdmin && selectedIds.size > 0 && (
+        <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium">已选择 {selectedIds.size} 条</span>
+            <div className="flex items-center gap-1">
+              <label className="text-xs text-muted-foreground">负责人:</label>
+              <Select value={batchOwnerUserId} onValueChange={(v) => setBatchOwnerUserId(v || "")}>
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  {batchOwnerUserId
+                    ? <span>{assignees.find((a) => a.userId === batchOwnerUserId)?.name || batchOwnerUserId}</span>
+                    : <span className="text-muted-foreground">默认提交人</span>}
+                </SelectTrigger>
+                <SelectContent>
+                  {assignees.map((a) => (
+                    <SelectItem key={a.userId} value={a.userId}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Input
+              placeholder="审核备注（选填）"
+              value={batchReviewNote}
+              onChange={(e) => setBatchReviewNote(e.target.value)}
+              className="h-8 text-xs w-48"
+            />
+            <Button
+              size="sm"
+              disabled={batchApproveMutation.isPending || batchRejectMutation.isPending}
+              onClick={() => {
+                if (!confirm(`确认批量通过 ${selectedIds.size} 条申请？批量通过仅创建新客户，如需绑定已有客户请单条审核。`)) return;
+                batchApproveMutation.mutate();
+              }}
+            >
+              {batchApproveMutation.isPending ? "处理中..." : `批量通过 (${selectedIds.size})`}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={batchApproveMutation.isPending || batchRejectMutation.isPending}
+              onClick={() => {
+                if (!confirm(`确认批量驳回 ${selectedIds.size} 条申请？`)) return;
+                batchRejectMutation.mutate();
+              }}
+            >
+              {batchRejectMutation.isPending ? "处理中..." : `批量驳回 (${selectedIds.size})`}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+              清空选择
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">批量通过仅创建新客户，如需绑定已有客户请单条审核</p>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
@@ -246,6 +393,14 @@ function ApplicationList() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
+                    {isAdmin && app.status === "PENDING" && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 shrink-0"
+                        checked={selectedIds.has(app.id)}
+                        onChange={() => toggleSelect(app.id)}
+                      />
+                    )}
                     <span className="font-medium text-lg">{app.name}</span>
                     <StatusBadge status={app.status} />
                   </div>

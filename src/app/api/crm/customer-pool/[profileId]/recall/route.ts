@@ -53,5 +53,19 @@ export async function POST(
     return updated;
   });
 
+  // Notify the original owner that their customer was recalled (skip self)
+  if (profile.ownerUserId && profile.ownerUserId !== session.user.id) {
+    const customerName = result.sourceCustomer?.name || "未知客户";
+    prisma.notification.create({
+      data: {
+        userId: profile.ownerUserId,
+        title: "客户已收回",
+        content: `客户 ${customerName} 已被收回到客户池`,
+        type: "CRM_CUSTOMER_RECALLED",
+        link: "/crm/customer-pool?assignmentStatus=RECALLED",
+      },
+    }).catch(() => {});
+  }
+
   return NextResponse.json({ profile: result });
 }
