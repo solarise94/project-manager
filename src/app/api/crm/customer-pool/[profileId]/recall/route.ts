@@ -1,0 +1,57 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ profileId: string }> }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.user.role !== "ADMIN" && session.user.role !== "USER") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { profileId } = await params;
+  const body = await req.json();
+  const { reason } = body;
+
+  const profile = await prisma.crmCustomerProfile.findUnique({ where: { id: profileId } });
+  if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+
+  if (profile.assignmentStatus !== "ASSIGNED" && profile.assignmentStatus !== "RECALL_CANDIDATE") {
+    return NextResponse.json({ error: "只能收回已分配或待收回的客户" }, { status: 400 });
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.crmCustomerProfile.update({
+      where: { id: profileId },
+      data: {
+        assignmentStatus: "RECALLED",
+        recalledAt: new Date(),
+        recalledByUserId: session.user.id,
+        reflowReason: reason || null,
+      },
+      include: {
+        sourceCustomer: { select: { id: true, name: true, customerCode: true } },
+        ownerUser: { select: { id: true, name: true } },
+      },
+    });
+
+    await tx.crmCustomerAssignmentLog.create({
+      data: {
+        profileId,
+        fromOwnerUserId: profile.ownerUserId,
+        toOwnerUserId: null,
+        action: "RECALL",
+        reason: reason || null,
+        createdByUserId: session.user.id,
+      },
+    });
+
+    return updated;
+  });
+
+  return NextResponse.json({ profile: result });
+}

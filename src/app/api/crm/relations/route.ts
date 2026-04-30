@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { SYMMETRIC_RELATION_TYPES } from "@/lib/crm/constants";
+import { isRepresentativeRole, isRegionalManagerRole, getCrmProfileScopeWhere } from "@/lib/crm/permissions";
 
 const customerSelect = { id: true, name: true, customerCode: true, organization: true };
 
@@ -17,12 +18,16 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = {};
 
-  if (session.user.role === "REPRESENTATIVE") {
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
+    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
     const ownedProfiles = await prisma.crmCustomerProfile.findMany({
-      where: { ownerUserId: session.user.id },
+      where: scope as Record<string, unknown>,
       select: { sourceCustomerId: true },
     });
     const ownedCustomerIds = ownedProfiles.map((p) => p.sourceCustomerId);
+    if (ownedCustomerIds.length === 0) {
+      return NextResponse.json({ relations: [] });
+    }
     where.OR = [
       { fromCustomerId: { in: ownedCustomerIds } },
       { toCustomerId: { in: ownedCustomerIds } },
@@ -76,7 +81,7 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (session.user.role === "REPRESENTATIVE") {
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

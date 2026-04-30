@@ -10,4 +10,9 @@ export const crmKeys = {
   customers: () => ["customers"] as const,
   customersList: () => ["customers-list"] as const,
   customerApplications: () => ["crm-customer-applications"] as const,
+  regionManagers: () => ["crm-region-managers"] as const,
+  representativeOps: () => ["crm-representative-ops"] as const,
+  representativeOpsDetail: (repId: string) => ["crm-representative-ops", repId] as const,
+  customerPool: () => ["crm-customer-pool"] as const,
+  assignmentLogs: (profileId: string) => ["crm-assignment-logs", profileId] as const,
 };

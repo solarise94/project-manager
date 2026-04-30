@@ -40,6 +40,12 @@ model User {
   customerRelationsCreated   CustomerRelation[]
   crmApplicationsSubmitted    CrmCustomerApplication[] @relation("CrmApplicationsSubmitted")
   crmApplicationsReviewed     CrmCustomerApplication[] @relation("CrmApplicationsReviewed")
+  RegionManagers             CrmRegionManager[]
+  crmProfilesAssigned        CrmCustomerProfile[]    @relation("CrmAssignedByUser")
+  crmProfilesRecalled        CrmCustomerProfile[]    @relation("CrmRecalledByUser")
+  assignmentLogsFrom         CrmCustomerAssignmentLog[] @relation("AssignmentFromUser")
+  assignmentLogsTo           CrmCustomerAssignmentLog[] @relation("AssignmentToUser")
+  assignmentLogsCreated      CrmCustomerAssignmentLog[] @relation("AssignmentCreatedBy")
 }
 
 model Representative {
@@ -53,6 +59,7 @@ model Representative {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   projects       Project[]
+  regionManagerLinks CrmRegionManagerRepresentative[]
 }
 
 model ProcurementChannel {
@@ -524,6 +531,14 @@ model CrmCustomerProfile {
   lastFollowUpAt     DateTime?
   nextFollowUpAt     DateTime?
   lastOrderAt        DateTime?
+  assignmentStatus   String               @default("ASSIGNED") // UNASSIGNED | ASSIGNED | RECALL_CANDIDATE | RECALLED
+  assignedAt         DateTime?
+  assignedByUserId   String?
+  assignedByUser     User?                @relation("CrmAssignedByUser", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  recalledAt         DateTime?
+  recalledByUserId   String?
+  recalledByUser     User?                @relation("CrmRecalledByUser", fields: [recalledByUserId], references: [id], onDelete: SetNull)
+  reflowReason       String?
   archived           Boolean              @default(false)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
@@ -532,10 +547,12 @@ model CrmCustomerProfile {
   addresses          CrmCustomerAddress[]
   visitCheckins      CrmVisitCheckin[]
   applications       CrmCustomerApplication[] @relation("CrmApplicationsCreatedProfile")
+  assignmentLogs     CrmCustomerAssignmentLog[]
 
   @@index([ownerUserId])
   @@index([stage])
   @@index([nextFollowUpAt])
+  @@index([assignmentStatus])
 }
 
 model CrmCustomerAddress {
@@ -696,4 +713,45 @@ model CustomerRelation {
   @@unique([fromCustomerId, toCustomerId, type])
   @@index([fromCustomerId])
   @@index([toCustomerId])
+}
+
+model CrmRegionManager {
+  id          String                            @id @default(cuid())
+  userId      String                            @unique
+  user        User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  regionName  String?
+  archived    Boolean                           @default(false)
+  createdAt   DateTime                          @default(now())
+  updatedAt   DateTime                          @updatedAt
+  reps        CrmRegionManagerRepresentative[]
+}
+
+model CrmRegionManagerRepresentative {
+  id               String            @id @default(cuid())
+  managerId        String
+  manager          CrmRegionManager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  representativeId String
+  representative   Representative    @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  assignedAt       DateTime          @default(now())
+
+  @@unique([managerId, representativeId])
+  @@index([representativeId])
+}
+
+model CrmCustomerAssignmentLog {
+  id               String              @id @default(cuid())
+  profileId        String
+  profile          CrmCustomerProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  fromOwnerUserId  String?
+  fromOwnerUser    User?               @relation("AssignmentFromUser", fields: [fromOwnerUserId], references: [id], onDelete: SetNull)
+  toOwnerUserId    String?
+  toOwnerUser      User?               @relation("AssignmentToUser", fields: [toOwnerUserId], references: [id], onDelete: SetNull)
+  action           String              // ASSIGN | RECALL | MARK_CANDIDATE | REMIND
+  reason           String?
+  createdByUserId  String
+  createdByUser    User                @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt        DateTime            @default(now())
+
+  @@index([profileId])
+  @@index([createdAt])
 }

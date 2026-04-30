@@ -32,33 +32,28 @@ export async function PATCH(
     const existing = await prisma.representative.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Email conflict check
-    if (email !== undefined) {
-      const newEmail = email.trim().toLowerCase();
-      if (newEmail !== existing.email) {
-        const conflictRep = await prisma.representative.findUnique({
-          where: { email: newEmail },
-        });
-        if (conflictRep) {
-          return NextResponse.json({ error: "该邮箱已被其他代表使用" }, { status: 409 });
-        }
-        const conflictUser = await prisma.user.findUnique({
-          where: { email: newEmail },
-        });
-        if (conflictUser && conflictUser.role !== "REPRESENTATIVE") {
-          return NextResponse.json({ error: "该邮箱已被普通用户注册" }, { status: 409 });
-        }
+    const newEmail = email !== undefined ? email.trim().toLowerCase() : existing.email;
+    const newName = name !== undefined ? name.trim() : existing.name;
+
+    // Email conflict check: if email changes, validate new email is free
+    if (newEmail !== existing.email) {
+      const conflictRep = await prisma.representative.findUnique({
+        where: { email: newEmail },
+      });
+      if (conflictRep) {
+        return NextResponse.json({ error: "该邮箱已被其他代表使用" }, { status: 409 });
+      }
+      // Reject if ANY User exists at the new email (safe approach: no cross-User merge)
+      const conflictUser = await prisma.user.findUnique({ where: { email: newEmail } });
+      if (conflictUser) {
+        return NextResponse.json({ error: "该邮箱已被其他用户使用，请联系管理员" }, { status: 409 });
       }
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: existing.email },
-    });
-
     const result = await prisma.$transaction(async (tx) => {
       const repData: Record<string, unknown> = {};
-      if (name !== undefined) repData.name = name.trim();
-      if (email !== undefined) repData.email = email.trim().toLowerCase();
+      if (name !== undefined) repData.name = newName;
+      if (email !== undefined) repData.email = newEmail;
       if (archived !== undefined) {
         repData.archived = archived;
         repData.archivedAt = archived ? new Date() : null;
@@ -69,21 +64,22 @@ export async function PATCH(
         data: repData,
       });
 
-      if (user && (name !== undefined || email !== undefined)) {
+      // Update the existing User: find by OLD email, update to new email/name
+      const oldUser = await tx.user.findUnique({ where: { email: existing.email } });
+      if (oldUser) {
         const userData: Record<string, unknown> = {};
-        if (name !== undefined) userData.name = name.trim();
-        if (email !== undefined) userData.email = email.trim().toLowerCase();
-        await tx.user.update({
-          where: { id: user.id },
-          data: userData,
-        });
+        if (name !== undefined) userData.name = newName;
+        if (email !== undefined && newEmail !== existing.email) {
+          userData.email = newEmail;
+        }
+        await tx.user.update({ where: { id: oldUser.id }, data: userData });
       }
 
       // Sync project representative text snapshots when name changes
       if (name !== undefined) {
         await tx.project.updateMany({
           where: { representativeId: id },
-          data: { representative: name.trim() },
+          data: { representative: newName },
         });
       }
 

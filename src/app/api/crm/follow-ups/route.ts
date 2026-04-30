@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { buildCrmWhereForRole } from "@/lib/crm/permissions";
+import { buildCrmWhereForRole, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -12,12 +12,14 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status") || "OPEN";
   const ownerUserId = searchParams.get("ownerUserId") || "";
 
-  const roleWhere = buildCrmWhereForRole(session.user.id, session.user.role);
+  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role);
   const profileWhere = Object.keys(roleWhere).length > 0 ? { profile: roleWhere } : {};
 
   const where: Record<string, unknown> = { status, ...profileWhere };
   if (ownerUserId) where.ownerUserId = ownerUserId;
-  if (session.user.role === "REPRESENTATIVE") where.ownerUserId = session.user.id;
+  // For REPRESENTATIVE, restrict to own follow-ups.
+  // For REGIONAL_MANAGER, the profile-level scope (profileWhere) is sufficient.
+  if (isRepresentativeRole(session.user.role)) where.ownerUserId = session.user.id;
 
   const tasks = await prisma.crmFollowUpTask.findMany({
     where,
@@ -52,11 +54,16 @@ export async function POST(req: NextRequest) {
   const profile = await prisma.crmCustomerProfile.findUnique({ where: { id: profileId } });
   if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
-  if (session.user.role === "REPRESENTATIVE" && profile.ownerUserId !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const isScopedRole = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
+  if (isScopedRole) {
+    const scope = await buildCrmWhereForRole(session.user.id, session.user.role);
+    const ids = extractScopedUserIds(scope);
+    if (ids && !ids.includes(profile.ownerUserId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
-  const finalOwner = session.user.role === "REPRESENTATIVE" ? session.user.id : (ownerUserId || session.user.id);
+  const finalOwner = isRepresentativeRole(session.user.role) ? session.user.id : (ownerUserId || session.user.id);
 
   const task = await prisma.$transaction(async (tx) => {
     const created = await tx.crmFollowUpTask.create({

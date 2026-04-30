@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+import { ensureSalesUserForRepresentative } from "./representative-user";
 
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOCK_DURATION_MINUTES = 15;
@@ -180,27 +181,17 @@ export const authOptions: NextAuthOptions = {
           throw new Error("ARCHIVED");
         }
 
-        // Ensure corresponding User exists
-        let user = await prisma.user.findUnique({
-          where: { email: rep.email },
-        });
+        // Ensure corresponding User exists (shared helper)
+        const { userId } = await ensureSalesUserForRepresentative(rep);
 
-        if (!user) {
-          user = await prisma.user.create({
-            data: {
-              email: rep.email,
-              name: rep.name,
-              password: await bcrypt.hash(crypto.randomUUID(), 10),
-              role: "REPRESENTATIVE",
-            },
-          });
-        }
-
-        // Consume token
+        // Consume token only on success
         await prisma.representative.update({
           where: { id: rep.id },
           data: { token: null, tokenExpiresAt: null },
         });
+
+        const user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new Error("User sync failed");
 
         return {
           id: user.id,

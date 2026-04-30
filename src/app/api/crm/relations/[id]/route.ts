@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { isRepresentativeRole, isRegionalManagerRole } from "@/lib/crm/permissions";
 
 const customerSelect = { id: true, name: true, customerCode: true, organization: true };
 
@@ -17,7 +18,7 @@ export async function PATCH(
   const relation = await prisma.customerRelation.findUnique({ where: { id } });
   if (!relation) return NextResponse.json({ error: "Relation not found" }, { status: 404 });
 
-  if (session.user.role === "REPRESENTATIVE") {
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (session.user.role === "USER" && relation.createdByUserId !== session.user.id) {
@@ -57,7 +58,7 @@ export async function DELETE(
   const relation = await prisma.customerRelation.findUnique({ where: { id } });
   if (!relation) return NextResponse.json({ error: "Relation not found" }, { status: 404 });
 
-  if (session.user.role === "REPRESENTATIVE") {
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (session.user.role === "USER" && relation.createdByUserId !== session.user.id) {

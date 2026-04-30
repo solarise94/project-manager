@@ -128,3 +128,32 @@ export const RELATION_TYPE_HEX_COLORS: Record<string, string> = {
   SAME_LAB: "#14b8a6",
   OTHER: "#9ca3af",
 };
+
+export const CRM_ASSIGNMENT_STATUS = ["UNASSIGNED", "ASSIGNED", "RECALL_CANDIDATE", "RECALLED"] as const;
+export type CrmAssignmentStatus = (typeof CRM_ASSIGNMENT_STATUS)[number];
+
+export const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
+  UNASSIGNED: "未分配",
+  ASSIGNED: "已分配",
+  RECALL_CANDIDATE: "待收回",
+  RECALLED: "已收回",
+};
+
+export const ASSIGNMENT_STATUS_COLORS: Record<string, string> = {
+  UNASSIGNED: "bg-gray-100 text-gray-600",
+  ASSIGNED: "bg-green-100 text-green-700",
+  RECALL_CANDIDATE: "bg-orange-100 text-orange-700",
+  RECALLED: "bg-red-100 text-red-700",
+};
+
+export const ASSIGNMENT_ACTIONS = ["ASSIGN", "RECALL", "MARK_CANDIDATE", "REMIND"] as const;
+export type AssignmentAction = (typeof ASSIGNMENT_ACTIONS)[number];
+
+export const ASSIGNMENT_ACTION_LABELS: Record<string, string> = {
+  ASSIGN: "分配",
+  RECALL: "收回",
+  MARK_CANDIDATE: "标记候选",
+  REMIND: "提醒",
+};
+
+export const REFLOW_THRESHOLD_DAYS = 60;

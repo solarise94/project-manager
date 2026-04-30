@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
 
 export async function PATCH(
   req: NextRequest,
@@ -12,11 +13,21 @@ export async function PATCH(
 
   const { id } = await params;
 
-  const task = await prisma.crmFollowUpTask.findUnique({ where: { id } });
+  const task = await prisma.crmFollowUpTask.findUnique({
+    where: { id },
+    include: { profile: { select: { ownerUserId: true, assignmentStatus: true } } },
+  });
   if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
-  if (session.user.role === "REPRESENTATIVE" && task.ownerUserId !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
+    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+    const ids = extractScopedUserIds(scope);
+    if (!ids?.includes(task.profile.ownerUserId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (task.profile.assignmentStatus !== "ASSIGNED") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const body = await req.json();

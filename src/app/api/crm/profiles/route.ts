@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { buildCrmWhereForRole } from "@/lib/crm/permissions";
+import { buildCrmWhereForRole, isRegionalManagerRole, isRepresentativeRole, extractScopedUserIds } from "@/lib/crm/permissions";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 
 const profileInclude = {
@@ -26,12 +26,22 @@ export async function GET(req: NextRequest) {
   const importance = searchParams.get("importance") || "";
   const ownerUserId = searchParams.get("ownerUserId") || "";
 
-  const roleWhere = buildCrmWhereForRole(session.user.id, session.user.role);
+  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role);
+  const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
   const where: Record<string, unknown> = { ...roleWhere, archived: false };
   if (stage) where.stage = stage;
   if (importance) where.importance = importance;
-  if (ownerUserId) where.ownerUserId = ownerUserId;
+  if (ownerUserId) {
+    if (isScoped) {
+      // Intersect with scope: only allow if ownerUserId is within the scoped set
+      const scopedIds = extractScopedUserIds(roleWhere);
+      if (scopedIds && !scopedIds.includes(ownerUserId)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+    where.ownerUserId = ownerUserId;
+  }
   if (search) {
     where.sourceCustomer = {
       OR: [
@@ -66,6 +76,10 @@ export async function POST(req: NextRequest) {
   const customer = await prisma.customer.findUnique({ where: { id: sourceCustomerId } });
   if (!customer || customer.deleted) {
     return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+  }
+
+  if (isRegionalManagerRole(session.user.role)) {
+    return NextResponse.json({ error: "地区经理不能创建客户档案，只能管理已分配的客户" }, { status: 403 });
   }
 
   if (isRepresentative(session.user.role)) {

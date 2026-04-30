@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { StageBadge, ImportanceBadge } from "@/components/crm/badges";
+import { StageBadge, ImportanceBadge, AssignmentStatusBadge } from "@/components/crm/badges";
 import { ActivateProfileDialog } from "@/components/crm/activate-profile-dialog";
 import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 import { CRM_STAGES, STAGE_LABELS, CRM_IMPORTANCE, IMPORTANCE_LABELS } from "@/lib/crm/constants";
@@ -100,6 +100,7 @@ function CustomerPool() {
                 <th className="text-left p-3 font-medium hidden md:table-cell">单位</th>
                 <th className="text-left p-3 font-medium">阶段</th>
                 <th className="text-left p-3 font-medium hidden sm:table-cell">重要度</th>
+                <th className="text-left p-3 font-medium hidden md:table-cell">分配状态</th>
                 <th className="text-left p-3 font-medium hidden lg:table-cell">负责人</th>
                 <th className="text-left p-3 font-medium hidden lg:table-cell">下次跟进</th>
                 {!isRep && <th className="text-left p-3 font-medium">操作</th>}
@@ -117,6 +118,7 @@ function CustomerPool() {
                   <td className="p-3 hidden md:table-cell text-muted-foreground">{p.sourceCustomer.organization || "-"}</td>
                   <td className="p-3"><StageBadge stage={p.stage} /></td>
                   <td className="p-3 hidden sm:table-cell"><ImportanceBadge importance={p.importance} /></td>
+                  <td className="p-3 hidden md:table-cell"><AssignmentStatusBadge status={p.assignmentStatus} /></td>
                   <td className="p-3 hidden lg:table-cell">{p.ownerUser.name}</td>
                   <td className="p-3 hidden lg:table-cell text-muted-foreground">
                     {p.nextFollowUpAt ? new Date(p.nextFollowUpAt).toLocaleDateString("zh-CN") : "-"}

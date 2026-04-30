@@ -4,11 +4,10 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { INTERACTION_TYPE_LABELS } from "@/lib/crm/constants";
 import { StageBadge } from "@/components/crm/badges";
 import type { CrmDashboardStats } from "@/lib/crm/types";
-import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight } from "lucide-react";
+import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight, BarChart3, UserCog, Layers, Handshake } from "lucide-react";
 import Link from "next/link";
 
 export default function CrmDashboardPage() {
@@ -137,20 +136,112 @@ function CrmDashboard() {
             </Card>
           </Link>
         </div>
-        <div>
-          <h3 className="text-xs font-medium text-muted-foreground mb-2">分析工具</h3>
-          <div className="flex flex-wrap gap-2">
+        {!isRep && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <Link href="/crm/representatives">
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <BarChart3 className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">代表运营</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">查看代表客户、拜访和跟进数据</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+            <Link href="/crm/customer-pool">
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Layers className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">客户流转池</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">管理客户分配、收回和待收回客户</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+            {session?.user?.role === "ADMIN" && (
+              <>
+                <Link href="/crm/region-managers">
+                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                    <CardContent className="pt-5 pb-5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <UserCog className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">地区经理设置</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">配置地区经理和负责的代表</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/admin/representatives">
+                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                    <CardContent className="pt-5 pb-5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <Handshake className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">代表账号管理</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">创建代表、重发登录链接和归档</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              </>
+            )}
+          </div>
+        )}
+        <div className="space-y-3">
+          <h3 className="text-sm font-medium text-muted-foreground">分析工具</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Link href="/crm/relations">
-              <Button variant="outline" size="sm">
-                <Network className="h-4 w-4 mr-1.5" />
-                关系网络
-              </Button>
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Network className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">关系网络</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">查看和管理客户关系</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
             </Link>
             <Link href="/crm/graph">
-              <Button variant="outline" size="sm">
-                <Share2 className="h-4 w-4 mr-1.5" />
-                关系图谱
-              </Button>
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Share2 className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">关系图谱</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">可视化客户关系网络</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
             </Link>
           </div>
         </div>

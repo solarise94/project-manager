@@ -39,14 +39,20 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "该代表账号已归档，无法重发登录链接" }, { status: 403 });
     }
 
-    // Generate and persist token first — token is valid for 24h regardless of email delivery
-    const token = generateToken();
-    const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
-    await prisma.representative.update({
-      where: { id },
-      data: { token, tokenExpiresAt },
-    });
+    // Reuse existing unexpired token; otherwise generate new one
+    let token: string;
+    let tokenExpiresAt: Date;
+    if (rep.token && rep.tokenExpiresAt && rep.tokenExpiresAt > new Date(Date.now() + 60 * 60 * 1000)) {
+      token = rep.token;
+      tokenExpiresAt = rep.tokenExpiresAt;
+    } else {
+      token = generateToken();
+      tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await prisma.representative.update({
+        where: { id },
+        data: { token, tokenExpiresAt },
+      });
+    }
 
     // Send email in background — token is already saved, delivery failure is non-fatal
     const magicLink = getMagicLink(token);

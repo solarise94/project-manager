@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
-import bcrypt from "bcryptjs";
+import { ensureSalesUserForRepresentative } from "@/lib/representative-user";
 
 function generateToken() {
   return crypto.randomUUID() + crypto.randomUUID();
@@ -73,12 +73,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "该邮箱已是代表" }, { status: 409 });
     }
 
-    // Check if email already exists as a regular user (non-representative)
-    const existingUser = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-    if (existingUser && existingUser.role !== "REPRESENTATIVE") {
-      return NextResponse.json({ error: "该邮箱已被普通用户注册" }, { status: 409 });
+    // Pre-check: reject if a non-sales User owns this email
+    const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (existingUser && !["REPRESENTATIVE", "REGIONAL_MANAGER"].includes(existingUser.role)) {
+      return NextResponse.json({ error: "该邮箱已被其他类型用户使用，请联系管理员" }, { status: 409 });
     }
 
     const token = generateToken();
@@ -93,17 +91,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Create corresponding User if not exists
-    if (!existingUser) {
-      await prisma.user.create({
-        data: {
-          email: normalizedEmail,
-          name: name.trim(),
-          password: await bcrypt.hash(crypto.randomUUID(), 10),
-          role: "REPRESENTATIVE",
-        },
-      });
-    }
+    // Sync User record via shared helper (safe: pre-check passed)
+    await ensureSalesUserForRepresentative({ email: normalizedEmail, name: name.trim() });
 
     // Send Magic Link email in background — token is already saved
     const magicLink = getMagicLink(token);

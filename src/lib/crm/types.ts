@@ -9,6 +9,14 @@ export interface CrmCustomerProfileItem {
   lastFollowUpAt: string | null;
   nextFollowUpAt: string | null;
   lastOrderAt: string | null;
+  assignmentStatus: string;
+  assignedAt: string | null;
+  assignedByUserId: string | null;
+  assignedByUser: { id: string; name: string } | null;
+  recalledAt: string | null;
+  recalledByUserId: string | null;
+  recalledByUser: { id: string; name: string } | null;
+  reflowReason: string | null;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -141,6 +149,58 @@ export interface CrmRelationItem {
   strength: string | null;
   notes: string | null;
   introducedAt: string | null;
+  createdByUserId: string;
+  createdByUser: { id: string; name: string };
+  createdAt: string;
+}
+
+export interface CrmRegionManagerItem {
+  id: string;
+  userId: string;
+  user: { id: string; name: string; email: string };
+  regionName: string | null;
+  archived: boolean;
+  createdAt: string;
+  reps: { id: string; representativeId: string; representative: { id: string; name: string; email: string } }[];
+}
+
+export interface CrmRepresentativeOpsItem {
+  representativeId: string;
+  name: string;
+  email: string;
+  archived: boolean;
+  userId: string | null;
+  userName: string | null;
+  customerCount: number;
+  visitCheckinCount: number;
+  lastCheckinAt: string | null;
+  overdueFollowUps: number;
+  longUnvisitedCount: number;
+}
+
+export interface CrmRepresentativeDetail {
+  representative: { id: string; name: string; email: string; archived: boolean };
+  linkedUser: { id: string; name: string } | null;
+  customerCount: number;
+  visitCheckinCount: number;
+  lastCheckinAt: string | null;
+  overdueFollowUps: number;
+  longUnvisitedCount: number;
+  customers: CrmCustomerProfileItem[];
+  recentCheckins: CrmVisitCheckinItem[];
+  openFollowUps: CrmFollowUpTaskItem[];
+  relationCount: number;
+}
+
+export interface CrmAssignmentLogItem {
+  id: string;
+  profileId: string;
+  fromOwnerUserId: string | null;
+  fromOwnerUser: { id: string; name: string } | null;
+  toOwnerUserId: string | null;
+  toOwnerUser: { id: string; name: string } | null;
+  action: string;
+  reason: string | null;
   createdByUserId: string;
   createdByUser: { id: string; name: string };
   createdAt: string;
