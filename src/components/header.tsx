@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { FlaskConical, Menu } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -15,10 +16,11 @@ import { NotificationCenter } from "./notification-center";
 export function Header() {
   const { data: session } = useSession();
   const user = session?.user;
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b bg-background/95 backdrop-blur px-4 md:px-8">
-      <Sheet>
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetTrigger
           className="md:hidden"
           render={<Button variant="ghost" size="icon" className="shrink-0 md:hidden" />}
@@ -27,7 +29,7 @@ export function Header() {
           <span className="sr-only">打开菜单</span>
         </SheetTrigger>
         <SheetContent side="left" className="p-0 w-64">
-          <Sidebar />
+          <Sidebar mobile onNavClick={() => setSheetOpen(false)} />
         </SheetContent>
       </Sheet>
 

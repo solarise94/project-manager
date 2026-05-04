@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Ticket, Filter, ArrowRight } from "lucide-react";
+import { Ticket, Filter, ExternalLink } from "lucide-react";
 import { TicketItem } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger } from "@/components/ui/select";
 
@@ -24,6 +26,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secon
 
 export default function TicketsPage() {
   const { status } = useSession();
+  const router = useRouter();
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const TICKET_STATUS_LABELS: Record<string, string> = { ALL: "全部状态", OPEN: "打开", IN_PROGRESS: "处理中", CLOSED: "已关闭" };
 
@@ -78,9 +81,17 @@ export default function TicketsPage() {
           <p className="text-muted-foreground">暂无工单</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 pb-20">
           {tickets.map((ticket) => (
-            <Card key={ticket.id} className="hover:shadow-sm transition-shadow">
+            <Card
+              key={ticket.id}
+              className="hover:shadow-sm transition-shadow cursor-pointer hover:border-primary/50"
+              onClick={() => {
+                if (ticket.project?.id) {
+                  router.push(`/projects/${ticket.project.id}?tab=tickets&ticketId=${ticket.id}`);
+                }
+              }}
+            >
               <CardContent className="p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <div className="flex-1 min-w-0">
@@ -98,7 +109,19 @@ export default function TicketsPage() {
                       {ticket.assignee && <span>负责人: {ticket.assignee.name}</span>}
                     </div>
                   </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground hidden sm:block" />
+                  {ticket.project?.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/projects/${ticket.project!.id}?tab=tickets&ticketId=${ticket.id}`);
+                      }}
+                    >
+                      <ExternalLink className="h-4 w-4 mr-1" />打开项目
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

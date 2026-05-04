@@ -4,14 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
 import { ensureSalesUserForRepresentative } from "@/lib/representative-user";
+import { getMagicLinkUrl } from "@/lib/app-url";
 
 function generateToken() {
   return crypto.randomUUID() + crypto.randomUUID();
-}
-
-function getMagicLink(token: string) {
-  const base = process.env.NEXTAUTH_URL || "";
-  return `${base}/magic-link?token=${encodeURIComponent(token)}`;
 }
 
 async function assertAdmin(session: { user?: { id?: string } } | null) {
@@ -95,7 +91,7 @@ export async function POST(req: NextRequest) {
     await ensureSalesUserForRepresentative({ email: normalizedEmail, name: name.trim() });
 
     // Send Magic Link email in background — token is already saved
-    const magicLink = getMagicLink(token);
+    const magicLink = getMagicLinkUrl(token);
     sendMail({
       to: normalizedEmail,
       subject: "【SciManage】代表账号登录链接",

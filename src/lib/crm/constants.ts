@@ -157,3 +157,77 @@ export const ASSIGNMENT_ACTION_LABELS: Record<string, string> = {
 };
 
 export const REFLOW_THRESHOLD_DAYS = 60;
+
+export const CRM_PERSON_CATEGORIES = [
+  "STUDENT",
+  "POSTDOC",
+  "RESEARCHER",
+  "PI",
+  "TECHNICIAN",
+  "CLINICIAN",
+  "ADMIN",
+  "PROCUREMENT",
+  "OTHER",
+] as const;
+export type CrmPersonCategory = (typeof CRM_PERSON_CATEGORIES)[number];
+export const PERSON_CATEGORY_LABELS: Record<string, string> = {
+  STUDENT: "学生",
+  POSTDOC: "博士后",
+  RESEARCHER: "研究员/科研人员",
+  PI: "课题组负责人/PI",
+  TECHNICIAN: "实验技术员",
+  CLINICIAN: "临床医生",
+  ADMIN: "行政管理",
+  PROCUREMENT: "采购/财务/设备",
+  OTHER: "其他",
+};
+export const PERSON_CATEGORY_COLORS: Record<string, string> = {
+  STUDENT: "bg-blue-100 text-blue-800",
+  POSTDOC: "bg-indigo-100 text-indigo-800",
+  RESEARCHER: "bg-violet-100 text-violet-800",
+  PI: "bg-amber-100 text-amber-800",
+  TECHNICIAN: "bg-teal-100 text-teal-800",
+  CLINICIAN: "bg-emerald-100 text-emerald-800",
+  ADMIN: "bg-slate-100 text-slate-800",
+  PROCUREMENT: "bg-orange-100 text-orange-800",
+  OTHER: "bg-gray-100 text-gray-800",
+};
+
+export const CRM_GRADUATION_STATUSES = [
+  "NOT_APPLICABLE",
+  "ENROLLED",
+  "GRADUATING_SOON",
+  "GRADUATED",
+  "UNKNOWN",
+] as const;
+export type CrmGraduationStatus = (typeof CRM_GRADUATION_STATUSES)[number];
+export const GRADUATION_STATUS_LABELS: Record<string, string> = {
+  NOT_APPLICABLE: "不适用",
+  ENROLLED: "在读",
+  GRADUATING_SOON: "即将毕业",
+  GRADUATED: "已毕业",
+  UNKNOWN: "未知",
+};
+export const GRADUATION_STATUS_COLORS: Record<string, string> = {
+  NOT_APPLICABLE: "bg-gray-100 text-gray-800",
+  ENROLLED: "bg-blue-100 text-blue-800",
+  GRADUATING_SOON: "bg-amber-100 text-amber-800",
+  GRADUATED: "bg-green-100 text-green-800",
+  UNKNOWN: "bg-slate-100 text-slate-800",
+};
+
+export const CRM_SITE_TYPES = [
+  "CAMPUS",
+  "COLLEGE",
+  "BUILDING",
+  "OTHER",
+] as const;
+export type CrmSiteType = (typeof CRM_SITE_TYPES)[number];
+export const SITE_TYPE_LABELS: Record<string, string> = {
+  CAMPUS: "院区",
+  COLLEGE: "学院/院系",
+  BUILDING: "大楼",
+  OTHER: "其他",
+};
+
+export const GRADUATION_LOOKAHEAD_DAYS = 90;

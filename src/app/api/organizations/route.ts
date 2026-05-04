@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
         } : undefined,
         sites: sites?.length ? {
           create: (() => {
-            const siteData = (sites as Array<{ siteName: string; address?: string }>).filter((s) => s.siteName?.trim());
+            const siteData = (sites as Array<{ siteName: string; address?: string; siteType?: string }>).filter((s) => s.siteName?.trim());
             const seen = new Set<string>();
             const deduped = siteData.filter((s) => {
               const norm = normalizeOrgName(s.siteName.trim());
@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
             return deduped.map((s) => ({
               siteName: s.siteName.trim(),
               normalizedSiteName: normalizeOrgName(s.siteName.trim()),
+              siteType: s.siteType || "CAMPUS",
               address: s.address?.trim() || null,
             }));
           })(),

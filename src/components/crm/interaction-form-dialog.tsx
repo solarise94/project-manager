@@ -17,8 +17,8 @@ function toDatetimeLocal(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function InteractionFormDialog({ profileId, sourceCustomerId }: { profileId: string; sourceCustomerId?: string }) {
-  const [open, setOpen] = useState(false);
+export function InteractionFormDialog({ profileId, sourceCustomerId, startOpen, onClose }: { profileId: string; sourceCustomerId?: string; startOpen?: boolean; onClose?: () => void }) {
+  const [open, setOpen] = useState(startOpen || false);
   const [type, setType] = useState("CALL");
   const [summary, setSummary] = useState("");
   const [detail, setDetail] = useState("");
@@ -195,8 +195,9 @@ export function InteractionFormDialog({ profileId, sourceCustomerId }: { profile
       setOpen(true);
     } else {
       resetForm();
+      onClose?.();
     }
-  }, [resetForm, stopRecorder]);
+  }, [resetForm, stopRecorder, onClose]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

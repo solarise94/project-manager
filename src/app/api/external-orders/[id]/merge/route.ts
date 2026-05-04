@@ -30,11 +30,32 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (master.mergedIntoId) return NextResponse.json({ error: "目标订单已被合并" }, { status: 400 });
 
   await prisma.$transaction(async (tx) => {
-    // Move invoices from source to master
+    // Move direct invoices from source to master
     await tx.externalOrderInvoiceRequest.updateMany({
       where: { externalOrderId: sourceId },
       data: { externalOrderId: masterId },
     });
+
+    // Migrate coverage records: source → master, skip on unique conflict
+    const sourceCoverage = await tx.externalOrderInvoiceCoverage.findMany({
+      where: { externalOrderId: sourceId },
+      select: { id: true, invoiceRequestId: true },
+    });
+
+    for (const cov of sourceCoverage) {
+      // Delete source coverage first, then try to create at master
+      // If master already has this invoice covered, skip (unique constraint)
+      await tx.externalOrderInvoiceCoverage.delete({ where: { id: cov.id } });
+      const existing = await tx.externalOrderInvoiceCoverage.findUnique({
+        where: { invoiceRequestId_externalOrderId: { invoiceRequestId: cov.invoiceRequestId, externalOrderId: masterId } },
+        select: { id: true },
+      });
+      if (!existing) {
+        await tx.externalOrderInvoiceCoverage.create({
+          data: { invoiceRequestId: cov.invoiceRequestId, externalOrderId: masterId },
+        });
+      }
+    }
 
     // Mark source as merged
     await tx.externalOrder.update({
@@ -60,7 +81,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
 
+    // Sync status on both sides
     await syncOrderInvoiceStatus(tx as typeof prisma, masterId);
+    await syncOrderInvoiceStatus(tx as typeof prisma, sourceId);
   });
 
   return NextResponse.json({ merged: true, masterId, sourceId });

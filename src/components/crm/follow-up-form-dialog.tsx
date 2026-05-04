@@ -9,8 +9,8 @@ import { crmKeys } from "@/lib/crm/query-keys";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
 
-export function FollowUpFormDialog({ profileId, profileName, sourceCustomerId }: { profileId: string; profileName?: string; sourceCustomerId?: string }) {
-  const [open, setOpen] = useState(false);
+export function FollowUpFormDialog({ profileId, profileName, sourceCustomerId, startOpen, onClose }: { profileId: string; profileName?: string; sourceCustomerId?: string; startOpen?: boolean; onClose?: () => void }) {
+  const [open, setOpen] = useState(startOpen || false);
   const [title, setTitle] = useState("");
   const [dueAt, setDueAt] = useState("");
   const queryClient = useQueryClient();
@@ -47,7 +47,7 @@ export function FollowUpFormDialog({ profileId, profileName, sourceCustomerId }:
   });
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v && onClose) onClose(); }}>
       <DialogTrigger render={<Button size="sm" variant="outline" />}>
         <Plus className="h-4 w-4 mr-1" />新建跟进
       </DialogTrigger>

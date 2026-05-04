@@ -2,8 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isRepresentative } from "@/lib/permissions";
 import { syncOrderInvoiceStatus } from "@/lib/external-order";
+
+async function syncInvoiceAndCoverageOrders(invoiceId: string, directOrderId: string) {
+  const coverageOrders = await prisma.externalOrderInvoiceCoverage.findMany({
+    where: { invoiceRequestId: invoiceId },
+    select: { externalOrderId: true },
+  });
+  const allOrderIds = [directOrderId, ...coverageOrders.map((c) => c.externalOrderId)];
+  for (const oid of allOrderIds) {
+    await syncOrderInvoiceStatus(prisma, oid);
+  }
+}
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ["REQUESTED", "CANCELLED"],
@@ -13,7 +23,7 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isRepresentative(session.user.role)) {
+  if (session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -64,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       where: { id }, data,
       include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
     });
-    await syncOrderInvoiceStatus(prisma, invoice.externalOrderId);
+    await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId);
     return NextResponse.json({ invoice: updated });
   }
 
@@ -147,6 +157,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
   });
 
-  await syncOrderInvoiceStatus(prisma, invoice.externalOrderId);
+  await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId);
   return NextResponse.json({ invoice: updated });
 }

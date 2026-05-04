@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -101,9 +101,12 @@ function getTimelineWeight(item: TimelineItem): "high" | "medium" | "low" {
 export default function ProjectDetailPage() {
   const { id } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const projectId = id as string;
+  const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "timeline");
+  const initialTicketId = searchParams.get("ticketId");
 
   const [comment, setComment] = useState("");
   const [editOpen, setEditOpen] = useState(false);
@@ -393,6 +396,13 @@ export default function ProjectDetailPage() {
       return () => clearTimeout(timer);
     }
   }, [projectData?.project?.progress, sliderValue]);
+
+  useEffect(() => {
+    if (initialTicketId && activeTab === "tickets") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setExpandedTicket(initialTicketId);
+    }
+  }, [initialTicketId, activeTab]);
 
   if (projectLoading) {
     return (
@@ -853,7 +863,7 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      <Tabs defaultValue="timeline" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={!isRep ? { gridTemplateColumns: "repeat(4, 1fr)" } : undefined}>
           <TabsTrigger value="timeline">
             <Activity className="mr-2 h-4 w-4" />
@@ -1328,13 +1338,7 @@ export default function ProjectDetailPage() {
         {/* Invoices Tab */}
         {!isRep && (
           <TabsContent value="invoices" className="space-y-4">
-            <ProjectInvoiceSection
-              projectId={projectId}
-              projectCode={project.orderNumber}
-              customerOrgId={project.cust?.organizationId}
-              customerOrgName={project.cust?.organization || project.organization}
-              readOnly={project.deleted}
-            />
+            <ProjectInvoiceSection projectId={projectId} />
           </TabsContent>
         )}
       </Tabs>

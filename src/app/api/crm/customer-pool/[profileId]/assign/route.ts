@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
 import { ensureSalesUserForRepresentative } from "@/lib/representative-user";
+import { getAppUrl } from "@/lib/app-url";
 
 export async function POST(
   req: NextRequest,
@@ -86,12 +87,12 @@ export async function POST(
   }).catch(() => {});
 
   // Send email notification (fire-and-forget, no customer details in email)
-  const loginUrl = process.env.NEXTAUTH_URL || "";
+  const loginUrl = getAppUrl("/login");
   sendMail({
     to: targetUserEmail,
     subject: "【SciManage】有新的客户线索待查看",
-    text: `您好，\n\n有新的客户线索已分配给您，请登录系统查看。\n\n${loginUrl}/login`,
-    html: `<p>您好，</p><p>有新的客户线索已分配给您，请登录系统查看。</p><p><a href="${loginUrl}/login">登录 SciManage</a></p>`,
+    text: `您好，\n\n有新的客户线索已分配给您，请登录系统查看。\n\n${loginUrl}`,
+    html: `<p>您好，</p><p>有新的客户线索已分配给您，请登录系统查看。</p><p><a href="${loginUrl}">登录 SciManage</a></p>`,
   }).catch((err) => console.error("Failed to send assignment email:", err));
 
   return NextResponse.json({ profile: result });

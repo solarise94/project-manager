@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { crmKeys } from "@/lib/crm/query-keys";
@@ -10,9 +10,11 @@ import { MapPin, Camera, Check, Loader2 } from "lucide-react";
 interface CheckinFlowProps {
   profileId: string;
   sourceCustomerId?: string;
+  autoStart?: boolean;
+  onDone?: () => void;
 }
 
-export function CheckinFlow({ profileId, sourceCustomerId }: CheckinFlowProps) {
+export function CheckinFlow({ profileId, sourceCustomerId, autoStart, onDone }: CheckinFlowProps) {
   const [step, setStep] = useState<"idle" | "locating" | "located" | "uploading" | "done">("idle");
   const [checkinId, setCheckinId] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
@@ -85,6 +87,20 @@ export function CheckinFlow({ profileId, sourceCustomerId }: CheckinFlowProps) {
       { enableHighAccuracy: true, timeout: 15000 }
     );
   }, [createCheckin]);
+
+  useEffect(() => {
+    if (autoStart && step === "idle") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      startLocating();
+    }
+  }, [autoStart, step, startLocating]);
+
+  useEffect(() => {
+    if (step === "done" && onDone) {
+      const timer = setTimeout(onDone, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [step, onDone]);
 
   const handlePhotoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!checkinId || !e.target.files?.length) return;

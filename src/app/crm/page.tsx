@@ -1,13 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { INTERACTION_TYPE_LABELS } from "@/lib/crm/constants";
 import { StageBadge } from "@/components/crm/badges";
+import { CustomerProfilePicker } from "@/components/crm/customer-profile-picker";
+import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog";
+import { CheckinFlow } from "@/components/crm/checkin-flow";
 import type { CrmDashboardStats } from "@/lib/crm/types";
-import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight, BarChart3, UserCog, Layers, Handshake } from "lucide-react";
+import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight, BarChart3, UserCog, Layers, Handshake, MessageSquare } from "lucide-react";
 import Link from "next/link";
 
 export default function CrmDashboardPage() {
@@ -23,6 +28,15 @@ export default function CrmDashboardPage() {
 function CrmDashboard() {
   const { data: session } = useSession();
   const isRep = session?.user?.role === "REPRESENTATIVE";
+  const [quickAction, setQuickAction] = useState<"interaction" | "checkin" | null>(null);
+  const [quickProfileId, setQuickProfileId] = useState("");
+  const [quickCustomerId, setQuickCustomerId] = useState("");
+
+  function clearQuickAction() {
+    setQuickAction(null);
+    setQuickProfileId("");
+    setQuickCustomerId("");
+  }
   const { data, isLoading } = useQuery<{ stats: CrmDashboardStats }>({
     queryKey: ["crm-dashboard"],
     queryFn: () => fetch("/api/crm/dashboard").then((r) => r.json()),
@@ -33,7 +47,7 @@ function CrmDashboard() {
   if (!stats) return <div className="p-6">暂无数据</div>;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 pb-20">
       <h1 className="text-2xl font-bold">CRM 总览</h1>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -42,6 +56,80 @@ function CrmDashboard() {
         <StatCard icon={<AlertTriangle className="h-5 w-5 text-red-500" />} label="已逾期" value={stats.overdueFollowUps} color="text-red-600" />
         <StatCard icon={<MapPin className="h-5 w-5" />} label="本周签到" value={stats.thisWeekCheckins} />
       </div>
+
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground">快捷操作</h2>
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+          <CustomerProfilePicker
+            title="添加沟通"
+            actionLabel="开始记录沟通"
+            trigger={
+              <Button variant="outline" size="sm" className="h-auto py-3 flex-col gap-1 w-full">
+                <MessageSquare className="h-4 w-4" />
+                <span className="text-xs">添加沟通</span>
+              </Button>
+            }
+            onPick={(profileId, sourceCustomerId) => {
+              setQuickProfileId(profileId);
+              setQuickCustomerId(sourceCustomerId);
+              setQuickAction("interaction");
+            }}
+          />
+          <CustomerProfilePicker
+            title="现场签到"
+            actionLabel="开始签到"
+            trigger={
+              <Button variant="outline" size="sm" className="h-auto py-3 flex-col gap-1 w-full">
+                <MapPin className="h-4 w-4" />
+                <span className="text-xs">现场签到</span>
+              </Button>
+            }
+            onPick={(profileId, sourceCustomerId) => {
+              setQuickProfileId(profileId);
+              setQuickCustomerId(sourceCustomerId);
+              setQuickAction("checkin");
+            }}
+          />
+          <Link
+            href="/crm/relations"
+            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+          >
+            <Network className="h-4 w-4" />
+            <span className="text-xs">客户关系</span>
+          </Link>
+          <Link
+            href="/crm/customers"
+            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+          >
+            <Users className="h-4 w-4" />
+            <span className="text-xs">客户池</span>
+          </Link>
+          <Link
+            href="/crm/follow-ups"
+            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
+          >
+            <CalendarClock className="h-4 w-4" />
+            <span className="text-xs">跟进任务</span>
+          </Link>
+        </div>
+      </div>
+
+      {quickAction === "interaction" && quickProfileId && (
+        <InteractionFormDialog
+          profileId={quickProfileId}
+          sourceCustomerId={quickCustomerId}
+          startOpen
+          onClose={clearQuickAction}
+        />
+      )}
+      {quickAction === "checkin" && quickProfileId && (
+        <CheckinFlow
+          profileId={quickProfileId}
+          sourceCustomerId={quickCustomerId}
+          autoStart
+          onDone={clearQuickAction}
+        />
+      )}
 
       <div className="grid md:grid-cols-2 gap-6">
         <Card>

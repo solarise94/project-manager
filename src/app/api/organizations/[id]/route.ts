@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const org = await prisma.organization.findUnique({
     where: { id },
-    select: { id: true, orgCode: true, canonicalName: true, address: true, taxId: true },
+    select: { id: true, orgCode: true, canonicalName: true, address: true, taxId: true, sites: { select: { id: true, siteName: true, siteType: true }, where: { archived: false }, orderBy: { siteName: "asc" } } },
   });
   if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -81,6 +81,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Add site
     if (addSite?.siteName?.trim()) {
+      // Validate parentSiteId belongs to the same organization
+      if (addSite.parentSiteId) {
+        const parentSite = await prisma.organizationSite.findUnique({ where: { id: addSite.parentSiteId }, select: { organizationId: true } });
+        if (!parentSite || parentSite.organizationId !== id) {
+          return NextResponse.json({ error: "父级院区不属于同一单位" }, { status: 400 });
+        }
+      }
       const normalizedSiteName = normalizeOrgName(addSite.siteName.trim());
       const existingSite = await prisma.organizationSite.findFirst({
         where: { organizationId: id, normalizedSiteName },
@@ -92,7 +99,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         // Un-archive the existing site
         await prisma.organizationSite.update({
           where: { id: existingSite.id },
-          data: { archived: false, siteName: addSite.siteName.trim(), address: addSite.address?.trim() || null },
+          data: { archived: false, siteName: addSite.siteName.trim(), siteType: addSite.siteType || "CAMPUS", parentSiteId: addSite.parentSiteId || null, address: addSite.address?.trim() || null },
         });
       } else {
         await prisma.organizationSite.create({
@@ -100,6 +107,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             organizationId: id,
             siteName: addSite.siteName.trim(),
             normalizedSiteName,
+            siteType: addSite.siteType || "CAMPUS",
+            parentSiteId: addSite.parentSiteId || null,
             address: addSite.address?.trim() || null,
           },
         });

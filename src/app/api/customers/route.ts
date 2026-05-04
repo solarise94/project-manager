@@ -15,6 +15,8 @@ export async function GET(req: NextRequest) {
   const showArchived = searchParams.get("archived") === "true";
   const limitParam = searchParams.get("limit");
   const excludeCrm = searchParams.get("excludeCrm") === "1";
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+  const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get("pageSize") || "20", 10)));
 
   if (isRepresentative(session.user.role)) {
     const projectIds = await getRepresentativeProjectIds(session.user.id);
@@ -60,17 +62,33 @@ export async function GET(req: NextRequest) {
       { organization: { contains: search } },
       { org: { canonicalName: { contains: search } } },
       { email: { contains: search } },
+      { principal: { contains: search } },
+      { wechat: { contains: search } },
     ];
   }
 
-  const customers = await prisma.customer.findMany({
-    where,
-    include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
-    orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
-    ...(limitParam ? { take: Math.min(parseInt(limitParam, 10) || 500, 500) } : {}),
-  });
+  const skip = limitParam ? 0 : (page - 1) * pageSize;
+  const take = limitParam ? Math.min(parseInt(limitParam, 10) || 500, 500) : pageSize;
 
-  return NextResponse.json({ customers: customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) })) });
+  const [customers, total] = await Promise.all([
+    prisma.customer.findMany({
+      where,
+      include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
+      orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
+      skip,
+      take,
+    }),
+    prisma.customer.count({ where }),
+  ]);
+
+  const mapped = customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) }));
+  return NextResponse.json({
+    customers: mapped,
+    total,
+    page: limitParam ? 1 : page,
+    pageSize: limitParam ? mapped.length : pageSize,
+    totalPages: limitParam ? 1 : Math.ceil(total / pageSize),
+  });
 }
 
 export async function POST(req: NextRequest) {

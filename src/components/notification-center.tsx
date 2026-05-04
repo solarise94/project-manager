@@ -94,8 +94,8 @@ export function NotificationCenter() {
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <Card className="absolute right-0 top-full mt-2 w-[360px] max-w-[calc(100vw-2rem)] z-50 shadow-lg">
+          <div className="fixed inset-0 z-40 bg-black/20 md:bg-transparent" onClick={() => setOpen(false)} />
+          <Card className="fixed left-3 right-3 top-16 max-h-[70vh] overflow-hidden md:absolute md:right-0 md:left-auto md:top-full md:mt-2 md:w-[360px] md:max-w-[calc(100vw-2rem)] md:max-h-none z-50 shadow-lg">
             <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
               <span className="text-sm font-semibold">通知中心</span>
               {unreadCount > 0 && (
@@ -134,7 +134,7 @@ export function NotificationCenter() {
                           )}
                           onClick={() => {
                             if (!n.read) markReadMutation.mutate(n.id);
-                            if (n.link) window.location.href = n.link;
+                            if (n.link) { setOpen(false); window.location.href = n.link; }
                           }}
                         >
                           <div className={cn("mt-0.5 shrink-0", TYPE_COLORS[n.type] || "text-slate-500")}>

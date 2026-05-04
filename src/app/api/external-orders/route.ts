@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   const platform = url.searchParams.get("platform")?.trim() || "";
   const invoiceStatus = url.searchParams.get("invoiceStatus")?.trim() || "";
   const duplicateStatus = url.searchParams.get("duplicateStatus")?.trim() || "";
+  const customerMatchStatus = url.searchParams.get("customerMatchStatus")?.trim() || "";
   const dateFrom = url.searchParams.get("dateFrom")?.trim() || "";
   const dateTo = url.searchParams.get("dateTo")?.trim() || "";
   const exportAll = url.searchParams.get("exportAll") === "1";
@@ -36,6 +37,7 @@ export async function GET(req: NextRequest) {
   if (platform) where.platform = platform;
   if (invoiceStatus) where.invoiceStatus = invoiceStatus;
   if (duplicateStatus) where.duplicateStatus = duplicateStatus;
+  if (customerMatchStatus) where.customerMatchStatus = customerMatchStatus;
   if (dateFrom || dateTo) {
     const orderAtFilter: Record<string, Date> = {};
     if (dateFrom) orderAtFilter.gte = new Date(dateFrom);
@@ -53,8 +55,12 @@ export async function GET(req: NextRequest) {
         storeName: true, receiverName: true, receiverPhone: true,
         productNamesRaw: true, itemCount: true, paidAmount: true,
         orderAt: true, invoiceStatus: true, createdAt: true,
-        duplicateStatus: true, duplicateGroupId: true,
+        duplicateStatus: true, duplicateGroupId: true, mergedIntoId: true,
         customerId: true, customer: { select: { id: true, name: true, customerCode: true } },
+        customerMatchStatus: true, customerMatchScore: true, customerMatchReason: true,
+        orderUser: true, receiverAddress: true,
+        financeCategory: true, financeTreatment: true, financeAmountOverride: true,
+        projectId: true, project: { select: { id: true, name: true } },
       },
     }),
     prisma.externalOrder.count({ where }),

@@ -94,6 +94,7 @@ export interface InvoiceFormDialogProps {
   }>;
   showProjectCode?: boolean;
   aiDraftUrl?: string | null;
+  extraPayload?: Record<string, unknown>;
 }
 
 const emptyItem = (): InvoiceItem => ({
@@ -145,6 +146,7 @@ export function buildPreviewText(form: {
 export function InvoiceFormDialog({
   open, onOpenChange, editingInvoice, createUrl, patchUrlPrefix,
   onSuccess, defaultValues, showProjectCode = true, aiDraftUrl,
+  extraPayload,
 }: InvoiceFormDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -158,6 +160,7 @@ export function InvoiceFormDialog({
           defaultValues={defaultValues}
           showProjectCode={showProjectCode}
           aiDraftUrl={aiDraftUrl}
+          extraPayload={extraPayload}
         />
       )}
     </Dialog>
@@ -173,11 +176,13 @@ interface ContentProps {
   defaultValues?: InvoiceFormDialogProps["defaultValues"];
   showProjectCode: boolean;
   aiDraftUrl?: string | null;
+  extraPayload?: Record<string, unknown>;
 }
 
 function InvoiceFormContent({
   editingInvoice, createUrl, patchUrlPrefix,
   onSuccess, onClose, defaultValues, showProjectCode, aiDraftUrl,
+  extraPayload,
 }: ContentProps) {
   const inv = editingInvoice;
   const [contactName, setContactName] = useState(inv?.contactName || defaultValues?.contactName || "");
@@ -310,9 +315,10 @@ function InvoiceFormContent({
       };
       const url = inv ? `${patchUrlPrefix}/${inv.id}` : createUrl;
       const method = inv ? "PATCH" : "POST";
+      const body = extraPayload ? { ...payload, ...extraPayload } : payload;
       const res = await fetch(url, {
         method, headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "保存失败");

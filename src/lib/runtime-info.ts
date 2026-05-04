@@ -1,4 +1,5 @@
 import path from "node:path";
+import { getAppBaseUrl } from "./app-url";
 
 export type RuntimeInfo = {
   runtimeName: "DEV" | "DEMO" | "PROD" | "CUSTOM";
@@ -44,7 +45,11 @@ function detectRuntimeName(databasePath: string, baseUrl: string): RuntimeInfo["
     return "DEMO";
   }
 
-  if (databasePath.includes("/task-manager-data/prod/") || baseUrl.includes(":39090")) {
+  if (
+    databasePath.includes("/task-manager-data/prod/") ||
+    baseUrl.includes(":39090") ||
+    baseUrl.includes("101.34.158.217:31080")
+  ) {
     return "PROD";
   }
 
@@ -58,7 +63,7 @@ function detectRuntimeName(databasePath: string, baseUrl: string): RuntimeInfo["
 export function getRuntimeInfo(): RuntimeInfo {
   const databaseUrl = process.env.DATABASE_URL ?? "";
   const databasePath = normalizeSqlitePath(databaseUrl);
-  const baseUrl = process.env.NEXTAUTH_URL ?? "";
+  const baseUrl = getAppBaseUrl();
   const hostname = process.env.HOSTNAME ?? "";
   const port = process.env.PORT ?? "";
   const nodeEnv = process.env.NODE_ENV ?? "";

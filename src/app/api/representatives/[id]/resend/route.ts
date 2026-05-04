@@ -3,14 +3,10 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
+import { getMagicLinkUrl } from "@/lib/app-url";
 
 function generateToken() {
   return crypto.randomUUID() + crypto.randomUUID();
-}
-
-function getMagicLink(token: string) {
-  const base = process.env.NEXTAUTH_URL || "";
-  return `${base}/magic-link?token=${encodeURIComponent(token)}`;
 }
 
 async function assertAdmin(session: { user?: { id?: string } } | null) {
@@ -55,7 +51,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
 
     // Send email in background — token is already saved, delivery failure is non-fatal
-    const magicLink = getMagicLink(token);
+    const magicLink = getMagicLinkUrl(token);
     sendMail({
       to: rep.email,
       subject: "【SciManage】代表账号登录链接",

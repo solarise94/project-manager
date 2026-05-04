@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search");
 
   const where: Record<string, unknown> = {};
+  let ownedCustomerIds: string[] = [];
 
   if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
     const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
       where: scope as Record<string, unknown>,
       select: { sourceCustomerId: true },
     });
-    const ownedCustomerIds = ownedProfiles.map((p) => p.sourceCustomerId);
+    ownedCustomerIds = ownedProfiles.map((p) => p.sourceCustomerId);
     if (ownedCustomerIds.length === 0) {
       return NextResponse.json({ relations: [] });
     }
@@ -74,7 +75,29 @@ export async function GET(req: NextRequest) {
     take: 200,
   });
 
-  return NextResponse.json({ relations });
+  let visibleProfileIdSet: Set<string>;
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
+    visibleProfileIdSet = new Set(ownedCustomerIds);
+  } else {
+    const customerIds = new Set<string>();
+    for (const r of relations) {
+      customerIds.add(r.fromCustomerId);
+      customerIds.add(r.toCustomerId);
+    }
+    const profiles = await prisma.crmCustomerProfile.findMany({
+      where: { sourceCustomerId: { in: Array.from(customerIds) } },
+      select: { sourceCustomerId: true },
+    });
+    visibleProfileIdSet = new Set(profiles.map((p) => p.sourceCustomerId));
+  }
+
+  const enrichedRelations = relations.map((r) => ({
+    ...r,
+    fromHasCrm: visibleProfileIdSet.has(r.fromCustomerId),
+    toHasCrm: visibleProfileIdSet.has(r.toCustomerId),
+  }));
+
+  return NextResponse.json({ relations: enrichedRelations });
 }
 
 export async function POST(req: NextRequest) {

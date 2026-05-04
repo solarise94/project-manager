@@ -82,6 +82,10 @@ export async function PATCH(
   if (body.tagsJson !== undefined) data.tagsJson = body.tagsJson;
   if (body.nextFollowUpAt !== undefined) data.nextFollowUpAt = body.nextFollowUpAt ? new Date(body.nextFollowUpAt) : null;
   if (body.archived !== undefined) data.archived = body.archived;
+  if (body.personCategory !== undefined) data.personCategory = body.personCategory || null;
+  if (body.jobTitle !== undefined) data.jobTitle = body.jobTitle || null;
+  if (body.graduationDate !== undefined) data.graduationDate = body.graduationDate ? new Date(body.graduationDate) : null;
+  if (body.graduationReminderAt !== undefined) data.graduationReminderAt = body.graduationReminderAt ? new Date(body.graduationReminderAt) : null;
 
   if (session.user.role !== "REPRESENTATIVE") {
     if (body.stage !== undefined) data.stage = body.stage;

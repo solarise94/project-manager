@@ -5,9 +5,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { OrganizationSelect } from "@/components/organization-select";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { crmKeys } from "@/lib/crm/query-keys";
+import { CRM_PERSON_CATEGORIES, PERSON_CATEGORY_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
 import { Pencil } from "lucide-react";
 
@@ -22,12 +24,17 @@ interface CustomerEditForm {
   organizationRawInput: string;
   address: string;
   miniProgramId: string;
+  labOrGroup: string;
+  personCategory: string;
+  jobTitle: string;
+  graduationDate: string;
 }
 
 const emptyForm: CustomerEditForm = {
   name: "", principal: "", email: "", wechat: "",
   organization: "", organizationId: "", organizationSiteId: "",
   organizationRawInput: "", address: "", miniProgramId: "",
+  labOrGroup: "", personCategory: "", jobTitle: "", graduationDate: "",
 };
 
 export function CustomerEditDialog({
@@ -43,6 +50,7 @@ export function CustomerEditDialog({
 }) {
   const [form, setForm] = useState<CustomerEditForm>(emptyForm);
   const [original, setOriginal] = useState<CustomerEditForm>(emptyForm);
+  const [profileId, setProfileId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const queryClient = useQueryClient();
 
@@ -53,11 +61,19 @@ export function CustomerEditDialog({
     void (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/customers/${customerId}`);
-        const data = await res.json();
+        const [custRes, profileRes] = await Promise.all([
+          fetch(`/api/customers/${customerId}`),
+          sourceCustomerId ? fetch(`/api/crm/profiles?sourceCustomerId=${encodeURIComponent(sourceCustomerId)}`) : null,
+        ]);
         if (cancelled) return;
-        if (data.customer) {
-          const c = data.customer;
+
+        const custData = await custRes.json();
+        let profileData: { profiles?: { id: string; personCategory: string | null; jobTitle: string | null; graduationDate: string | null }[] } | null = null;
+        if (profileRes) profileData = await profileRes.json();
+
+        if (custData.customer) {
+          const c = custData.customer;
+          const pf = profileData?.profiles?.[0] || null;
           const f: CustomerEditForm = {
             name: c.name || "",
             principal: c.principal || "",
@@ -69,9 +85,14 @@ export function CustomerEditDialog({
             organizationRawInput: c.organization || "",
             address: c.address || "",
             miniProgramId: c.miniProgramId || "",
+            labOrGroup: c.labOrGroup || "",
+            personCategory: pf?.personCategory || "",
+            jobTitle: pf?.jobTitle || "",
+            graduationDate: pf?.graduationDate ? pf.graduationDate.slice(0, 10) : "",
           };
           setForm(f);
           setOriginal(f);
+          if (pf) setProfileId(pf.id);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -79,31 +100,56 @@ export function CustomerEditDialog({
     })();
 
     return () => { cancelled = true; };
-  }, [open, customerId]);
+  }, [open, customerId, sourceCustomerId]);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const diff: Record<string, string | null> = {};
-      for (const key of Object.keys(form) as (keyof CustomerEditForm)[]) {
-        if (form[key] !== original[key]) diff[key] = form[key] || null;
+      const customerFields: (keyof CustomerEditForm)[] = ["name", "principal", "email", "wechat", "organization", "organizationId", "organizationSiteId", "organizationRawInput", "address", "miniProgramId", "labOrGroup"];
+      const profileFields: (keyof CustomerEditForm)[] = ["personCategory", "jobTitle", "graduationDate"];
+
+      const custDiff: Record<string, string | null> = {};
+      for (const key of customerFields) {
+        if (form[key] !== original[key]) custDiff[key] = form[key] || null;
       }
-      if (Object.keys(diff).length === 0) {
+
+      const profileDiff: Record<string, string | null> = {};
+      for (const key of profileFields) {
+        if (form[key] !== original[key]) profileDiff[key] = form[key] || null;
+      }
+
+      if (Object.keys(custDiff).length === 0 && Object.keys(profileDiff).length === 0) {
         onOpenChange(false);
         return;
       }
-      if (diff.name === null || diff.name === "") {
-        throw new Error("客户姓名不能为空");
+
+      if (Object.keys(custDiff).length > 0) {
+        if (custDiff.name === null || custDiff.name === "") {
+          throw new Error("客户姓名不能为空");
+        }
+        const res = await fetch(`/api/customers/${customerId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(custDiff),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "保存失败");
+        }
       }
-      const res = await fetch(`/api/customers/${customerId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(diff),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "保存失败");
+
+      if (Object.keys(profileDiff).length > 0 && profileId) {
+        const res = await fetch(`/api/crm/profiles/${profileId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(profileDiff),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "CRM 档案更新失败");
+        }
       }
-      return res.json();
+
+      return true;
     },
     onSuccess: async (data) => {
       if (data) {
@@ -205,6 +251,44 @@ export function CustomerEditDialog({
                 }
               />
             </div>
+            <div className="space-y-2">
+              <Label>课题组/实验室</Label>
+              <Input
+                placeholder="例如：朱雪琼课题 507"
+                value={form.labOrGroup}
+                onChange={(e) => setForm({ ...form, labOrGroup: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>人员分类</Label>
+              <Select value={form.personCategory || "__none__"} onValueChange={(v) => { if (v) setForm({ ...form, personCategory: v === "__none__" ? "" : v }); }}>
+                <SelectTrigger><span>{form.personCategory ? PERSON_CATEGORY_LABELS[form.personCategory] || form.personCategory : "选择人员分类（可选）"}</span></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">不设置</SelectItem>
+                  {CRM_PERSON_CATEGORIES.map((pc) => (
+                    <SelectItem key={pc} value={pc}>{PERSON_CATEGORY_LABELS[pc]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>职务/身份</Label>
+              <Input
+                placeholder="例如：教授、博士生、实验员"
+                value={form.jobTitle}
+                onChange={(e) => setForm({ ...form, jobTitle: e.target.value })}
+              />
+            </div>
+            {form.personCategory === "STUDENT" && (
+              <div className="space-y-2">
+                <Label>预计毕业时间</Label>
+                <Input
+                  type="date"
+                  value={form.graduationDate}
+                  onChange={(e) => setForm({ ...form, graduationDate: e.target.value })}
+                />
+              </div>
+            )}
             <Button
               type="submit"
               className="w-full"

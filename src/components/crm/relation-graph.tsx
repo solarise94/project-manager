@@ -19,6 +19,7 @@ import {
   SYMMETRIC_RELATION_TYPES,
 } from "@/lib/crm/constants";
 import type { CrmRelationItem } from "@/lib/crm/types";
+import { useMediaQuery } from "@/hooks/use-media-query";
 
 interface GraphNode extends SimulationNodeDatum {
   id: string;
@@ -40,12 +41,13 @@ interface Props {
   relations: CrmRelationItem[];
   profileStages: Map<string, string>;
   profileSourceMap: Map<string, string>;
+  onNodeClick?: (node: { customerId: string; sourceCustomerId: string; name: string }) => void;
 }
 
 const NODE_RADIUS = 24;
 const FONT_SIZE = 11;
 
-export function RelationGraph({ relations, profileStages, profileSourceMap }: Props) {
+export function RelationGraph({ relations, profileStages, profileSourceMap, onNodeClick }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [links, setLinks] = useState<GraphLink[]>([]);
@@ -55,6 +57,8 @@ export function RelationGraph({ relations, profileStages, profileSourceMap }: Pr
   const router = useRouter();
   const simRef = useRef<ReturnType<typeof forceSimulation<GraphNode>> | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [showLegend, setShowLegend] = useState(false);
+  const isMobileGraph = useMediaQuery("(max-width: 767px)");
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -100,11 +104,15 @@ export function RelationGraph({ relations, profileStages, profileSourceMap }: Pr
 
     if (simRef.current) simRef.current.stop();
 
+    const linkDistance = isMobileGraph ? 180 : 120;
+    const chargeStrength = isMobileGraph ? -500 : -300;
+    const collideRadius = isMobileGraph ? 60 : 48;
+
     const sim = forceSimulation<GraphNode>(graphNodes)
-      .force("link", forceLink<GraphNode, GraphLink>(graphLinks).id((d) => d.id).distance(120))
-      .force("charge", forceManyBody().strength(-300))
+      .force("link", forceLink<GraphNode, GraphLink>(graphLinks).id((d) => d.id).distance(linkDistance))
+      .force("charge", forceManyBody().strength(chargeStrength))
       .force("center", forceCenter(0, 0))
-      .force("collide", forceCollide(40))
+      .force("collide", forceCollide(collideRadius))
       .on("tick", () => {
         setNodes([...graphNodes]);
         setLinks([...graphLinks]);
@@ -112,7 +120,7 @@ export function RelationGraph({ relations, profileStages, profileSourceMap }: Pr
 
     simRef.current = sim;
     return () => { sim.stop(); };
-  }, [relations, profileStages, profileSourceMap]);
+  }, [relations, profileStages, profileSourceMap, isMobileGraph]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -165,83 +173,105 @@ export function RelationGraph({ relations, profileStages, profileSourceMap }: Pr
   const hasDirectional = links.some((l) => !SYMMETRIC_RELATION_TYPES.has(l.type));
 
   return (
-    <svg
-      ref={svgRef}
-      className="w-full h-full bg-background cursor-grab active:cursor-grabbing"
-      onWheel={handleWheel}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-    >
-      {hasDirectional && (
-        <defs>
-          {["REFERRED", "REPORTS_TO"].map((type) => (
-            <marker key={type} id={`arrow-${type}`} viewBox="0 0 10 6" refX="34" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-              <path d="M0,0 L10,3 L0,6 Z" fill={RELATION_TYPE_HEX_COLORS[type] || "#9ca3af"} />
-            </marker>
-          ))}
-        </defs>
+    <div className="relative w-full h-full">
+      <svg
+        ref={svgRef}
+        className="w-full h-full bg-background cursor-grab active:cursor-grabbing"
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        {hasDirectional && (
+          <defs>
+            {["REFERRED", "REPORTS_TO"].map((type) => (
+              <marker key={type} id={`arrow-${type}`} viewBox="0 0 10 6" refX="34" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,3 L0,6 Z" fill={RELATION_TYPE_HEX_COLORS[type] || "#9ca3af"} />
+              </marker>
+            ))}
+          </defs>
+        )}
+        <g transform={`translate(${transform.x + size.w / 2}, ${transform.y + size.h / 2}) scale(${transform.k})`}>
+          {links.map((l) => {
+            const src = l.source as GraphNode;
+            const tgt = l.target as GraphNode;
+            if (src.x == null || tgt.x == null) return null;
+            const color = RELATION_TYPE_HEX_COLORS[l.type] || "#9ca3af";
+            const dimmed = hoveredNode && !highlightLinks.has(l.id);
+            const isDirectional = !SYMMETRIC_RELATION_TYPES.has(l.type);
+            return (
+              <line
+                key={l.id}
+                x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
+                stroke={color}
+                strokeWidth={l.strength === "STRONG" ? 2.5 : l.strength === "WEAK" ? 1 : 1.5}
+                opacity={dimmed ? 0.15 : 0.7}
+                markerEnd={isDirectional ? `url(#arrow-${l.type})` : undefined}
+                style={{ transition: "opacity 0.2s" }}
+              />
+            );
+          })}
+          {nodes.map((n) => {
+            if (n.x == null) return null;
+            const fill = n.hasCrmProfile ? (STAGE_HEX_COLORS[n.stage] || "#9ca3af") : "#d1d5db";
+            const dimmed = hoveredNode && !neighborSet.has(n.id);
+            const displayName = isMobileGraph
+              ? (n.name.length > 4 ? n.name.slice(0, 3) + "…" : n.name)
+              : (n.name.length > 6 ? n.name.slice(0, 5) + "…" : n.name);
+            return (
+              <g
+                key={n.id}
+                data-node="true"
+                transform={`translate(${n.x},${n.y})`}
+                opacity={dimmed ? 0.15 : 1}
+                style={{ transition: "opacity 0.2s", cursor: n.hasCrmProfile ? "pointer" : "default" }}
+                onPointerEnter={() => setHoveredNode(n.id)}
+                onPointerLeave={() => setHoveredNode(null)}
+                onClick={() => {
+                  if (!n.hasCrmProfile) return;
+                  if (onNodeClick) {
+                    onNodeClick({ customerId: n.id, sourceCustomerId: n.sourceCustomerId, name: n.name });
+                  } else {
+                    router.push(`/crm/customers/${n.sourceCustomerId}`);
+                  }
+                }}
+              >
+                <circle r={NODE_RADIUS} fill={fill} stroke={n.hasCrmProfile ? "#fff" : "#e5e7eb"} strokeWidth={2} strokeDasharray={n.hasCrmProfile ? undefined : "4 2"} />
+                <text textAnchor="middle" dy={NODE_RADIUS + FONT_SIZE + 2} fontSize={FONT_SIZE} fill="currentColor" className="select-none pointer-events-none">
+                  {displayName}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+        {(!isMobileGraph || showLegend) && (
+          <g transform="translate(16, 16)">
+            <text fontSize={11} fontWeight="bold" fill="currentColor">阶段</text>
+            {Object.entries(STAGE_HEX_COLORS).map(([stage, color], i) => (
+              <g key={stage} transform={`translate(0, ${16 + i * 18})`}>
+                <circle r={5} cx={5} cy={0} fill={color} />
+                <text x={16} dy={4} fontSize={10} fill="currentColor">{STAGE_LABELS[stage]}</text>
+              </g>
+            ))}
+            <text fontSize={11} fontWeight="bold" fill="currentColor" y={16 + 7 * 18 + 8}>关系</text>
+            {Object.entries(RELATION_TYPE_HEX_COLORS).map(([type, color], i) => (
+              <g key={type} transform={`translate(0, ${16 + 7 * 18 + 24 + i * 18})`}>
+                <line x1={0} y1={0} x2={14} y2={0} stroke={color} strokeWidth={2} />
+                <text x={20} dy={4} fontSize={10} fill="currentColor">{RELATION_TYPE_LABELS[type]}</text>
+              </g>
+            ))}
+          </g>
+        )}
+      </svg>
+      {isMobileGraph && (
+        <button
+          type="button"
+          className="absolute top-2 right-2 bg-background/90 backdrop-blur border rounded-md px-2 py-1 text-xs shadow-sm"
+          onClick={() => setShowLegend((v) => !v)}
+        >
+          {showLegend ? "隐藏图例" : "图例"}
+        </button>
       )}
-      <g transform={`translate(${transform.x + size.w / 2}, ${transform.y + size.h / 2}) scale(${transform.k})`}>
-        {links.map((l) => {
-          const src = l.source as GraphNode;
-          const tgt = l.target as GraphNode;
-          if (src.x == null || tgt.x == null) return null;
-          const color = RELATION_TYPE_HEX_COLORS[l.type] || "#9ca3af";
-          const dimmed = hoveredNode && !highlightLinks.has(l.id);
-          const isDirectional = !SYMMETRIC_RELATION_TYPES.has(l.type);
-          return (
-            <line
-              key={l.id}
-              x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
-              stroke={color}
-              strokeWidth={l.strength === "STRONG" ? 2.5 : l.strength === "WEAK" ? 1 : 1.5}
-              opacity={dimmed ? 0.15 : 0.7}
-              markerEnd={isDirectional ? `url(#arrow-${l.type})` : undefined}
-              style={{ transition: "opacity 0.2s" }}
-            />
-          );
-        })}
-        {nodes.map((n) => {
-          if (n.x == null) return null;
-          const fill = n.hasCrmProfile ? (STAGE_HEX_COLORS[n.stage] || "#9ca3af") : "#d1d5db";
-          const dimmed = hoveredNode && !neighborSet.has(n.id);
-          return (
-            <g
-              key={n.id}
-              data-node="true"
-              transform={`translate(${n.x},${n.y})`}
-              opacity={dimmed ? 0.15 : 1}
-              style={{ transition: "opacity 0.2s", cursor: n.hasCrmProfile ? "pointer" : "default" }}
-              onPointerEnter={() => setHoveredNode(n.id)}
-              onPointerLeave={() => setHoveredNode(null)}
-              onClick={() => { if (n.hasCrmProfile) router.push(`/crm/customers/${n.sourceCustomerId}`); }}
-            >
-              <circle r={NODE_RADIUS} fill={fill} stroke={n.hasCrmProfile ? "#fff" : "#e5e7eb"} strokeWidth={2} strokeDasharray={n.hasCrmProfile ? undefined : "4 2"} />
-              <text textAnchor="middle" dy={NODE_RADIUS + FONT_SIZE + 2} fontSize={FONT_SIZE} fill="currentColor" className="select-none pointer-events-none">
-                {n.name.length > 6 ? n.name.slice(0, 5) + "…" : n.name}
-              </text>
-            </g>
-          );
-        })}
-      </g>
-      {/* Legend */}
-      <g transform="translate(16, 16)">
-        <text fontSize={11} fontWeight="bold" fill="currentColor">阶段</text>
-        {Object.entries(STAGE_HEX_COLORS).map(([stage, color], i) => (
-          <g key={stage} transform={`translate(0, ${16 + i * 18})`}>
-            <circle r={5} cx={5} cy={0} fill={color} />
-            <text x={16} dy={4} fontSize={10} fill="currentColor">{STAGE_LABELS[stage]}</text>
-          </g>
-        ))}
-        <text fontSize={11} fontWeight="bold" fill="currentColor" y={16 + 7 * 18 + 8}>关系</text>
-        {Object.entries(RELATION_TYPE_HEX_COLORS).map(([type, color], i) => (
-          <g key={type} transform={`translate(0, ${16 + 7 * 18 + 24 + i * 18})`}>
-            <line x1={0} y1={0} x2={14} y2={0} stroke={color} strokeWidth={2} />
-            <text x={20} dy={4} fontSize={10} fill="currentColor">{RELATION_TYPE_LABELS[type]}</text>
-          </g>
-        ))}
-      </g>
-    </svg>
+    </div>
   );
 }

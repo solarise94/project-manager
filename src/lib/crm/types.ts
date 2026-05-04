@@ -17,6 +17,11 @@ export interface CrmCustomerProfileItem {
   recalledByUserId: string | null;
   recalledByUser: { id: string; name: string } | null;
   reflowReason: string | null;
+  personCategory: string | null;
+  jobTitle: string | null;
+  graduationDate: string | null;
+  graduationStatus?: string | null;
+  graduationReminderAt: string | null;
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -29,6 +34,10 @@ export interface CrmCustomerProfileItem {
     wechat: string | null;
     organization: string | null;
     address: string | null;
+    organizationId: string | null;
+    organizationSiteId: string | null;
+    labOrGroup: string | null;
+    orgSite?: { id: string; siteName: string; siteType: string } | null;
   };
   ownerUser: { id: string; name: string };
   _count?: {
@@ -152,6 +161,8 @@ export interface CrmRelationItem {
   createdByUserId: string;
   createdByUser: { id: string; name: string };
   createdAt: string;
+  fromHasCrm?: boolean;
+  toHasCrm?: boolean;
 }
 
 export interface CrmRegionManagerItem {

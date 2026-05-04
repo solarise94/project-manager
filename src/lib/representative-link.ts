@@ -1,15 +1,8 @@
 import { prisma } from "./prisma";
+import { getMagicLinkUrl } from "./app-url";
 
 function generateToken() {
   return crypto.randomUUID() + crypto.randomUUID();
-}
-
-function getMagicLink(token: string, redirect?: string) {
-  const base = process.env.NEXTAUTH_URL || "";
-  const url = new URL("/magic-link", base);
-  url.searchParams.set("token", token);
-  if (redirect) url.searchParams.set("redirect", redirect);
-  return url.toString();
 }
 
 export async function generateRepresentativeLoginLink(
@@ -36,7 +29,7 @@ export async function generateRepresentativeLoginLink(
     data: { token, tokenExpiresAt },
   });
 
-  const magicLink = getMagicLink(token, redirect);
+  const magicLink = getMagicLinkUrl(token, redirect);
   return { magicLink, isRepresentative: true };
 }
 
@@ -61,7 +54,7 @@ export async function notifyRepresentative(
     data: { token, tokenExpiresAt },
   });
 
-  const magicLink = getMagicLink(token, redirect);
+  const magicLink = getMagicLinkUrl(token, redirect);
 
   // Fire-and-forget — token is already saved, delivery failure is non-fatal
   import("./mail").then(({ sendMail }) => {

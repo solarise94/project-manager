@@ -348,16 +348,26 @@ export async function syncOrderInvoiceStatus(
   prisma: PrismaClient,
   externalOrderId: string,
 ): Promise<void> {
-  const invoices = await prisma.externalOrderInvoiceRequest.findMany({
+  // Direct invoices + coverage invoices
+  const coverageRecords = await prisma.externalOrderInvoiceCoverage.findMany({
+    where: { externalOrderId },
+    select: { invoiceRequest: { select: { status: true } } },
+  });
+  const directInvoices = await prisma.externalOrderInvoiceRequest.findMany({
     where: { externalOrderId },
     select: { status: true },
   });
 
+  const allStatuses = [
+    ...directInvoices.map((i) => i.status),
+    ...coverageRecords.map((c) => c.invoiceRequest.status),
+  ];
+
   let highest = "NONE";
-  for (const inv of invoices) {
-    if (inv.status === "CANCELLED") continue;
-    if ((STATUS_PRIORITY[inv.status] || 0) > (STATUS_PRIORITY[highest] || 0)) {
-      highest = inv.status;
+  for (const status of allStatuses) {
+    if (status === "CANCELLED") continue;
+    if ((STATUS_PRIORITY[status] || 0) > (STATUS_PRIORITY[highest] || 0)) {
+      highest = status;
     }
   }
 

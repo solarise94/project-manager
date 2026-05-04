@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, FolderPlus, Clock, AlertCircle, TrendingUp, Users, UserPlus, ClipboardList, ArrowRight } from "lucide-react";
+import { FolderOpen, FolderPlus, Clock, AlertCircle, TrendingUp, Users, UserPlus, ClipboardList, ShoppingCart, Building2, Store, Settings, UserCog, Building, ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -25,23 +25,80 @@ const STATUS_LABELS: Record<string, string> = {
   ON_HOLD: "暂停",
 };
 
-type QuickAction = { label: string; href: string; icon: React.ElementType; description: string };
+type ActionCardItem = { label: string; href: string; icon: React.ElementType; description: string };
 
-function getQuickActions(role: string | undefined): QuickAction[] {
-  if (role === "REPRESENTATIVE") {
-    return [
-      { label: "我的项目", href: "/projects", icon: FolderOpen, description: "查看参与的项目" },
-      { label: "我的工单", href: "/tickets", icon: AlertCircle, description: "查看分配的工单" },
-      { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: "提交或查看客户准入申请" },
-      { label: "跟进工作台", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
-    ];
-  }
-  return [
-    { label: "新建项目", href: "/projects?create=1", icon: FolderPlus, description: "创建新的科研项目" },
-    { label: "待处理工单", href: "/tickets", icon: AlertCircle, description: "需要关注的工单" },
-    { label: "CRM 客户池", href: "/crm/customers", icon: Users, description: "管理客户档案" },
-    { label: "客户申请审核", href: "/crm/customer-applications", icon: ClipboardList, description: "处理新客户申请" },
+interface WorkbenchGroup {
+  title: string;
+  items: ActionCardItem[];
+  roles?: string[];
+}
+
+function getWorkbenchGroups(role: string | undefined): WorkbenchGroup[] {
+  const groups: WorkbenchGroup[] = [
+    {
+      title: "项目与工单",
+      items: [
+        ...(role !== "REPRESENTATIVE"
+          ? [{ label: "新建项目", href: "/projects?create=1", icon: FolderPlus, description: "创建新的科研项目" }]
+          : []),
+        { label: "项目列表", href: "/projects", icon: FolderOpen, description: "查看所有项目" },
+        { label: "待处理工单", href: "/tickets", icon: AlertCircle, description: "需要关注的工单" },
+      ],
+    },
+    {
+      title: "CRM",
+      items: [
+        { label: "CRM客户池", href: "/crm/customers", icon: Users, description: "管理客户档案" },
+        { label: "跟进工作台", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
+        { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: role === "REPRESENTATIVE" ? "提交或查看客户准入申请" : "处理新客户申请" },
+      ],
+    },
   ];
+
+  if (role !== "REPRESENTATIVE") {
+    groups.push({
+      title: "订单与开票",
+      items: [
+        { label: "拼好鼠订单", href: "/external-orders", icon: ShoppingCart, description: "导入线上平台订单、匹配客户、合并开票" },
+      ],
+    });
+  }
+
+  if (role === "ADMIN") {
+    groups.push({
+      title: "管理",
+      items: [
+        { label: "用户管理", href: "/admin/users", icon: UserCog, description: "管理系统用户" },
+        { label: "代表账号管理", href: "/admin/representatives", icon: Settings, description: "管理代表账号" },
+        { label: "单位主数据", href: "/admin/organizations", icon: Building, description: "管理单位信息" },
+        { label: "开票主体", href: "/admin/billing-profiles", icon: Building2, description: "管理开票主体信息" },
+        { label: "采购渠道", href: "/admin/procurement-channels", icon: Store, description: "管理采购渠道" },
+      ],
+    });
+  }
+
+  return groups;
+}
+
+function ActionCard({ action }: { action: ActionCardItem }) {
+  return (
+    <Link href={action.href}>
+      <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 mt-0.5">
+              <action.icon className="h-4 w-4 text-primary" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-snug line-clamp-2">{action.label}</p>
+              <p className="text-xs text-muted-foreground leading-snug line-clamp-2">{action.description}</p>
+            </div>
+            <ArrowRight className="hidden sm:block h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
 }
 
 function StatCard({
@@ -122,35 +179,22 @@ export default function DashboardPage() {
     })) || [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">仪表盘</h1>
         <p className="text-muted-foreground">欢迎回来，{session.user.name}</p>
       </div>
 
-      <div>
-        <h2 className="text-sm font-medium text-muted-foreground mb-3">常用操作</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {getQuickActions(session.user.role).map((action) => (
-            <Link key={action.label} href={action.href}>
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-4 pb-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <action.icon className="h-4 w-4 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{action.label}</p>
-                      <p className="text-xs text-muted-foreground truncate">{action.description}</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+      {getWorkbenchGroups(session.user.role).map((group) => (
+        <div key={group.title}>
+          <h2 className="text-sm font-medium text-muted-foreground mb-3">{group.title}</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {group.items.map((action) => (
+              <ActionCard key={action.label} action={action} />
+            ))}
+          </div>
         </div>
-      </div>
+      ))}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard

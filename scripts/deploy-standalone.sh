@@ -17,7 +17,7 @@ TARGET_DIR="$1"
 SERVICE_NAME="$2"
 PORT="$3"
 BIND_HOST="$4"
-NEXTAUTH_URL_VALUE="$5"
+SCRIPT_DEFAULT_URL="$5"  # fallback only — lowest priority
 RUNTIME_DB="$6"
 BOOTSTRAP_DB="$7"
 MISSING_DB_POLICY="$8"
@@ -28,6 +28,17 @@ NEXTAUTH_SECRET_VALUE="sci-project-manage-secret-key-2024-change-in-production"
 EXISTING_ENV_FILE="${TARGET_DIR}/.env"
 SERVICE_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}"
 NODE_BIN="$(command -v node)"
+
+# Escape a value for safe use in a dotenv file.
+dotenv_quote() {
+  local val="$1"
+  val="${val//\\/\\\\}"
+  val="${val//\"/\\\"}"
+  val="${val//$'\n'/\\n}"
+  val="${val//$'\r'/\\r}"
+  val="${val//$'\t'/\\t}"
+  printf '%s' "${val}"
+}
 SMTP_HOST_VALUE="${SMTP_HOST:-}"
 SMTP_PORT_VALUE="${SMTP_PORT:-}"
 SMTP_USER_VALUE="${SMTP_USER:-}"
@@ -48,6 +59,11 @@ MINIMAX_CONF="$(dirname "${RUNTIME_DB}")/minimax.conf"
 TAVILY_CONF="$(dirname "${RUNTIME_DB}")/tavily.conf"
 TENCENT_ASR_CONF="$(dirname "${RUNTIME_DB}")/tencent-asr.conf"
 TENCENT_MAP_CONF="$(dirname "${RUNTIME_DB}")/tencent-map.conf"
+APP_CONF="$(dirname "${RUNTIME_DB}")/app.conf"
+
+# URL priority: shell NEXTAUTH_URL > shell APP_BASE_URL > app.conf > existing .env > script arg > hardcoded default
+NEXTAUTH_URL_VALUE="${NEXTAUTH_URL:-}"
+APP_BASE_URL_VALUE="${APP_BASE_URL:-}"
 
 cd "${REPO_DIR}"
 
@@ -217,37 +233,67 @@ else
   echo "  Tencent Map Key: not configured"
 fi
 
-echo "[6/8] Writing runtime .env..."
-cat > "${TARGET_DIR}/.env" <<EOF
-# Runtime database for this deployed instance only.
-DATABASE_URL="file:${RUNTIME_DB}"
-# Public base URL used by auth and email links.
-NEXTAUTH_URL="${NEXTAUTH_URL_VALUE}"
-NEXTAUTH_SECRET="${NEXTAUTH_SECRET_VALUE}"
+# Read app.conf (persistent config, survives deploys)
+# Priority: shell env > app.conf > existing runtime .env (APP_BASE_URL only) > script default > hardcoded
+if [[ -f "${APP_CONF}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      APP_BASE_URL) [[ -z "${APP_BASE_URL_VALUE}" ]] && APP_BASE_URL_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^APP_BASE_URL=' "${APP_CONF}" || true)
+fi
 
-# SMTP settings — sourced from smtp.conf next to the database.
-# To change: edit $(dirname $RUNTIME_DB)/smtp.conf and redeploy.
-SMTP_HOST="${SMTP_HOST_VALUE}"
-SMTP_PORT="${SMTP_PORT_VALUE}"
-SMTP_USER="${SMTP_USER_VALUE}"
-SMTP_PASS="${SMTP_PASS_VALUE}"
-SMTP_FROM="${SMTP_FROM_VALUE}"
-# MiniMax AI settings — sourced from minimax.conf next to the database.
-MINIMAX_API_KEY="${MINIMAX_API_KEY_VALUE}"
-MINIMAX_BASE_URL="${MINIMAX_BASE_URL_VALUE}"
-MINIMAX_MODEL="${MINIMAX_MODEL_VALUE}"
-# Tavily search settings — sourced from tavily.conf next to the database.
-TAVILY_API_KEY="${TAVILY_API_KEY_VALUE}"
-# Tencent Cloud ASR settings — sourced from tencent-asr.conf next to the database.
-TENCENTCLOUD_SECRET_ID="${TENCENTCLOUD_SECRET_ID_VALUE}"
-TENCENTCLOUD_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY_VALUE}"
-# Tencent Map settings — sourced from tencent-map.conf next to the database.
-TENCENT_MAP_KEY="${TENCENT_MAP_KEY_VALUE}"
-NEXT_PUBLIC_TENCENT_MAP_KEY="${NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE}"
-# Standalone server bind settings.
-PORT="${PORT}"
-HOSTNAME="${BIND_HOST}"
-EOF
+# Read existing runtime .env — only APP_BASE_URL as last fallback.
+# NEXTAUTH_URL from old .env is NOT used: it's stale output, not config.
+if [[ -f "${EXISTING_ENV_FILE}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      APP_BASE_URL) [[ -z "${APP_BASE_URL_VALUE}" ]] && APP_BASE_URL_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^APP_BASE_URL=' "${EXISTING_ENV_FILE}" || true)
+fi
+
+# Resolve NEXTAUTH_URL: shell NEXTAUTH_URL > APP_BASE_URL (shell > app.conf > .env) > script default > hardcoded
+if [[ -z "${NEXTAUTH_URL_VALUE}" ]]; then
+  NEXTAUTH_URL_VALUE="${APP_BASE_URL_VALUE:-${SCRIPT_DEFAULT_URL:-http://localhost:3000}}"
+fi
+
+echo "  APP_BASE_URL: ${APP_BASE_URL_VALUE:-not set}"
+echo "  NEXTAUTH_URL: ${NEXTAUTH_URL_VALUE}"
+
+echo "[6/8] Writing runtime .env..."
+{
+  echo "# Runtime database for this deployed instance only."
+  echo "DATABASE_URL=\"file:$(dotenv_quote "${RUNTIME_DB}")\""
+  echo "# Public base URL used by auth and email links."
+  echo "NEXTAUTH_URL=\"$(dotenv_quote "${NEXTAUTH_URL_VALUE}")\""
+  echo "APP_BASE_URL=\"$(dotenv_quote "${APP_BASE_URL_VALUE:-${NEXTAUTH_URL_VALUE}}")\""
+  echo "NEXTAUTH_SECRET=\"$(dotenv_quote "${NEXTAUTH_SECRET_VALUE}")\""
+  echo ""
+  echo "# SMTP settings"
+  echo "SMTP_HOST=\"$(dotenv_quote "${SMTP_HOST_VALUE}")\""
+  echo "SMTP_PORT=\"$(dotenv_quote "${SMTP_PORT_VALUE}")\""
+  echo "SMTP_USER=\"$(dotenv_quote "${SMTP_USER_VALUE}")\""
+  echo "SMTP_PASS=\"$(dotenv_quote "${SMTP_PASS_VALUE}")\""
+  echo "SMTP_FROM=\"$(dotenv_quote "${SMTP_FROM_VALUE}")\""
+  echo "# MiniMax AI settings"
+  echo "MINIMAX_API_KEY=\"$(dotenv_quote "${MINIMAX_API_KEY_VALUE}")\""
+  echo "MINIMAX_BASE_URL=\"$(dotenv_quote "${MINIMAX_BASE_URL_VALUE}")\""
+  echo "MINIMAX_MODEL=\"$(dotenv_quote "${MINIMAX_MODEL_VALUE}")\""
+  echo "# Tavily search settings"
+  echo "TAVILY_API_KEY=\"$(dotenv_quote "${TAVILY_API_KEY_VALUE}")\""
+  echo "# Tencent Cloud ASR settings"
+  echo "TENCENTCLOUD_SECRET_ID=\"$(dotenv_quote "${TENCENTCLOUD_SECRET_ID_VALUE}")\""
+  echo "TENCENTCLOUD_SECRET_KEY=\"$(dotenv_quote "${TENCENTCLOUD_SECRET_KEY_VALUE}")\""
+  echo "# Tencent Map settings"
+  echo "TENCENT_MAP_KEY=\"$(dotenv_quote "${TENCENT_MAP_KEY_VALUE}")\""
+  echo "NEXT_PUBLIC_TENCENT_MAP_KEY=\"$(dotenv_quote "${NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE}")\""
+  echo "# Standalone server bind settings."
+  echo "PORT=\"$(dotenv_quote "${PORT}")\""
+  echo "HOSTNAME=\"$(dotenv_quote "${BIND_HOST}")\""
+} > "${TARGET_DIR}/.env"
 
 echo "[7/8] Writing ${SERVICE_NAME} unit..."
 mkdir -p "$(dirname "${SERVICE_FILE}")"

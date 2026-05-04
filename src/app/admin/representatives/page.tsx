@@ -150,7 +150,7 @@ export default function AdminRepresentativesPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-full overflow-x-hidden pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <Handshake className="h-6 w-6" />
@@ -159,17 +159,17 @@ export default function AdminRepresentativesPage() {
         <p className="text-muted-foreground">管理项目代表，发送 Magic Link 登录链接</p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-col sm:flex-row gap-3 min-w-0">
+        <div className="relative flex-1 max-w-md min-w-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="搜索代表..."
-            className="pl-9"
+            className="pl-9 w-full"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => setOpen(true)} className="w-full sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           添加代表
         </Button>
@@ -190,14 +190,91 @@ export default function AdminRepresentativesPage() {
           <p className="text-muted-foreground">暂无代表，点击右上角添加</p>
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
+        <>
+        <div className="md:hidden space-y-3">
+          {filtered.map((rep) => (
+            <div key={rep.id} className={`rounded-lg border bg-card p-4 space-y-3 ${rep.archived ? "opacity-60 bg-muted/20" : ""}`}>
+              <div className="flex items-center justify-between gap-2 min-w-0">
+                <span className="truncate text-base font-medium">{rep.name}</span>
+                {rep.archived ? (
+                  <Badge variant="outline" className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+                    <Archive className="h-3 w-3 mr-1" />
+                    已归档
+                  </Badge>
+                ) : (
+                  <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 shrink-0 whitespace-nowrap">
+                    在职
+                  </Badge>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground truncate">{rep.email}</div>
+              <div>
+                <Badge variant="secondary" className="text-xs shrink-0 whitespace-nowrap">
+                  {rep._count?.projects ?? 0} 个项目
+                </Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditing(rep);
+                    setEditForm({ name: rep.name, email: rep.email });
+                    setEditOpen(true);
+                  }}
+                >
+                  <Pencil className="h-3 w-3 mr-1" />
+                  编辑
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => resendMutation.mutate(rep.id)}
+                  disabled={resendMutation.isPending || rep.archived}
+                >
+                  <Send className="h-3 w-3 mr-1" />
+                  重发
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={
+                    rep.archived
+                      ? "text-green-600 hover:text-green-700 hover:bg-green-50"
+                      : "text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                  }
+                  onClick={() => {
+                    const action = rep.archived ? "恢复" : "归档";
+                    if (confirm(`确定要${action}代表 "${rep.name}" 吗？`)) {
+                      archiveMutation.mutate({ id: rep.id, archived: !rep.archived });
+                    }
+                  }}
+                >
+                  {rep.archived ? (
+                    <>
+                      <ArchiveRestore className="h-3 w-3 mr-1" />
+                      恢复
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="h-3 w-3 mr-1" />
+                      归档
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden md:block border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
                 <th className="text-left px-4 py-3 font-medium">代表</th>
-                <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">邮箱</th>
+                <th className="text-left px-4 py-3 font-medium">邮箱</th>
                 <th className="text-left px-4 py-3 font-medium">关联项目</th>
-                <th className="text-left px-4 py-3 font-medium hidden md:table-cell">状态</th>
+                <th className="text-left px-4 py-3 font-medium">状态</th>
                 <th className="text-right px-4 py-3 font-medium">操作</th>
               </tr>
             </thead>
@@ -212,23 +289,23 @@ export default function AdminRepresentativesPage() {
                       <div className="h-8 w-8 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center shrink-0">
                         {rep.name?.slice(0, 2)?.toUpperCase() || "R"}
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{rep.name}</span>
-                        <span className="text-xs text-muted-foreground sm:hidden">
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium truncate max-w-[160px]">{rep.name}</span>
+                        <span className="text-xs text-muted-foreground truncate max-w-[160px]">
                           {rep.email}
                         </span>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{rep.email}</td>
+                  <td className="px-4 py-3 text-muted-foreground truncate max-w-[200px]">{rep.email}</td>
                   <td className="px-4 py-3">
-                    <Badge variant="secondary" className="text-xs">
+                    <Badge variant="secondary" className="text-xs shrink-0 whitespace-nowrap">
                       {rep._count?.projects ?? 0} 个项目
                     </Badge>
                   </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
+                  <td className="px-4 py-3">
                     {rep.archived ? (
-                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                      <Badge variant="outline" className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
                         <Archive className="h-3 w-3 mr-1" />
                         已归档
                         {rep.archivedAt && (
@@ -238,13 +315,13 @@ export default function AdminRepresentativesPage() {
                         )}
                       </Badge>
                     ) : (
-                      <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700">
+                      <Badge variant="default" className="text-xs bg-green-600 hover:bg-green-700 shrink-0 whitespace-nowrap">
                         在职
                       </Badge>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-end gap-1 flex-wrap">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -302,7 +379,7 @@ export default function AdminRepresentativesPage() {
             </tbody>
           </table>
         </div>
-      )}
+      </>)}
 
       {/* Add Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>

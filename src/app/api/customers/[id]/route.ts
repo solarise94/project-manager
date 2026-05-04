@@ -21,6 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       id: true, name: true, customerCode: true, organization: true,
       organizationId: true, organizationSiteId: true, email: true,
       wechat: true, address: true, principal: true, miniProgramId: true,
+      labOrGroup: true,
       org: { select: { canonicalName: true } },
     },
   });
@@ -50,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const body = await req.json();
-    const { name, principal, email, wechat, organization, address, miniProgramId, archived, organizationId, organizationSiteId, organizationRawInput } = body;
+    const { name, principal, email, wechat, organization, address, miniProgramId, archived, organizationId, organizationSiteId, organizationRawInput, labOrGroup } = body;
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) {
@@ -68,6 +69,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (organizationId !== undefined) data.organizationId = organizationId || null;
     if (organizationSiteId !== undefined) data.organizationSiteId = organizationSiteId || null;
     if (organizationRawInput !== undefined) data.organizationRawInput = organizationRawInput || null;
+    if (labOrGroup !== undefined) data.labOrGroup = labOrGroup || null;
 
     // Validate organizationId exists and is active
     const effectiveOrgId = (organizationId !== undefined ? organizationId : existing.organizationId) || null;

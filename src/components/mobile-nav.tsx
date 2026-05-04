@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, User, Users, Handshake, Contact, HeartHandshake } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Ticket, User, HeartHandshake } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSession } from "next-auth/react";
 
-const baseNavItems = [
+const navItems = [
   { href: "/dashboard", label: "看板", icon: LayoutDashboard },
   { href: "/projects", label: "项目", icon: FolderKanban },
   { href: "/tickets", label: "工单", icon: Ticket },
@@ -16,19 +15,12 @@ const baseNavItems = [
 
 export function MobileNav() {
   const pathname = usePathname();
-  const { data: session } = useSession();
-
-  const navItems = [...baseNavItems];
-  if (session?.user?.role !== "REPRESENTATIVE") {
-    navItems.splice(3, 0, { href: "/customers", label: "客户", icon: Contact });
-  }
-  if (session?.user?.role === "ADMIN") {
-    navItems.splice(navItems.length - 1, 0, { href: "/admin/users", label: "用户", icon: Users });
-    navItems.splice(navItems.length - 1, 0, { href: "/admin/representatives", label: "代表", icon: Handshake });
-  }
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur md:hidden">
+    <nav
+      className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur md:hidden"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
       <div className="flex h-16 items-center justify-around">
         {navItems.map((item) => {
           const Icon = item.icon;

@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
+import { getMagicLinkUrl } from "@/lib/app-url";
 
 function generateToken() {
   return crypto.randomUUID() + crypto.randomUUID();
-}
-
-function getMagicLink(token: string) {
-  const base = process.env.NEXTAUTH_URL || "";
-  return `${base}/magic-link?token=${encodeURIComponent(token)}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -52,7 +48,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Send email in background — token is already saved, delivery failure is non-fatal
-    const magicLink = getMagicLink(token);
+    const magicLink = getMagicLinkUrl(token);
     sendMail({
       to: rep.email,
       subject: "【SciManage】代表账号登录链接",

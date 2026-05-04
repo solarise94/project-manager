@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
 import { TaxIdLookupInput } from "@/components/tax-id-lookup-input";
+import { CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
 
 interface OrgAlias {
@@ -31,7 +32,14 @@ interface OrgAlias {
 interface OrgSite {
   id: string;
   siteName: string;
+  siteType: string;
   address: string | null;
+}
+
+interface SiteForm {
+  siteName: string;
+  address: string;
+  siteType: string;
 }
 
 interface OrgItem {
@@ -46,7 +54,7 @@ interface OrgItem {
   _count: { customers: number };
 }
 
-const emptyCreate = { canonicalName: "", address: "", aliases: [""], sites: [{ siteName: "", address: "" }] };
+const emptyCreate = { canonicalName: "", address: "", aliases: [""], sites: [{ siteName: "", address: "", siteType: "CAMPUS" }] };
 
 export default function OrganizationsPage() {
   const queryClient = useQueryClient();
@@ -62,7 +70,7 @@ export default function OrganizationsPage() {
   const [form, setForm] = useState({ ...emptyCreate });
   const [editForm, setEditForm] = useState({ canonicalName: "", address: "", taxId: "" });
   const [newAlias, setNewAlias] = useState("");
-  const [newSite, setNewSite] = useState({ siteName: "", address: "" });
+  const [newSite, setNewSite] = useState({ siteName: "", address: "", siteType: "CAMPUS" });
 
   const { data, isLoading, error } = useQuery<{ organizations: OrgItem[] }>({
     queryKey: ["organizations"],
@@ -93,7 +101,7 @@ export default function OrganizationsPage() {
           canonicalName: payload.canonicalName,
           address: payload.address || null,
           aliases: payload.aliases.filter(Boolean),
-          sites: payload.sites.filter((s) => s.siteName),
+          sites: (payload.sites as SiteForm[]).filter((s) => s.siteName).map((s) => ({ siteName: s.siteName, address: s.address, siteType: s.siteType || "CAMPUS" })),
         }),
       });
       const data = await res.json();
@@ -174,7 +182,7 @@ export default function OrganizationsPage() {
       canonicalName: initialName,
       address: "",
       aliases: [""],
-      sites: [{ siteName: "", address: "" }],
+      sites: [{ siteName: "", address: "", siteType: "CAMPUS" }],
     });
     setCreateOpen(true);
   }
@@ -185,8 +193,8 @@ export default function OrganizationsPage() {
       address: draft.address || "",
       aliases: draft.aliases.length > 0 ? draft.aliases : [""],
       sites: draft.sites.length > 0
-        ? draft.sites.map((site) => ({ siteName: site.siteName, address: site.address || "" }))
-        : [{ siteName: "", address: "" }],
+        ? draft.sites.map((site) => ({ siteName: site.siteName, address: site.address || "", siteType: "CAMPUS" }))
+        : [{ siteName: "", address: "", siteType: "CAMPUS" }],
     });
     toast.success("已应用 AI 草稿，请检查后再保存");
   }
@@ -262,7 +270,7 @@ export default function OrganizationsPage() {
                     setEditing(o);
                     setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
                     setNewAlias("");
-                    setNewSite({ siteName: "", address: "" });
+                    setNewSite({ siteName: "", address: "", siteType: "CAMPUS" });
                     setEditOpen(true);
                   }}><Pencil className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="sm" onClick={() => { setMergeSource(o); setMergeTargetId(""); setMergeOpen(true); }}>
@@ -317,11 +325,17 @@ export default function OrganizationsPage() {
               {form.sites.map((s, i) => (
                 <div key={i} className="flex gap-2">
                   <Input value={s.siteName} onChange={(e) => { const arr = [...form.sites]; arr[i] = { ...arr[i], siteName: e.target.value }; setForm({ ...form, sites: arr }); }} placeholder="院区名称" className="flex-1" />
+                  <Select value={(s as SiteForm).siteType || "CAMPUS"} onValueChange={(v) => { const arr = [...form.sites]; arr[i] = { ...arr[i], siteType: v || "CAMPUS" }; setForm({ ...form, sites: arr }); }}>
+                    <SelectTrigger className="w-[90px]"><span>{SITE_TYPE_LABELS[(s as SiteForm).siteType] || "类型"}</span></SelectTrigger>
+                    <SelectContent>
+                      {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
                   <Input value={s.address} onChange={(e) => { const arr = [...form.sites]; arr[i] = { ...arr[i], address: e.target.value }; setForm({ ...form, sites: arr }); }} placeholder="地址" className="flex-1" />
                   {form.sites.length > 1 && <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, sites: form.sites.filter((_, j) => j !== i) })}><X className="h-3 w-3" /></Button>}
                 </div>
               ))}
-              <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, sites: [...form.sites, { siteName: "", address: "" }] })}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setForm({ ...form, sites: [...form.sites, { siteName: "", address: "", siteType: "CAMPUS" }] })}>
                 <Plus className="h-3 w-3 mr-1" />添加院区
               </Button>
             </div>
@@ -390,6 +404,7 @@ export default function OrganizationsPage() {
                   <div key={s.id} className="flex items-center gap-2 text-sm">
                     <Building2 className="h-3 w-3 text-muted-foreground" />
                     <span>{s.siteName}</span>
+                    <Badge variant="secondary" className="text-[10px]">{SITE_TYPE_LABELS[s.siteType] || "院区"}</Badge>
                     {s.address && <span className="text-muted-foreground">· {s.address}</span>}
                     <button type="button" className="ml-auto text-muted-foreground hover:text-red-500" onClick={() => {
                       updateMutation.mutate({ id: editing.id, removeSiteId: s.id });
@@ -399,11 +414,17 @@ export default function OrganizationsPage() {
               </div>
               <div className="flex gap-2">
                 <Input value={newSite.siteName} onChange={(e) => setNewSite({ ...newSite, siteName: e.target.value })} placeholder="院区名称" className="flex-1" />
+                <Select value={newSite.siteType} onValueChange={(v) => setNewSite({ ...newSite, siteType: v || "CAMPUS" })}>
+                  <SelectTrigger className="w-[100px]"><span>{SITE_TYPE_LABELS[newSite.siteType] || "类型"}</span></SelectTrigger>
+                  <SelectContent>
+                    {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
+                  </SelectContent>
+                </Select>
                 <Input value={newSite.address} onChange={(e) => setNewSite({ ...newSite, address: e.target.value })} placeholder="地址" className="flex-1" />
                 <Button size="sm" disabled={!newSite.siteName.trim() || updateMutation.isPending} onClick={() => {
                   if (!editing) return;
                   updateMutation.mutate({ id: editing.id, addSite: newSite });
-                  setNewSite({ siteName: "", address: "" });
+                  setNewSite({ siteName: "", address: "", siteType: "CAMPUS" });
                 }}>添加</Button>
               </div>
             </div>

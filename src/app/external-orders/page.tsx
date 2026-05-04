@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { cn } from "@/lib/utils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Plus, Loader2, Search, Upload, Copy, FileDown,
-  Send, CheckCircle2, XCircle, MessageSquare, Pencil, ClipboardCopy, UserPlus,
+  Loader2, Search, Upload, ClipboardCopy, UserPlus, ExternalLink,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,12 +20,8 @@ import {
   Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { formatDistanceToNow } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { InvoiceFormDialog, type InvoiceRecord, type InvoiceItem } from "@/components/invoice-form-dialog";
-import { sheetDataFromRecord, type InvoiceSheetData } from "@/lib/invoice-sheet";
-import { exportInvoiceSheetToPdf } from "@/lib/export-invoice-pdf";
 import { getFeishuProjectHeader, externalOrderToFeishuRow, externalOrdersToFeishuText } from "@/lib/feishu-export";
+import Link from "next/link";
 
 interface ExternalOrder {
   id: string;
@@ -68,12 +66,6 @@ const INVOICE_STATUS_LABELS: Record<string, string> = {
 const INVOICE_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   NONE: "outline", DRAFT: "secondary", REQUESTED: "default", ISSUED: "outline",
 };
-const INV_STATUS_LABELS: Record<string, string> = {
-  DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票", CANCELLED: "已取消",
-};
-const INV_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  DRAFT: "secondary", REQUESTED: "default", ISSUED: "outline", CANCELLED: "destructive",
-};
 const DEDUP_STATUS_LABELS: Record<string, string> = {
   ALL: "全部", UNREVIEWED: "待审查", UNIQUE: "唯一", DUPLICATE: "已确认重复", MERGED: "已合并", IGNORED: "已忽略",
 };
@@ -83,32 +75,6 @@ const DEDUP_STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" 
 
 function formatAmount(n: number): string {
   return n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function buildPreviewTextFromRecord(inv: InvoiceRecord): string {
-  const lines: string[] = [];
-  if (inv.contactName) lines.push(inv.contactName);
-  if (inv.projectCode) lines.push(`项目编号：${inv.projectCode}`);
-  if (inv.sellerName) lines.push(`开票方：${inv.sellerName}`);
-  if (inv.sellerTaxId) lines.push(`开票方税号：${inv.sellerTaxId}`);
-  if (inv.sellerBankName || inv.sellerBankAccount) {
-    lines.push(`开票方开户行及账号：${[inv.sellerBankName, inv.sellerBankAccount].filter(Boolean).join(" ")}`);
-  }
-  lines.push(`对方公司名称：${inv.buyerOrganizationName}`);
-  if (inv.buyerTaxId) lines.push(`统一社会信用代码/纳税人识别号：${inv.buyerTaxId}`);
-  if (inv.contentSummary) lines.push(`开票内容：${inv.contentSummary}`);
-  if (inv.totalAmount > 0) lines.push(`金额：${formatAmount(inv.totalAmount)}`);
-  lines.push(`普票/专票：${inv.invoiceType === "SPECIAL" ? "专票" : "普票"}`);
-  for (const it of inv.items) {
-    const parts: string[] = [`项目名称：${it.itemName}`];
-    if (it.spec) parts.push(`规格：${it.spec}`);
-    if (it.unit) parts.push(`单位：${it.unit}`);
-    if (it.quantity != null) parts.push(`数量：${it.quantity}`);
-    if (it.amount) parts.push(`金额：${formatAmount(it.amount)}`);
-    lines.push(parts.join("；"));
-  }
-  if (inv.remark) lines.push(`备注：${inv.remark}`);
-  return lines.join("\n");
 }
 
 export default function ExternalOrdersPage() {
@@ -121,8 +87,8 @@ export default function ExternalOrdersPage() {
   const pageSize = 20;
 
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const isMobile = useMediaQuery("(max-width: 767px)");
 
-  // Clear selection when page, search, or filters change
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedOrderIds(new Set());
@@ -135,16 +101,6 @@ export default function ExternalOrdersPage() {
   const [fileInputKey, setFileInputKey] = useState(0);
 
   const [detailOrder, setDetailOrder] = useState<ExternalOrder | null>(null);
-  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
-  const [editingInvoice, setEditingInvoice] = useState<InvoiceRecord | null>(null);
-  const [invoiceDefaults, setInvoiceDefaults] = useState<Partial<{
-    contactName: string; buyerOrgId: string; buyerOrgName: string;
-    invoiceType: string; contentSummary: string; remark: string; items: InvoiceItem[];
-  }>>({});
-  const [batchInvoiceCreateUrl, setBatchInvoiceCreateUrl] = useState<string | null>(null);
-
-  const [editRemarkId, setEditRemarkId] = useState<string | null>(null);
-  const [editRemarkText, setEditRemarkText] = useState("");
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const handleSearchChange = useCallback((val: string) => {
@@ -202,9 +158,9 @@ export default function ExternalOrdersPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  // Detail + invoices
+  // Detail + duplicate group
   const { data: detailData } = useQuery<{
-    order: ExternalOrder & { invoiceRequests: InvoiceRecord[]; reviewedBy?: { id: string; name: string } | null; mergedInto?: { id: string; externalOrderNo: string; source: string } | null };
+    order: ExternalOrder & { reviewedBy?: { id: string; name: string } | null; mergedInto?: { id: string; externalOrderNo: string; source: string } | null };
     duplicateGroup: Array<{ id: string; externalOrderNo: string; source: string; platform: string | null; receiverName: string | null; receiverPhone: string | null; paidAmount: number | null; orderAt: string | null; productNamesRaw: string | null; duplicateStatus: string }>;
   }>({
     queryKey: ["external-order-detail", detailOrder?.id],
@@ -215,7 +171,6 @@ export default function ExternalOrdersPage() {
     },
     enabled: !!detailOrder,
   });
-  const detailInvoices: InvoiceRecord[] = detailData?.order?.invoiceRequests || [];
   const duplicateGroup = detailData?.duplicateGroup || [];
   const detailOrderData = (detailData?.order ?? detailOrder) as ExternalOrder;
   const detailReviewedBy = detailData?.order?.reviewedBy;
@@ -227,52 +182,6 @@ export default function ExternalOrdersPage() {
       queryClient.invalidateQueries({ queryKey: ["external-orders"] });
     }
   }, [queryClient, detailOrder]);
-
-
-  const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const res = await fetch(`/api/external-order-invoices/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "操作失败");
-      return data;
-    },
-    onSuccess: () => { toast.success("状态已更新"); invalidateDetail(); },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const remarkMutation = useMutation({
-    mutationFn: async ({ id, remark }: { id: string; remark: string }) => {
-      const res = await fetch(`/api/external-order-invoices/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ remark }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "保存失败");
-      return data;
-    },
-    onSuccess: () => { toast.success("备注已更新"); setEditRemarkId(null); invalidateDetail(); },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const confirmTaxIdMutation = useMutation({
-    mutationFn: async (invoiceId: string) => {
-      const res = await fetch(`/api/external-order-invoices/${invoiceId}/confirm-tax-id`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "同步失败");
-      return data;
-    },
-    onSuccess: (data: { conflict?: boolean; message?: string }) => {
-      if (data.conflict) toast.warning(data.message || "税号冲突");
-      else toast.success(data.message || "税号已同步");
-      invalidateDetail();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
 
   const dedupMutation = useMutation({
     mutationFn: async ({ id, duplicateStatus, reviewNote }: { id: string; duplicateStatus: string; reviewNote?: string }) => {
@@ -359,64 +268,16 @@ export default function ExternalOrdersPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const copyText = useCallback(async (text: string) => {
-    try { await navigator.clipboard.writeText(text); toast.success("已复制到剪贴板"); }
-    catch { toast.error("复制失败"); }
-  }, []);
-
-  const exportPdf = useCallback(async (data: InvoiceSheetData) => {
-    try {
-      await exportInvoiceSheetToPdf(data);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "PDF 导出失败");
-    }
-  }, []);
-
-  const openCreateInvoice = useCallback(async () => {
-    if (!detailOrder) return;
-    setEditingInvoice(null);
-    const fallback = { contactName: detailOrder.receiverName || "" };
-    try {
-      const res = await fetch(`/api/external-orders/${detailOrder.id}/invoice-draft`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        const d = data.draft || {};
-        const draftItems: InvoiceItem[] | undefined =
-          Array.isArray(d.items) && d.items.length > 0
-            ? d.items.map((it: Record<string, unknown>) => ({
-                itemName: String(it.itemName || ""),
-                spec: String(it.spec || ""),
-                unit: String(it.unit || ""),
-                quantity: it.quantity != null ? String(it.quantity) : "",
-                amount: it.amount != null ? String(it.amount) : "",
-              }))
-            : undefined;
-        setInvoiceDefaults({
-          contactName: d.contactName || detailOrder.receiverName || "",
-          invoiceType: d.invoiceType || undefined,
-          contentSummary: d.contentSummary || undefined,
-          remark: d.remark || undefined,
-          items: draftItems,
-        });
-      } else {
-        setInvoiceDefaults(fallback);
-      }
-    } catch {
-      setInvoiceDefaults(fallback);
-    }
-    setInvoiceDialogOpen(true);
-  }, [detailOrder]);
-
-  const openEditInvoice = useCallback((inv: InvoiceRecord) => {
-    setEditingInvoice(inv);
-    setInvoiceDialogOpen(true);
-  }, []);
-
   return (
-    <div className="space-y-4">
+    <div className={cn("space-y-4", isMobile && "pb-32")}>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">外部订单</h1>
+        <h1 className="text-xl font-bold">拼好鼠订单</h1>
         <div className="flex items-center gap-2">
+          <Link href="/finance/order-matching">
+            <Button size="sm" variant="outline">
+              <ExternalLink className="mr-1 h-3.5 w-3.5" /> 财务匹配与开票
+            </Button>
+          </Link>
           <Button size="sm" variant="outline" disabled={scanDuplicatesMutation.isPending} onClick={() => scanDuplicatesMutation.mutate()}>
             {scanDuplicatesMutation.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
             扫描重复
@@ -501,69 +362,19 @@ export default function ExternalOrdersPage() {
               <ClipboardCopy className="mr-1 h-3.5 w-3.5" />
               {selectedOrderIds.size > 0 ? `导出已选 ${selectedOrderIds.size} 条` : `导出飞书（全部${total > pageSize ? ` ${total}条` : ""})`}
             </Button>
-            {selectedOrderIds.size > 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9"
-                  onClick={() => {
-                    const selected = orders.filter((o) => selectedOrderIds.has(o.id));
-                    if (selected.length < 2) { toast.error("合并开票至少需要选择 2 条订单"); return; }
-                    const mergedOrders = selected.filter((o) => o.duplicateStatus === "MERGED" || o.mergedIntoId);
-                    if (mergedOrders.length > 0) {
-                      toast.error(`以下订单已合并，无法开票：${mergedOrders.map((o) => o.externalOrderNo).join("、")}`);
-                      return;
-                    }
-                    const names = [...new Set(selected.map((o) => o.receiverName).filter(Boolean))];
-                    const stores = [...new Set(selected.map((o) => o.storeName).filter(Boolean))];
-                    const products = [...new Set(selected.map((o) => o.productNamesRaw).filter(Boolean))];
-                    const firstOrder = selected[0];
-                    const draft: Partial<{
-                      contactName: string; buyerOrgName: string;
-                      invoiceType: string; contentSummary: string; remark: string; items: InvoiceItem[];
-                    }> = {
-                      contactName: (names.length === 1 ? names[0] : (names[0] || "")) || "",
-                      buyerOrgName: (stores.length === 1 ? stores[0] : (stores[0] || "")) || "",
-                      contentSummary: products.join("、"),
-                      remark: `合并开票订单：${selected.map((o) => o.externalOrderNo).join("、")}`,
-                      items: selected.map((o) => ({
-                        itemName: o.productNamesRaw || o.externalOrderNo,
-                        spec: "",
-                        unit: "",
-                        quantity: String(o.itemCount || 1),
-                        amount: String(o.paidAmount || 0),
-                      })),
-                    };
-                    setBatchInvoiceCreateUrl(`/api/external-orders/${firstOrder.id}/invoices`);
-                    setEditingInvoice(null);
-                    setInvoiceDefaults({
-                      contactName: draft.contactName || firstOrder.receiverName || "",
-                      buyerOrgName: draft.buyerOrgName,
-                      invoiceType: draft.invoiceType,
-                      contentSummary: draft.contentSummary,
-                      remark: draft.remark,
-                      items: draft.items,
-                    });
-                    setInvoiceDialogOpen(true);
-                  }}
-                >
-                  <FileDown className="mr-1 h-3.5 w-3.5" />
-                  合并开票 ({selectedOrderIds.size})
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="h-9"
-                  disabled={batchDeleteMutation.isPending}
-                  onClick={() => {
-                    if (!confirm(`确认删除选中的 ${selectedOrderIds.size} 条外部订单？此操作不可恢复。`)) return;
-                    batchDeleteMutation.mutate();
-                  }}
-                >
-                  {batchDeleteMutation.isPending ? "删除中..." : `删除已选 (${selectedOrderIds.size})`}
-                </Button>
-              </>
+            {selectedOrderIds.size > 0 && !isMobile && (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-9"
+                disabled={batchDeleteMutation.isPending}
+                onClick={() => {
+                  if (!confirm(`确认删除选中的 ${selectedOrderIds.size} 条拼好鼠订单？此操作不可恢复。`)) return;
+                  batchDeleteMutation.mutate();
+                }}
+              >
+                {batchDeleteMutation.isPending ? "删除中..." : `删除已选 (${selectedOrderIds.size})`}
+              </Button>
             )}
           </>
         )}
@@ -631,7 +442,7 @@ export default function ExternalOrdersPage() {
       {/* Import Dialog */}
       <Dialog open={importOpen} onOpenChange={(o) => { setImportOpen(o); if (!o) { setImportFile(null); setImportText(""); setFileInputKey((k) => k + 1); } }}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>导入外部订单</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>导入拼好鼠订单</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">来源</label>
@@ -740,7 +551,6 @@ export default function ExternalOrdersPage() {
                     </div>
                   )}
 
-                  {/* Actions */}
                   {detailOrderData.duplicateStatus !== "MERGED" && !detailMergedInto && (
                     <div className="flex items-center gap-1 flex-wrap">
                       {detailOrderData.duplicateStatus === "UNREVIEWED" && (
@@ -801,72 +611,54 @@ export default function ExternalOrdersPage() {
                 </div>
               )}
 
-              <div className="border-t pt-3 space-y-3">
+              {/* Invoice processing link */}
+              <div className="border-t pt-3">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium">开票申请</h4>
-                  <Button size="sm" variant="outline" onClick={openCreateInvoice}>
-                    <Plus className="mr-1 h-3 w-3" /> 新建开票申请
-                  </Button>
+                  <h4 className="text-sm font-medium">开票处理</h4>
+                  <Link href="/finance/order-matching">
+                    <Button size="sm" variant="outline">
+                      <ExternalLink className="mr-1 h-3 w-3" /> 在财务管理中处理开票与匹配
+                    </Button>
+                  </Link>
                 </div>
-                {detailInvoices.length === 0 ? (
-                  <div className="text-center py-3 text-xs text-muted-foreground">暂无开票申请</div>
-                ) : (
-                  <div className="space-y-2">
-                    {detailInvoices.map((inv) => (
-                      <InvoiceCard
-                        key={inv.id} inv={inv}
-                        onCopy={() => copyText(buildPreviewTextFromRecord(inv))}
-                        onPrint={() => void exportPdf(sheetDataFromRecord(inv))}
-                        onEdit={() => openEditInvoice(inv)}
-                        onStatus={(status) => statusMutation.mutate({ id: inv.id, status })}
-                        onRemarkOpen={() => { setEditRemarkId(inv.id); setEditRemarkText(inv.remark || ""); }}
-                        onConfirmTaxId={() => confirmTaxIdMutation.mutate(inv.id)}
-                        editRemarkId={editRemarkId}
-                        editRemarkText={editRemarkText}
-                        setEditRemarkText={setEditRemarkText}
-                        remarkMutation={remarkMutation}
-                        onRemarkCancel={() => setEditRemarkId(null)}
-                        confirmTaxIdPending={confirmTaxIdMutation.isPending}
-                      />
-                    ))}
-                  </div>
-                )}
+                <p className="text-xs text-muted-foreground mt-1">订单匹配、财务分类、开票申请等操作请前往财务管理模块统一处理。</p>
               </div>
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      {detailOrder && !batchInvoiceCreateUrl && (
-        <InvoiceFormDialog
-          open={invoiceDialogOpen}
-          onOpenChange={setInvoiceDialogOpen}
-          editingInvoice={editingInvoice}
-          createUrl={`/api/external-orders/${detailOrder.id}/invoices`}
-          patchUrlPrefix="/api/external-order-invoices"
-          onSuccess={invalidateDetail}
-          defaultValues={invoiceDefaults}
-          showProjectCode={false}
-          aiDraftUrl={null}
-        />
+      {isMobile && selectedOrderIds.size > 0 && (
+        <div className="fixed bottom-16 left-0 right-0 z-50 bg-background border-t px-4 py-3 flex items-center gap-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+          <span className="text-sm font-medium shrink-0">已选 {selectedOrderIds.size}</span>
+          <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              try {
+                const selected = orders.filter((o) => selectedOrderIds.has(o.id));
+                const text = getFeishuProjectHeader() + "\n" + externalOrdersToFeishuText(selected);
+                await navigator.clipboard.writeText(text);
+                toast.success(`已复制 ${selected.length} 条订单到剪贴板`);
+              } catch { toast.error("导出失败"); }
+            }}
+          >
+            <ClipboardCopy className="mr-1 h-3.5 w-3.5" />导出
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={batchDeleteMutation.isPending}
+            onClick={() => {
+              if (!confirm(`确认删除选中的 ${selectedOrderIds.size} 条拼好鼠订单？此操作不可恢复。`)) return;
+              batchDeleteMutation.mutate();
+            }}
+          >
+            {batchDeleteMutation.isPending ? "删除中..." : "删除"}
+          </Button>
+        </div>
       )}
-      {batchInvoiceCreateUrl && (
-        <InvoiceFormDialog
-          open={invoiceDialogOpen}
-          onOpenChange={(v) => { setInvoiceDialogOpen(v); if (!v) { setBatchInvoiceCreateUrl(null); setInvoiceDefaults({}); } }}
-          editingInvoice={null}
-          createUrl={batchInvoiceCreateUrl}
-          patchUrlPrefix="/api/external-order-invoices"
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["external-orders"] });
-            setSelectedOrderIds(new Set());
-          }}
-          defaultValues={invoiceDefaults}
-          showProjectCode={false}
-          aiDraftUrl={null}
-        />
-      )}
-
     </div>
   );
 }
@@ -1021,108 +813,5 @@ function OrderDetail({ order }: { order: ExternalOrder }) {
         </div>
       )}
     </div>
-  );
-}
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-function InvoiceCard({ inv, onCopy, onPrint, onEdit, onStatus, onRemarkOpen, onConfirmTaxId, editRemarkId, editRemarkText, setEditRemarkText, remarkMutation, onRemarkCancel, confirmTaxIdPending }: {
-  inv: InvoiceRecord;
-  onCopy: () => void;
-  onPrint: () => void;
-  onEdit: () => void;
-  onStatus: (status: string) => void;
-  onRemarkOpen: () => void;
-  onConfirmTaxId: () => void;
-  editRemarkId: string | null;
-  editRemarkText: string;
-  setEditRemarkText: (v: string) => void;
-  remarkMutation: any;
-  onRemarkCancel: () => void;
-  confirmTaxIdPending: boolean;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-3 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium truncate">{inv.buyerOrganizationName}</span>
-            <Badge variant={inv.invoiceType === "SPECIAL" ? "default" : "secondary"} className="text-[10px] shrink-0">
-              {inv.invoiceType === "SPECIAL" ? "专票" : "普票"}
-            </Badge>
-            <Badge variant={INV_STATUS_VARIANTS[inv.status] || "outline"} className="text-[10px] shrink-0">
-              {INV_STATUS_LABELS[inv.status] || inv.status}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <span className="text-sm font-medium">{formatAmount(inv.totalAmount)}</span>
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onCopy} title="复制给财务">
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onPrint} title="导出 PDF">
-              <FileDown className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-        {inv.items.length > 0 && (
-          <div className="text-xs text-muted-foreground">{inv.items.map((it) => it.itemName).join("、")}</div>
-        )}
-        <div className="flex items-center justify-between">
-          <div className="text-[10px] text-muted-foreground">
-            {inv.createdBy.name} · {formatDistanceToNow(new Date(inv.createdAt), { addSuffix: true, locale: zhCN })}
-          </div>
-          <div className="flex items-center gap-1">
-            {inv.status === "DRAFT" && (
-              <>
-                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={onEdit}>
-                  <Pencil className="mr-1 h-3 w-3" /> 编辑
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => onStatus("REQUESTED")}>
-                  <Send className="mr-1 h-3 w-3" /> 提交申请
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-xs text-destructive" onClick={() => onStatus("CANCELLED")}>
-                  <XCircle className="mr-1 h-3 w-3" /> 取消
-                </Button>
-              </>
-            )}
-            {inv.status === "REQUESTED" && (
-              <>
-                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={onRemarkOpen}>
-                  <MessageSquare className="mr-1 h-3 w-3" /> 备注
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => onStatus("ISSUED")}>
-                  <CheckCircle2 className="mr-1 h-3 w-3" /> 标记已开票
-                </Button>
-                <Button size="sm" variant="ghost" className="h-6 text-xs text-destructive" onClick={() => onStatus("CANCELLED")}>
-                  <XCircle className="mr-1 h-3 w-3" /> 取消
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-        {inv.buyerTaxIdFromLookup && inv.buyerOrganizationId && inv.buyerTaxId && (
-          <div className="flex items-center gap-2 text-[10px] text-amber-600 bg-amber-50 rounded px-2 py-1">
-            <span>税号 {inv.buyerTaxId} 来自查询，尚未同步到单位主数据</span>
-            <Button size="sm" variant="outline" className="h-5 text-[10px] px-2" disabled={confirmTaxIdPending} onClick={onConfirmTaxId}>
-              确认并同步
-            </Button>
-          </div>
-        )}
-        {editRemarkId === inv.id && (
-          <div className="flex items-start gap-2 pt-1 border-t">
-            <Textarea
-              value={editRemarkText}
-              onChange={(e) => setEditRemarkText(e.target.value)}
-              placeholder="备注信息" rows={2} className="text-xs resize-none flex-1"
-            />
-            <div className="flex flex-col gap-1">
-              <Button size="sm" className="h-7 text-xs" disabled={remarkMutation.isPending} onClick={() => remarkMutation.mutate({ id: inv.id, remark: editRemarkText })}>
-                {remarkMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "保存"}
-              </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onRemarkCancel}>取消</Button>
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
