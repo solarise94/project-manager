@@ -8,57 +8,64 @@ datasource db {
 }
 
 model User {
-  id         String        @id @default(cuid())
-  email      String        @unique
-  name       String
-  password   String
-  avatar     String?
-  role       String        @default("USER")
-  emailOnReminder     Boolean @default(true)
-  emailOnStatusChange Boolean @default(true)
-  emailOnTicketReply  Boolean @default(true)
-  emailOnComment      Boolean @default(true)
-  createdAt  DateTime      @default(now())
-  projects   ProjectMember[]
-  comments   Comment[]
-  tickets    Ticket[]
-  replies    TicketReply[]
-  activities ActivityLog[]
-  reviewsCreated OrganizationReviewTask[] @relation("ReviewCreatedBy")
-  reviewsReviewed OrganizationReviewTask[] @relation("ReviewReviewedBy")
-  reviewedOrders  ExternalOrder[]          @relation("OrderReview")
-  devLogs  DevLog[]
-  invoicesCreated ProjectInvoice[]
-  externalOrderImportBatches ExternalOrderImportBatch[]
+  id                           String                        @id @default(cuid())
+  email                        String                        @unique
+  name                         String
+  password                     String
+  avatar                       String?
+  role                         String                        @default("USER")
+  emailOnReminder              Boolean                       @default(true)
+  emailOnStatusChange          Boolean                       @default(true)
+  emailOnTicketReply           Boolean                       @default(true)
+  emailOnComment               Boolean                       @default(true)
+  createdAt                    DateTime                      @default(now())
+  projects                     ProjectMember[]
+  comments                     Comment[]
+  tickets                      Ticket[]
+  replies                      TicketReply[]
+  activities                   ActivityLog[]
+  reviewsCreated               OrganizationReviewTask[]      @relation("ReviewCreatedBy")
+  reviewsReviewed              OrganizationReviewTask[]      @relation("ReviewReviewedBy")
+  reviewedOrders               ExternalOrder[]               @relation("OrderReview")
+  devLogs                      DevLog[]
+  invoicesCreated              ProjectInvoice[]
+  externalOrderImportBatches   ExternalOrderImportBatch[]
   externalOrderInvoicesCreated ExternalOrderInvoiceRequest[]
-  crmOwnedProfiles           CrmCustomerProfile[]   @relation("CrmOwnedProfiles")
-  crmInteractionsCreated     CrmInteraction[]       @relation("CrmInteractionsCreated")
-  crmFollowUpOwned           CrmFollowUpTask[]      @relation("CrmFollowUpOwner")
-  crmFollowUpCreated         CrmFollowUpTask[]      @relation("CrmFollowUpCreatedBy")
-  crmCheckinsCreated         CrmVisitCheckin[]      @relation("CrmCheckinCreatedBy")
-  crmAddressesVerified       CrmCustomerAddress[]   @relation("CrmAddressVerifiedBy")
-  customerRelationsCreated   CustomerRelation[]
-  crmApplicationsSubmitted    CrmCustomerApplication[] @relation("CrmApplicationsSubmitted")
-  crmApplicationsReviewed     CrmCustomerApplication[] @relation("CrmApplicationsReviewed")
-  RegionManagers             CrmRegionManager[]
-  crmProfilesAssigned        CrmCustomerProfile[]    @relation("CrmAssignedByUser")
-  crmProfilesRecalled        CrmCustomerProfile[]    @relation("CrmRecalledByUser")
-  assignmentLogsFrom         CrmCustomerAssignmentLog[] @relation("AssignmentFromUser")
-  assignmentLogsTo           CrmCustomerAssignmentLog[] @relation("AssignmentToUser")
-  assignmentLogsCreated      CrmCustomerAssignmentLog[] @relation("AssignmentCreatedBy")
+  financeReceiptsCreated       FinanceReceipt[]
+  crmOwnedProfiles             CrmCustomerProfile[]          @relation("CrmOwnedProfiles")
+  crmInteractionsCreated       CrmInteraction[]              @relation("CrmInteractionsCreated")
+  crmFollowUpOwned             CrmFollowUpTask[]             @relation("CrmFollowUpOwner")
+  crmFollowUpCreated           CrmFollowUpTask[]             @relation("CrmFollowUpCreatedBy")
+  crmCheckinsCreated           CrmVisitCheckin[]             @relation("CrmCheckinCreatedBy")
+  crmAddressesVerified         CrmCustomerAddress[]          @relation("CrmAddressVerifiedBy")
+  customerRelationsCreated     CustomerRelation[]
+  crmApplicationsSubmitted     CrmCustomerApplication[]      @relation("CrmApplicationsSubmitted")
+  crmApplicationsReviewed      CrmCustomerApplication[]      @relation("CrmApplicationsReviewed")
+  RegionManagers               CrmRegionManager[]
+  crmProfilesAssigned          CrmCustomerProfile[]          @relation("CrmAssignedByUser")
+  crmProfilesRecalled          CrmCustomerProfile[]          @relation("CrmRecalledByUser")
+  assignmentLogsFrom           CrmCustomerAssignmentLog[]    @relation("AssignmentFromUser")
+  assignmentLogsTo             CrmCustomerAssignmentLog[]    @relation("AssignmentToUser")
+  assignmentLogsCreated        CrmCustomerAssignmentLog[]    @relation("AssignmentCreatedBy")
+  ordersCreated                Order[]                       @relation("OrdersCreated")
+  ordersOwned                  Order[]                       @relation("OrderOwner")
+  orderProjectLinksCreated     OrderProjectLink[]            @relation("OrderProjectLinksCreated")
+  orderStatusHistoryCreated    OrderStatusHistory[]          @relation("OrderStatusHistoryCreated")
+  orderMergesCreated           OrderMerge[]                  @relation("OrderMergeCreated")
 }
 
 model Representative {
-  id             String    @id @default(cuid())
-  name           String
-  email          String    @unique
-  token          String?   @unique // Magic Link token
-  tokenExpiresAt DateTime?
-  archived       Boolean   @default(false)
-  archivedAt     DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  projects       Project[]
+  id                 String                           @id @default(cuid())
+  name               String
+  email              String                           @unique
+  token              String?                          @unique // Magic Link token
+  tokenExpiresAt     DateTime?
+  archived           Boolean                          @default(false)
+  archivedAt         DateTime?
+  createdAt          DateTime                         @default(now())
+  updatedAt          DateTime                         @updatedAt
+  projects           Project[]
+  orders             Order[]
   regionManagerLinks CrmRegionManagerRepresentative[]
 }
 
@@ -73,21 +80,21 @@ model ProcurementChannel {
 }
 
 model Organization {
-  id              String               @id @default(cuid())
-  orgCode         String               @unique
-  canonicalName   String
-  normalizedName  String
-  address         String?
-  taxId           String?
-  archived        Boolean              @default(false)
-  deleted         Boolean              @default(false)
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  aliases         OrganizationAlias[]
-  sites           OrganizationSite[]
-  customers       Customer[]
-  reviewTasks     OrganizationReviewTask[]
-  invoicesAsBuyer ProjectInvoice[]
+  id                           String                        @id @default(cuid())
+  orgCode                      String                        @unique
+  canonicalName                String
+  normalizedName               String
+  address                      String?
+  taxId                        String?
+  archived                     Boolean                       @default(false)
+  deleted                      Boolean                       @default(false)
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+  aliases                      OrganizationAlias[]
+  sites                        OrganizationSite[]
+  customers                    Customer[]
+  reviewTasks                  OrganizationReviewTask[]
+  invoicesAsBuyer              ProjectInvoice[]
   externalOrderInvoicesAsBuyer ExternalOrderInvoiceRequest[]
 }
 
@@ -105,24 +112,27 @@ model OrganizationAlias {
 }
 
 model OrganizationSite {
-  id                String       @id @default(cuid())
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationId    String
-  siteName          String
+  id                 String                   @id @default(cuid())
+  organization       Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId     String
+  siteName           String
   normalizedSiteName String
-  address           String?
-  archived          Boolean      @default(false)
-  createdAt         DateTime     @default(now())
-  customers         Customer[]
-  reviewTasks       OrganizationReviewTask[]
+  siteType           String                   @default("CAMPUS") // CAMPUS, COLLEGE, BUILDING, OTHER
+  parentSiteId       String? // soft reference to another OrganizationSite (no FK — SQLite ALTER TABLE limitation)
+  address            String?
+  archived           Boolean                  @default(false)
+  createdAt          DateTime                 @default(now())
+  customers          Customer[]
+  reviewTasks        OrganizationReviewTask[]
 
   @@unique([organizationId, normalizedSiteName])
   @@index([normalizedSiteName])
+  @@index([siteType])
 }
 
 model Customer {
-  id                   String             @id @default(cuid())
-  customerCode         String             @unique
+  id                   String                   @id @default(cuid())
+  customerCode         String                   @unique
   name                 String
   principal            String?
   email                String?
@@ -131,70 +141,73 @@ model Customer {
   address              String?
   miniProgramId        String?
   organizationId       String?
-  org                  Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  org                  Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   organizationSiteId   String?
-  orgSite              OrganizationSite?  @relation(fields: [organizationSiteId], references: [id], onDelete: SetNull)
+  orgSite              OrganizationSite?        @relation(fields: [organizationSiteId], references: [id], onDelete: SetNull)
   organizationRawInput String?
-  archived             Boolean            @default(false)
+  labOrGroup           String?
+  archived             Boolean                  @default(false)
   archivedAt           DateTime?
-  deleted              Boolean            @default(false)
+  deleted              Boolean                  @default(false)
   deletedAt            DateTime?
   mergedIntoId         String?
-  mergedInto           Customer?          @relation("CustomerMerge", fields: [mergedIntoId], references: [id])
-  mergedFrom           Customer[]         @relation("CustomerMerge")
+  mergedInto           Customer?                @relation("CustomerMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom           Customer[]               @relation("CustomerMerge")
   projects             Project[]
   crmProfile           CrmCustomerProfile?
   externalOrders       ExternalOrder[]
+  orders               Order[]
+  receipts             FinanceReceipt[]
   crmApplications      CrmCustomerApplication[] @relation("CrmApplicationsCreatedCustomer")
-  relationsFrom        CustomerRelation[] @relation("RelationsFrom")
-  relationsTo          CustomerRelation[] @relation("RelationsTo")
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  relationsFrom        CustomerRelation[]       @relation("RelationsFrom")
+  relationsTo          CustomerRelation[]       @relation("RelationsTo")
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
 }
 
 model OrganizationReviewTask {
-  id                       String            @id @default(cuid())
-  rawInput                 String
-  normalizedInput          String
-  suggestedOrganizationId  String?
-  suggestedOrg             Organization?     @relation(fields: [suggestedOrganizationId], references: [id], onDelete: SetNull)
-  suggestedSiteId          String?
-  suggestedSite            OrganizationSite? @relation(fields: [suggestedSiteId], references: [id], onDelete: SetNull)
-  suggestedCanonicalName   String?
-  suggestedAddress         String?
-  confidence               Float?
-  status                   String            @default("PENDING") // PENDING, APPROVED, REJECTED
-  sourceType               String            // CUSTOMER_CREATE, CUSTOMER_EDIT, SMART_FILL
-  sourceId                 String
-  createdById              String?
-  createdByUser            User?             @relation("ReviewCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  reviewedById             String?
-  reviewedByUser           User?             @relation("ReviewReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
-  reviewNote               String?
-  resolutionSource         String?           // DB_EXACT, DB_CANDIDATE, LLM_DB_CANDIDATE, MANUAL_NEW, TAVILY_MINIMAX_DRAFT
-  suggestedAliasesJson     String?
-  suggestedSitesJson       String?
-  evidenceJson             String?
-  createdAt                DateTime          @default(now())
-  updatedAt                DateTime          @updatedAt
-  reviewedAt               DateTime?
+  id                      String            @id @default(cuid())
+  rawInput                String
+  normalizedInput         String
+  suggestedOrganizationId String?
+  suggestedOrg            Organization?     @relation(fields: [suggestedOrganizationId], references: [id], onDelete: SetNull)
+  suggestedSiteId         String?
+  suggestedSite           OrganizationSite? @relation(fields: [suggestedSiteId], references: [id], onDelete: SetNull)
+  suggestedCanonicalName  String?
+  suggestedAddress        String?
+  confidence              Float?
+  status                  String            @default("PENDING") // PENDING, APPROVED, REJECTED
+  sourceType              String // CUSTOMER_CREATE, CUSTOMER_EDIT, SMART_FILL
+  sourceId                String
+  createdById             String?
+  createdByUser           User?             @relation("ReviewCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedById            String?
+  reviewedByUser          User?             @relation("ReviewReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote              String?
+  resolutionSource        String? // DB_EXACT, DB_CANDIDATE, LLM_DB_CANDIDATE, MANUAL_NEW, TAVILY_MINIMAX_DRAFT
+  suggestedAliasesJson    String?
+  suggestedSitesJson      String?
+  evidenceJson            String?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  reviewedAt              DateTime?
 
   @@index([status])
   @@index([sourceType, sourceId])
 }
 
 model Project {
-  id               String          @id @default(cuid())
-  name             String
-  description      String?
-  orderNumber      String?
-  organization     String?
-  client           String?
-  representative   String?
-  representativeId String?
-  rep              Representative? @relation(fields: [representativeId], references: [id], onDelete: SetNull)
-  customerId       String?
-  cust             Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  id                String           @id @default(cuid())
+  name              String
+  description       String?
+  orderNumber       String?
+  organization      String?
+  client            String?
+  representative    String?
+  representativeId  String?
+  rep               Representative?  @relation(fields: [representativeId], references: [id], onDelete: SetNull)
+  customerId        String?
+  cust              Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
   projectType       String?
   projectContent    String?
   quantity          Int?
@@ -203,23 +216,26 @@ model Project {
   techSupport       String?
   budgetAmount      Float?
   budgetCost        Float?
-  status           String          @default("NOT_STARTED")
-  progress         Int             @default(0)
-  startDate        DateTime?
-  endDate          DateTime?
-  archived         Boolean         @default(false)
-  deleted          Boolean         @default(false)
-  deletedAt        DateTime?
-  deletedReason    String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  members          ProjectMember[]
-  statusHistory    StatusHistory[]
-  tickets          Ticket[]
-  comments         Comment[]
-  attachments      Attachment[]
-  activities       ActivityLog[]
-  invoices         ProjectInvoice[]
+  status            String           @default("NOT_STARTED")
+  progress          Int              @default(0)
+  startDate         DateTime?
+  endDate           DateTime?
+  archived          Boolean          @default(false)
+  deleted           Boolean          @default(false)
+  deletedAt         DateTime?
+  deletedReason     String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  members           ProjectMember[]
+  statusHistory     StatusHistory[]
+  tickets           Ticket[]
+  comments          Comment[]
+  attachments       Attachment[]
+  activities        ActivityLog[]
+  invoices          ProjectInvoice[]
+  externalOrders    ExternalOrder[]
+  orderLinks        OrderProjectLink[]
+  receipts          FinanceReceipt[]
 }
 
 model ProjectMember {
@@ -235,32 +251,32 @@ model ProjectMember {
 }
 
 model StatusHistory {
-  id        String    @id @default(cuid())
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
   oldStatus String?
   newStatus String
   note      String?
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
   createdBy String
 }
 
 model Ticket {
-  id            String        @id @default(cuid())
-  title         String
-  description   String?
-  status        String        @default("OPEN")
-  priority      String        @default("MEDIUM")
-  reminderDate  DateTime?
-  reminderSent  Boolean       @default(false)
-  project       Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId     String
-  assignee      User?         @relation(fields: [assigneeId], references: [id])
-  assigneeId    String?
-  createdBy     String?       // User ID who created this ticket
-  replies       TicketReply[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id           String        @id @default(cuid())
+  title        String
+  description  String?
+  status       String        @default("OPEN")
+  priority     String        @default("MEDIUM")
+  reminderDate DateTime?
+  reminderSent Boolean       @default(false)
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId    String
+  assignee     User?         @relation(fields: [assigneeId], references: [id])
+  assigneeId   String?
+  createdBy    String? // User ID who created this ticket
+  replies      TicketReply[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 model Comment {
@@ -295,15 +311,15 @@ model Attachment {
 }
 
 model ActivityLog {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   type      String
   content   String
   metadata  String?
-  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String?
-  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   userId    String?
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Notification {
@@ -314,7 +330,7 @@ model Notification {
   type        String   @default("SYSTEM")
   read        Boolean  @default(false)
   link        String?
-  emailStatus String?  // null=no email, "pending", "sent", "failed"
+  emailStatus String? // null=no email, "pending", "sent", "failed"
   emailError  String?
   createdAt   DateTime @default(now())
 }
@@ -373,6 +389,7 @@ model ProjectInvoice {
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   items                 ProjectInvoiceItem[]
+  receipts              FinanceReceipt[]
 
   @@index([projectId])
 }
@@ -392,18 +409,18 @@ model ProjectInvoiceItem {
 }
 
 model BillingProfile {
-  id          String           @id @default(cuid())
-  name        String
-  taxId       String?
-  bankName    String?
-  bankAccount String?
-  address     String?
-  phone       String?
-  isDefault   Boolean          @default(false)
-  archived    Boolean          @default(false)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  invoices    ProjectInvoice[]
+  id                    String                        @id @default(cuid())
+  name                  String
+  taxId                 String?
+  bankName              String?
+  bankAccount           String?
+  address               String?
+  phone                 String?
+  isDefault             Boolean                       @default(false)
+  archived              Boolean                       @default(false)
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
+  invoices              ProjectInvoice[]
   externalOrderInvoices ExternalOrderInvoiceRequest[]
 }
 
@@ -419,7 +436,7 @@ model ExternalOrderImportBatch {
 }
 
 model ExternalOrder {
-  id                    String                        @id @default(cuid())
+  id                    String                         @id @default(cuid())
   source                String
   platform              String?
   externalOrderNo       String
@@ -445,24 +462,35 @@ model ExternalOrder {
   priceAdjustment       Float?
   paidAmount            Float?
   shippingFee           Float?
-  importBatch           ExternalOrderImportBatch      @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
+  importBatch           ExternalOrderImportBatch       @relation(fields: [importBatchId], references: [id], onDelete: Cascade)
   importBatchId         String
   rawJson               String?
-  invoiceStatus         String                        @default("NONE")
+  invoiceStatus         String                         @default("NONE")
   duplicateGroupId      String?
-  duplicateStatus       String                        @default("UNREVIEWED")
+  duplicateStatus       String                         @default("UNREVIEWED")
   mergedIntoId          String?
-  mergedInto            ExternalOrder?                @relation("OrderMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
-  mergedFrom            ExternalOrder[]               @relation("OrderMerge")
+  mergedInto            ExternalOrder?                 @relation("OrderMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom            ExternalOrder[]                @relation("OrderMerge")
   reviewNote            String?
   reviewedAt            DateTime?
   reviewedById          String?
-  reviewedBy            User?                         @relation("OrderReview", fields: [reviewedById], references: [id], onDelete: SetNull)
-  createdAt             DateTime                      @default(now())
-  updatedAt             DateTime                      @updatedAt
+  reviewedBy            User?                          @relation("OrderReview", fields: [reviewedById], references: [id], onDelete: SetNull)
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
   invoiceRequests       ExternalOrderInvoiceRequest[]
+  invoiceCoverage       ExternalOrderInvoiceCoverage[]
   customerId            String?
   customer              Customer?                      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  projectId             String?
+  project               Project?                       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  customerMatchStatus   String                         @default("UNMATCHED")
+  customerMatchScore    Float?
+  customerMatchReason   String?
+  financeCategory       String                         @default("UNKNOWN")
+  financeTreatment      String                         @default("AUTO")
+  financeAmountOverride Float?
+  financeNote           String?
+  receipts              FinanceReceipt[]
 
   @@unique([source, externalOrderNo])
   @@index([externalOrderNo])
@@ -472,14 +500,16 @@ model ExternalOrder {
   @@index([duplicateStatus])
   @@index([duplicateGroupId])
   @@index([customerId])
+  @@index([projectId])
+  @@index([customerMatchStatus])
 }
 
 model ExternalOrderInvoiceRequest {
-  id                    String                       @id @default(cuid())
-  externalOrder         ExternalOrder                @relation(fields: [externalOrderId], references: [id], onDelete: Cascade)
+  id                    String                         @id @default(cuid())
+  externalOrder         ExternalOrder                  @relation(fields: [externalOrderId], references: [id], onDelete: Cascade)
   externalOrderId       String
   contactName           String?
-  sellerProfile         BillingProfile?              @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
+  sellerProfile         BillingProfile?                @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
   sellerProfileId       String?
   sellerName            String?
   sellerTaxId           String?
@@ -487,76 +517,295 @@ model ExternalOrderInvoiceRequest {
   sellerBankAccount     String?
   sellerAddress         String?
   sellerPhone           String?
-  buyerOrganization     Organization?                @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
+  buyerOrganization     Organization?                  @relation(fields: [buyerOrganizationId], references: [id], onDelete: SetNull)
   buyerOrganizationId   String?
   buyerOrganizationName String
   buyerTaxId            String?
-  buyerTaxIdFromLookup  Boolean                      @default(false)
-  invoiceType           String                       @default("NORMAL")
+  buyerTaxIdFromLookup  Boolean                        @default(false)
+  invoiceType           String                         @default("NORMAL")
   contentSummary        String?
-  totalAmount           Float                        @default(0)
-  status                String                       @default("DRAFT")
+  totalAmount           Float                          @default(0)
+  status                String                         @default("DRAFT")
   remark                String?
-  createdBy             User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdBy             User                           @relation(fields: [createdById], references: [id], onDelete: Cascade)
   createdById           String
-  createdAt             DateTime                     @default(now())
-  updatedAt             DateTime                     @updatedAt
+  createdAt             DateTime                       @default(now())
+  updatedAt             DateTime                       @updatedAt
   items                 ExternalOrderInvoiceItem[]
+  receipts              FinanceReceipt[]
+  coverage              ExternalOrderInvoiceCoverage[]
 
   @@index([externalOrderId])
 }
 
 model ExternalOrderInvoiceItem {
-  id               String                       @id @default(cuid())
-  invoiceRequest   ExternalOrderInvoiceRequest  @relation(fields: [invoiceRequestId], references: [id], onDelete: Cascade)
+  id               String                      @id @default(cuid())
+  invoiceRequest   ExternalOrderInvoiceRequest @relation(fields: [invoiceRequestId], references: [id], onDelete: Cascade)
   invoiceRequestId String
-  sortOrder        Int                          @default(0)
+  sortOrder        Int                         @default(0)
   itemName         String
   spec             String?
   unit             String?
   quantity         Float?
-  amount           Float                        @default(0)
+  amount           Float                       @default(0)
 
   @@index([invoiceRequestId])
+}
+
+model ExternalOrderInvoiceCoverage {
+  id               String                      @id @default(cuid())
+  invoiceRequest   ExternalOrderInvoiceRequest @relation(fields: [invoiceRequestId], references: [id], onDelete: Cascade)
+  invoiceRequestId String
+  externalOrder    ExternalOrder               @relation(fields: [externalOrderId], references: [id], onDelete: Cascade)
+  externalOrderId  String
+  createdAt        DateTime                    @default(now())
+
+  @@unique([invoiceRequestId, externalOrderId])
+  @@index([externalOrderId])
+  @@index([invoiceRequestId])
+}
+
+model FinanceReceipt {
+  id                            String                       @id @default(cuid())
+  customerId                    String?
+  customer                      Customer?                    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  projectId                     String?
+  project                       Project?                     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  externalOrderId               String?
+  externalOrder                 ExternalOrder?               @relation(fields: [externalOrderId], references: [id], onDelete: SetNull)
+  orderId                       String?
+  order                         Order?                       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  projectInvoiceId              String?
+  projectInvoice                ProjectInvoice?              @relation(fields: [projectInvoiceId], references: [id], onDelete: SetNull)
+  externalOrderInvoiceRequestId String?
+  externalOrderInvoiceRequest   ExternalOrderInvoiceRequest? @relation(fields: [externalOrderInvoiceRequestId], references: [id], onDelete: SetNull)
+  amount                        Float
+  receivedAt                    DateTime                     @default(now())
+  source                        String                       @default("MANUAL")
+  remark                        String?
+  createdById                   String
+  createdBy                     User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt                     DateTime                     @default(now())
+  updatedAt                     DateTime                     @updatedAt
+
+  @@index([customerId])
+  @@index([projectId])
+  @@index([externalOrderId])
+  @@index([orderId])
+  @@index([receivedAt])
+}
+
+// ─── Unified Order Models ────────────────────────────────────
+
+model Order {
+  id                    String        @id @default(cuid())
+  orderNo               String        @unique
+  source                String        @default("MANUAL")
+  sourcePlatform        String?
+  externalOrderNo       String?
+  merchantOrderNo       String?
+  legacyExternalOrderId String?       @unique
+
+  title                 String
+  description           String?
+  category              String        @default("UNKNOWN")
+  status                String        @default("DRAFT")
+  deliveryStatus        String        @default("PENDING")
+  orderedAt             DateTime?
+  confirmedAt           DateTime?
+  deliveredAt           DateTime?
+
+  customerId            String?
+  customer              Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  buyerNameSnapshot     String?
+  buyerPhoneSnapshot    String?
+  buyerWechatSnapshot   String?
+  buyerOrgNameSnapshot  String?
+  buyerAddressSnapshot  String?
+
+  customerMatchStatus   String        @default("UNMATCHED")
+  customerMatchScore    Float?
+  customerMatchReason   String?
+
+  totalAmount           Float         @default(0)
+  financeAmountOverride Float?
+  financeTreatment      String        @default("AUTO")
+  financeNote           String?
+
+  ownerUserId           String?
+  ownerUser             User?         @relation("OrderOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  representativeId      String?
+  representative        Representative? @relation(fields: [representativeId], references: [id], onDelete: SetNull)
+  createdById           String
+  createdBy             User          @relation("OrdersCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  archived              Boolean       @default(false)
+  deleted               Boolean       @default(false)
+  deletedAt             DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  lines                 OrderLine[]
+  sourceRecords         OrderSourceRecord[]
+  projectLinks          OrderProjectLink[]
+  statusHistory         OrderStatusHistory[]
+  mergeSources          OrderMerge[]  @relation("OrderMergeSource")
+  mergeTargets          OrderMerge[]  @relation("OrderMergeTarget")
+  receipts              FinanceReceipt[]
+
+  @@index([source, externalOrderNo])
+  @@index([merchantOrderNo])
+  @@index([customerId])
+  @@index([ownerUserId])
+  @@index([representativeId])
+  @@index([status])
+  @@index([deliveryStatus])
+  @@index([category])
+  @@index([orderedAt])
+  @@index([deleted])
+}
+
+model OrderLine {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemName  String
+  spec      String?
+  unit      String?
+  quantity  Float?
+  unitPrice Float?
+  amount    Float   @default(0)
+  category  String  @default("UNKNOWN")
+  sortOrder Int     @default(0)
+  rawJson   String?
+
+  @@index([orderId])
+  @@index([category])
+}
+
+model OrderSourceRecord {
+  id              String   @id @default(cuid())
+  orderId         String?
+  order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  importBatchId   String?
+  source          String
+  platform        String?
+  externalOrderNo String
+  merchantOrderNo String?
+  duplicateGroupId String?
+  duplicateStatus String   @default("UNREVIEWED")
+  rawJson         String?
+  rawText         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([source, externalOrderNo])
+  @@index([orderId])
+  @@index([importBatchId])
+  @@index([externalOrderNo])
+  @@index([merchantOrderNo])
+  @@index([duplicateStatus])
+  @@index([duplicateGroupId])
+}
+
+model OrderProjectLink {
+  id             String   @id @default(cuid())
+  orderId        String
+  projectId      String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  relationType   String   @default("LINKED")
+  treatment      String   @default("PROJECT_INCLUDED")
+  allocatedAmount Float?
+  isPrimary      Boolean  @default(false)
+  note           String?
+  createdById    String?
+  createdBy      User?    @relation("OrderProjectLinksCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([orderId, projectId])
+  @@index([orderId])
+  @@index([projectId])
+  @@index([treatment])
+  @@index([relationType])
+}
+
+model OrderStatusHistory {
+  id               String   @id @default(cuid())
+  orderId          String
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  oldStatus        String?
+  newStatus        String?
+  oldDeliveryStatus String?
+  newDeliveryStatus String?
+  note             String?
+  createdById      String?
+  createdBy        User?    @relation("OrderStatusHistoryCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+model OrderMerge {
+  id            String   @id @default(cuid())
+  sourceOrderId String
+  targetOrderId String
+  sourceOrder   Order    @relation("OrderMergeSource", fields: [sourceOrderId], references: [id], onDelete: Cascade)
+  targetOrder   Order    @relation("OrderMergeTarget", fields: [targetOrderId], references: [id], onDelete: Cascade)
+  reason        String?
+  createdById   String?
+  createdBy     User?    @relation("OrderMergeCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  @@unique([sourceOrderId, targetOrderId])
+  @@index([targetOrderId])
 }
 
 // ─── CRM Models ──────────────────────────────────────────────
 
 model CrmCustomerProfile {
-  id                 String               @id @default(cuid())
-  sourceCustomerId   String               @unique
-  sourceCustomer     Customer             @relation(fields: [sourceCustomerId], references: [id], onDelete: Cascade)
-  ownerUserId        String
-  ownerUser          User                 @relation("CrmOwnedProfiles", fields: [ownerUserId], references: [id], onDelete: Cascade)
-  stage              String               @default("NEW") // NEW, CONTACTED, FOLLOWING, ACTIVE, BLOCKED, LOST, DORMANT
-  importance         String               @default("NORMAL") // LOW, NORMAL, HIGH, KEY
-  tagsJson           String?
-  summary            String?
-  lastFollowUpAt     DateTime?
-  nextFollowUpAt     DateTime?
-  lastOrderAt        DateTime?
-  assignmentStatus   String               @default("ASSIGNED") // UNASSIGNED | ASSIGNED | RECALL_CANDIDATE | RECALLED
-  assignedAt         DateTime?
-  assignedByUserId   String?
-  assignedByUser     User?                @relation("CrmAssignedByUser", fields: [assignedByUserId], references: [id], onDelete: SetNull)
-  recalledAt         DateTime?
-  recalledByUserId   String?
-  recalledByUser     User?                @relation("CrmRecalledByUser", fields: [recalledByUserId], references: [id], onDelete: SetNull)
-  reflowReason       String?
-  archived           Boolean              @default(false)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  interactions       CrmInteraction[]
-  followUpTasks      CrmFollowUpTask[]
-  addresses          CrmCustomerAddress[]
-  visitCheckins      CrmVisitCheckin[]
-  applications       CrmCustomerApplication[] @relation("CrmApplicationsCreatedProfile")
-  assignmentLogs     CrmCustomerAssignmentLog[]
+  id                   String                     @id @default(cuid())
+  sourceCustomerId     String                     @unique
+  sourceCustomer       Customer                   @relation(fields: [sourceCustomerId], references: [id], onDelete: Cascade)
+  ownerUserId          String
+  ownerUser            User                       @relation("CrmOwnedProfiles", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  stage                String                     @default("NEW") // NEW, CONTACTED, FOLLOWING, ACTIVE, BLOCKED, LOST, DORMANT
+  importance           String                     @default("NORMAL") // LOW, NORMAL, HIGH, KEY
+  tagsJson             String?
+  summary              String?
+  lastFollowUpAt       DateTime?
+  nextFollowUpAt       DateTime?
+  lastOrderAt          DateTime?
+  assignmentStatus     String                     @default("ASSIGNED") // UNASSIGNED | ASSIGNED | RECALL_CANDIDATE | RECALLED
+  assignedAt           DateTime?
+  assignedByUserId     String?
+  assignedByUser       User?                      @relation("CrmAssignedByUser", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+  recalledAt           DateTime?
+  recalledByUserId     String?
+  recalledByUser       User?                      @relation("CrmRecalledByUser", fields: [recalledByUserId], references: [id], onDelete: SetNull)
+  reflowReason         String?
+  personCategory       String? // STUDENT, POSTDOC, RESEARCHER, PI, TECHNICIAN, CLINICIAN, ADMIN, PROCUREMENT, OTHER
+  jobTitle             String?
+  graduationDate       DateTime?
+  graduationReminderAt DateTime?
+  archived             Boolean                    @default(false)
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  interactions         CrmInteraction[]
+  followUpTasks        CrmFollowUpTask[]
+  addresses            CrmCustomerAddress[]
+  visitCheckins        CrmVisitCheckin[]
+  applications         CrmCustomerApplication[]   @relation("CrmApplicationsCreatedProfile")
+  assignmentLogs       CrmCustomerAssignmentLog[]
 
   @@index([ownerUserId])
   @@index([stage])
   @@index([nextFollowUpAt])
   @@index([assignmentStatus])
+  @@index([personCategory])
+  @@index([graduationDate])
 }
 
 model CrmCustomerAddress {
@@ -586,7 +835,7 @@ model CrmInteraction {
   id               String             @id @default(cuid())
   profile          CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   profileId        String
-  type             String             // CALL, WECHAT, EMAIL, MEETING, VISIT, REFERRAL, NOTE
+  type             String // CALL, WECHAT, EMAIL, MEETING, VISIT, REFERRAL, NOTE
   summary          String
   detail           String?
   happenedAt       DateTime           @default(now())
@@ -670,30 +919,30 @@ model CrmVisitMedia {
 }
 
 model CrmCustomerApplication {
-  id                 String             @id @default(cuid())
-  name               String
-  principal          String?
-  email              String?
-  wechat             String?
-  organization       String?
-  organizationId     String?
-  organizationSiteId String?
-  address            String?
-  miniProgramId      String?
-  notes              String?
-  status             String             @default("PENDING") // PENDING, APPROVED, REJECTED
-  submittedByUserId  String
-  submittedByUser    User               @relation("CrmApplicationsSubmitted", fields: [submittedByUserId], references: [id])
-  reviewedByUserId   String?
-  reviewedByUser     User?              @relation("CrmApplicationsReviewed", fields: [reviewedByUserId], references: [id])
-  reviewedAt         DateTime?
-  reviewNote         String?
-  createdCustomerId  String?
-  createdCustomer    Customer?          @relation("CrmApplicationsCreatedCustomer", fields: [createdCustomerId], references: [id])
+  id                  String              @id @default(cuid())
+  name                String
+  principal           String?
+  email               String?
+  wechat              String?
+  organization        String?
+  organizationId      String?
+  organizationSiteId  String?
+  address             String?
+  miniProgramId       String?
+  notes               String?
+  status              String              @default("PENDING") // PENDING, APPROVED, REJECTED
+  submittedByUserId   String
+  submittedByUser     User                @relation("CrmApplicationsSubmitted", fields: [submittedByUserId], references: [id])
+  reviewedByUserId    String?
+  reviewedByUser      User?               @relation("CrmApplicationsReviewed", fields: [reviewedByUserId], references: [id])
+  reviewedAt          DateTime?
+  reviewNote          String?
+  createdCustomerId   String?
+  createdCustomer     Customer?           @relation("CrmApplicationsCreatedCustomer", fields: [createdCustomerId], references: [id])
   createdCrmProfileId String?
-  createdCrmProfile  CrmCustomerProfile? @relation("CrmApplicationsCreatedProfile", fields: [createdCrmProfileId], references: [id])
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  createdCrmProfile   CrmCustomerProfile? @relation("CrmApplicationsCreatedProfile", fields: [createdCrmProfileId], references: [id])
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@index([submittedByUserId])
   @@index([status])
@@ -720,41 +969,41 @@ model CustomerRelation {
 }
 
 model CrmRegionManager {
-  id          String                            @id @default(cuid())
-  userId      String                            @unique
-  user        User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  regionName  String?
-  archived    Boolean                           @default(false)
-  createdAt   DateTime                          @default(now())
-  updatedAt   DateTime                          @updatedAt
-  reps        CrmRegionManagerRepresentative[]
+  id         String                           @id @default(cuid())
+  userId     String                           @unique
+  user       User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  regionName String?
+  archived   Boolean                          @default(false)
+  createdAt  DateTime                         @default(now())
+  updatedAt  DateTime                         @updatedAt
+  reps       CrmRegionManagerRepresentative[]
 }
 
 model CrmRegionManagerRepresentative {
-  id               String            @id @default(cuid())
+  id               String           @id @default(cuid())
   managerId        String
-  manager          CrmRegionManager  @relation(fields: [managerId], references: [id], onDelete: Cascade)
+  manager          CrmRegionManager @relation(fields: [managerId], references: [id], onDelete: Cascade)
   representativeId String
-  representative   Representative    @relation(fields: [representativeId], references: [id], onDelete: Cascade)
-  assignedAt       DateTime          @default(now())
+  representative   Representative   @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  assignedAt       DateTime         @default(now())
 
   @@unique([managerId, representativeId])
   @@index([representativeId])
 }
 
 model CrmCustomerAssignmentLog {
-  id               String              @id @default(cuid())
-  profileId        String
-  profile          CrmCustomerProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  fromOwnerUserId  String?
-  fromOwnerUser    User?               @relation("AssignmentFromUser", fields: [fromOwnerUserId], references: [id], onDelete: SetNull)
-  toOwnerUserId    String?
-  toOwnerUser      User?               @relation("AssignmentToUser", fields: [toOwnerUserId], references: [id], onDelete: SetNull)
-  action           String              // ASSIGN | RECALL | MARK_CANDIDATE | REMIND
-  reason           String?
-  createdByUserId  String
-  createdByUser    User                @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
-  createdAt        DateTime            @default(now())
+  id              String             @id @default(cuid())
+  profileId       String
+  profile         CrmCustomerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  fromOwnerUserId String?
+  fromOwnerUser   User?              @relation("AssignmentFromUser", fields: [fromOwnerUserId], references: [id], onDelete: SetNull)
+  toOwnerUserId   String?
+  toOwnerUser     User?              @relation("AssignmentToUser", fields: [toOwnerUserId], references: [id], onDelete: SetNull)
+  action          String // ASSIGN | RECALL | MARK_CANDIDATE | REMIND
+  reason          String?
+  createdByUserId String
+  createdByUser   User               @relation("AssignmentCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime           @default(now())
 
   @@index([profileId])
   @@index([createdAt])
