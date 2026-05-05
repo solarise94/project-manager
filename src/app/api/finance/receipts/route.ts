@@ -10,6 +10,7 @@ async function resolveAndValidate(
   customerId?: string | null,
   projectId?: string | null,
   externalOrderId?: string | null,
+  orderId?: string | null,
   projectInvoiceId?: string | null,
   externalOrderInvoiceRequestId?: string | null,
   source?: string,
@@ -31,6 +32,22 @@ async function resolveAndValidate(
     if (projectId && eo.projectId && eo.projectId !== projectId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
   }
 
+  if (orderId) {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { customerId: true, projectLinks: { select: { projectId: true } } },
+    });
+    if (!order) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    if (!resolvedCustId && order.customerId) resolvedCustId = order.customerId;
+    if (!resolvedProjId && order.projectLinks.length > 0) resolvedProjId = order.projectLinks[0].projectId;
+    if (customerId && order.customerId && order.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    // If projectId was explicitly provided, it must belong to this order's links
+    if (projectId && order.projectLinks.length > 0) {
+      const belongs = order.projectLinks.some((l) => l.projectId === projectId);
+      if (!belongs) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    }
+  }
+
   if (projectInvoiceId) {
     const inv = await prisma.projectInvoice.findUnique({
       where: { id: projectInvoiceId },
@@ -46,12 +63,21 @@ async function resolveAndValidate(
   if (externalOrderInvoiceRequestId) {
     const eoi = await prisma.externalOrderInvoiceRequest.findUnique({
       where: { id: externalOrderInvoiceRequestId },
-      select: { externalOrder: { select: { customerId: true, projectId: true } } },
+      select: {
+        externalOrder: { select: { customerId: true, projectId: true } },
+        order: { select: { customerId: true } },
+      },
     });
     if (!eoi) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (!resolvedCustId && eoi.externalOrder.customerId) resolvedCustId = eoi.externalOrder.customerId;
-    if (!resolvedProjId && eoi.externalOrder.projectId) resolvedProjId = eoi.externalOrder.projectId;
-    if (customerId && eoi.externalOrder.customerId && eoi.externalOrder.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    if (eoi.externalOrder) {
+      if (!resolvedCustId && eoi.externalOrder.customerId) resolvedCustId = eoi.externalOrder.customerId;
+      if (!resolvedProjId && eoi.externalOrder.projectId) resolvedProjId = eoi.externalOrder.projectId;
+      if (customerId && eoi.externalOrder.customerId && eoi.externalOrder.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    }
+    if (eoi.order) {
+      if (!resolvedCustId && eoi.order.customerId) resolvedCustId = eoi.order.customerId;
+      if (customerId && eoi.order.customerId && eoi.order.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
+    }
   }
 
   if (!resolvedCustId && resolvedProjId) {
@@ -188,7 +214,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { customerId, projectId, externalOrderId, projectInvoiceId, externalOrderInvoiceRequestId, amount, receivedAt, source, remark } = body;
+  const { customerId, projectId, externalOrderId, orderId, projectInvoiceId, externalOrderInvoiceRequestId, amount, receivedAt, source, remark } = body;
 
   if (!amount || amount <= 0) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
@@ -197,7 +223,7 @@ export async function POST(req: NextRequest) {
   const scopeCheck = await resolveAndValidate(
     session.user.id, session.user.role,
     customerId, projectId,
-    externalOrderId, projectInvoiceId, externalOrderInvoiceRequestId,
+    externalOrderId, orderId, projectInvoiceId, externalOrderInvoiceRequestId,
     source,
   );
   if (!scopeCheck.valid) {
@@ -222,6 +248,7 @@ export async function POST(req: NextRequest) {
       customerId: effectiveCustomerId,
       projectId: effectiveProjectId,
       externalOrderId: externalOrderId || null,
+      orderId: orderId || null,
       projectInvoiceId: projectInvoiceId || null,
       externalOrderInvoiceRequestId: externalOrderInvoiceRequestId || null,
       amount,

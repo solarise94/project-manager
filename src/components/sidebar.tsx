@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, LogOut, FlaskConical, Users, User, Contact, Building2, ClipboardList, FileText, Receipt, ShoppingBag, HeartHandshake, Store, Banknote } from "lucide-react";
+import { LayoutDashboard, FolderKanban, Ticket, LogOut, FlaskConical, Users, User, Contact, Building2, ClipboardList, FileText, Receipt, HeartHandshake, Store, Banknote, Package } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,8 +18,8 @@ function useNavItems() {
   const { data: session } = useSession();
   const items = [...baseNavItems];
   if (session?.user?.role !== "REPRESENTATIVE") {
+    items.push({ href: "/orders", label: "订单管理", icon: Package });
     items.push({ href: "/customers", label: "客户管理", icon: Contact });
-    items.push({ href: "/external-orders", label: "拼好鼠订单", icon: ShoppingBag });
     items.push({ href: "/finance", label: "财务管理", icon: Banknote });
   }
   if (session?.user?.role === "ADMIN") {

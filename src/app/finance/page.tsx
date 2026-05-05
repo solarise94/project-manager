@@ -72,6 +72,8 @@ function FinanceDashboard() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard title="已开票总额" value={(data?.projectInvoicedAmount ?? 0) + (data?.orderInvoicedAmount ?? 0)} icon={FileText} description={`待处理 ${data?.pendingInvoiceCount ?? 0} 笔`} />
         <StatCard title="已到款总额" value={data?.totalReceiptAmount ?? 0} icon={Banknote} description={`${data?.receiptCount ?? 0} 笔记录`} />
+        <StatCard title="成本总额" value={data?.costAmount ?? 0} icon={Receipt} description="所有已登记成本" />
+        <StatCard title="利润 (回款-成本)" value={data?.profitAmount ?? 0} icon={TrendingUp} description={data?.profitRate != null ? `利润率 ${(data.profitRate * 100).toFixed(1)}%` : "暂无回款数据"} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -86,6 +88,22 @@ function FinanceDashboard() {
                   </p>
                 </div>
                 <Link2 className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href="/finance/invoices">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">发票工作台</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    统一发票管理：项目开票 + 订单开票
+                  </p>
+                </div>
+                <FileText className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
               </div>
             </CardContent>
           </Card>
@@ -160,6 +178,20 @@ function FinanceDashboard() {
                   <p className="text-sm text-muted-foreground mt-1">
                     发票与回款流水查询
                   </p>
+                </div>
+                <Receipt className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+
+        <Link href="/finance/costs">
+          <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">成本管理</p>
+                  <p className="text-sm text-muted-foreground mt-1">登记采购/实验/人工等成本</p>
                 </div>
                 <Receipt className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
               </div>

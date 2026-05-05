@@ -19,11 +19,12 @@ interface ReceiptFormDialogProps {
   defaultCustomerId?: string;
   defaultProjectId?: string;
   defaultProjectInvoiceId?: string;
+  defaultOrderId?: string;
   defaultAmount?: number;
   onCreated: () => void;
 }
 
-export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defaultProjectId, defaultProjectInvoiceId, defaultAmount, onCreated }: ReceiptFormDialogProps) {
+export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defaultProjectId, defaultProjectInvoiceId, defaultOrderId, defaultAmount, onCreated }: ReceiptFormDialogProps) {
   const [amount, setAmount] = useState("");
   const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
   const [source, setSource] = useState("MANUAL");
@@ -64,6 +65,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defau
           customerId: defaultCustomerId || null,
           projectId: defaultProjectId || null,
           projectInvoiceId: defaultProjectInvoiceId || null,
+          orderId: defaultOrderId || null,
         }),
       });
       if (!res.ok) throw new Error("创建失败");

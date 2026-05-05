@@ -27,6 +27,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       cust: {
         select: { id: true, name: true, customerCode: true, organization: true, organizationId: true, org: { select: { canonicalName: true } } },
       },
+      orderLinks: {
+        include: {
+          order: {
+            select: {
+              id: true, orderNo: true, title: true, category: true, status: true,
+              deliveryStatus: true, totalAmount: true, financeAmountOverride: true,
+              financeTreatment: true, source: true, externalOrderNo: true,
+              customer: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
       _count: {
         select: { tickets: true, comments: true, attachments: true },
       },
@@ -53,8 +66,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const myTicketCount = await prisma.ticket.count({
       where: { projectId: id, createdBy: session.user.id },
     });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { orderLinks: _orderLinks, ...restProject } = resolvedProject;
     const result = {
-      ...resolvedProject,
+      ...restProject,
       _count: {
         tickets: myTicketCount,
         comments: 0,
@@ -168,51 +183,94 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data.representative = representative;
     }
 
-    const updated = await prisma.project.update({
-      where: { id },
-      data,
+    // Pre-compute order sync data for COMPLETED transition
+    const isCompleting = status === "COMPLETED" && existing.status !== "COMPLETED";
+    let orderSyncOrders: Array<{ id: string; oldDeliveryStatus: string }> = [];
+
+    if (isCompleting) {
+      const links = await prisma.orderProjectLink.findMany({
+        where: { projectId: id, treatment: "PROJECT_INCLUDED" },
+        select: { orderId: true },
+      });
+      if (links.length > 0) {
+        const orders = await prisma.order.findMany({
+          where: { id: { in: links.map((l) => l.orderId) }, deliveryStatus: { not: "DELIVERED" } },
+          select: { id: true, deliveryStatus: true },
+        });
+        orderSyncOrders = orders.map((o) => ({ id: o.id, oldDeliveryStatus: o.deliveryStatus }));
+      }
+    }
+
+    // Atomic: project update + status history + activity logs + order delivery sync
+    let updated: typeof existing;
+    await prisma.$transaction(async (tx) => {
+      updated = await tx.project.update({ where: { id }, data });
+
+      // Log archive toggle
+      if (archived !== undefined && archived !== existing.archived) {
+        await tx.activityLog.create({
+          data: {
+            type: archived ? "PROJECT_ARCHIVED" : "PROJECT_UNARCHIVED",
+            content: archived ? `归档了项目 "${existing.name}"` : `取消了项目 "${existing.name}" 的归档`,
+            projectId: id,
+            userId: session.user.id,
+          },
+        });
+      }
+
+      // Log status change
+      if (status !== undefined && status !== existing.status) {
+        await tx.statusHistory.create({
+          data: {
+            projectId: id,
+            oldStatus: existing.status,
+            newStatus: status,
+            createdBy: session.user.id,
+          },
+        });
+        await tx.activityLog.create({
+          data: {
+            type: "STATUS_CHANGED",
+            content: `项目状态从 "${existing.status}" 变更为 "${status}"`,
+            metadata: JSON.stringify({ oldStatus: existing.status, newStatus: status }),
+            projectId: id,
+            userId: session.user.id,
+          },
+        });
+      }
+
+      // Order delivery sync (inside same transaction as project update)
+      if (orderSyncOrders.length > 0) {
+        await tx.order.updateMany({
+          where: { id: { in: orderSyncOrders.map((o) => o.id) } },
+          data: { deliveryStatus: "DELIVERED", deliveredAt: new Date() },
+        });
+        for (const o of orderSyncOrders) {
+          await tx.orderStatusHistory.create({
+            data: {
+              orderId: o.id,
+              oldDeliveryStatus: o.oldDeliveryStatus,
+              newDeliveryStatus: "DELIVERED",
+              note: `项目 "${existing.name}" 已完成，联动交付`,
+              createdById: session.user.id,
+            },
+          });
+        }
+      }
     });
 
-    // Pre-fetch representative for batched notification (single token)
-    const repForNotify = updated.representativeId
+    // ── Side effects (outside transaction): notifications, mail ──
+    const updatedProject = updated!;
+
+    // Pre-fetch representative for batched notification
+    const repForNotify = updatedProject.representativeId
       ? await prisma.representative.findUnique({
-          where: { id: updated.representativeId, archived: false },
+          where: { id: updatedProject.representativeId, archived: false },
         })
       : null;
     const repNotifications: Array<{ subject: string; text: string; html: string }> = [];
 
-    // Log archive toggle
-    if (archived !== undefined && archived !== existing.archived) {
-      await prisma.activityLog.create({
-        data: {
-          type: archived ? "PROJECT_ARCHIVED" : "PROJECT_UNARCHIVED",
-          content: archived ? `归档了项目 "${existing.name}"` : `取消了项目 "${existing.name}" 的归档`,
-          projectId: id,
-          userId: session.user.id,
-        },
-      });
-    }
-
-    // Log status change
     if (status !== undefined && status !== existing.status) {
-      await prisma.statusHistory.create({
-        data: {
-          projectId: id,
-          oldStatus: existing.status,
-          newStatus: status,
-          createdBy: session.user.id,
-        },
-      });
-      await prisma.activityLog.create({
-        data: {
-          type: "STATUS_CHANGED",
-          content: `项目状态从 "${existing.status}" 变更为 "${status}"`,
-          metadata: JSON.stringify({ oldStatus: existing.status, newStatus: status }),
-          projectId: id,
-          userId: session.user.id,
-        },
-      });
-
       const owner = await prisma.projectMember.findFirst({
         where: { projectId: id, role: "OWNER" },
         include: { user: { select: { id: true, email: true, name: true, emailOnStatusChange: true, role: true } } },
@@ -352,7 +410,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       });
     }
 
-    return NextResponse.json({ project: updated });
+    return NextResponse.json({ project: updatedProject });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Failed to update project" }, { status: 500 });

@@ -6,21 +6,16 @@ import { isProductProject } from "./types";
 function getWeekRange(): { start: Date; end: Date } {
   const now = new Date();
   const day = now.getDay();
-  const diff = day === 0 ? 6 : day - 1; // Monday start
-  const start = new Date(now);
-  start.setDate(now.getDate() - diff);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  const diff = day === 0 ? 6 : day - 1;
+  const start = new Date(now); start.setDate(now.getDate() - diff); start.setHours(0, 0, 0, 0);
+  const end = new Date(now); end.setHours(23, 59, 59, 999);
   return { start, end };
 }
 
 function getMonthRange(): { start: Date; end: Date } {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  const start = new Date(now.getFullYear(), now.getMonth(), 1); start.setHours(0, 0, 0, 0);
+  const end = new Date(now); end.setHours(23, 59, 59, 999);
   return { start, end };
 }
 
@@ -39,7 +34,6 @@ export function getProjectCompletionDate(project: {
   endDate: Date | string | null;
   status: string;
 }): Date | null {
-  // Will be resolved async via statusHistory
   return project.endDate ? new Date(project.endDate) : null;
 }
 
@@ -49,79 +43,73 @@ export async function resolveProjectCompletionDate(project: {
   status: string;
   statusHistory?: Array<{ newStatus: string; createdAt: Date | string }>;
 }): Promise<Date | null> {
-  // Check statusHistory for COMPLETED transition
   if (project.statusHistory) {
     const completed = project.statusHistory.find((h) => h.newStatus === "COMPLETED");
     if (completed) return new Date(completed.createdAt);
   } else if (project.status === "COMPLETED") {
-    // Query statusHistory
     const sh = await prisma.statusHistory.findFirst({
       where: { projectId: project.id, newStatus: "COMPLETED" },
       orderBy: { createdAt: "desc" },
     });
     if (sh) return new Date(sh.createdAt);
   }
-  // Fallback to endDate
   if (project.endDate) return new Date(project.endDate);
   return null;
 }
 
-// ─── Order date resolution ─────────────────────────────────────
+// ─── Order date resolution (unified Order model) ──────────────
 
 export function getOrderDate(order: {
-  orderAt: Date | string | null;
-  paidAt: Date | string | null;
+  orderedAt: Date | string | null;
+  confirmedAt: Date | string | null;
   createdAt: Date | string;
 }): Date {
-  if (order.orderAt) return new Date(order.orderAt);
-  if (order.paidAt) return new Date(order.paidAt);
+  if (order.orderedAt) return new Date(order.orderedAt);
+  if (order.confirmedAt) return new Date(order.confirmedAt);
   return new Date(order.createdAt);
 }
 
-// ─── Order finance helpers ─────────────────────────────────────
+// ─── Order finance helpers (unified Order model) ───────────────
 
 export type FinanceCategory = "UNKNOWN" | "PRODUCT" | "SERVICE";
 export type FinanceTreatment = "AUTO" | "STANDALONE" | "PROJECT_INCLUDED" | "EXCLUDED";
 
 export function computeOrderFinanceAmount(order: {
-  paidAmount: number | null;
+  totalAmount: number;
   financeAmountOverride: number | null;
 }): number {
   if (order.financeAmountOverride != null) return order.financeAmountOverride;
-  return order.paidAmount ?? 0;
+  return order.totalAmount ?? 0;
 }
 
-export function getOrderEffectiveTreatment(order: {
-  projectId: string | null;
-  financeTreatment: string;
-}): FinanceTreatment {
-  if (order.financeTreatment !== "AUTO") return order.financeTreatment as FinanceTreatment;
-  return order.projectId ? "PROJECT_INCLUDED" : "STANDALONE";
+/**
+ * Derive effective finance treatment for an order.
+ * When financeTreatment is AUTO, fall back to whether the order has any
+ * OrderProjectLink, so that orders bound to projects auto-include.
+ */
+export function getOrderEffectiveTreatment(
+  financeTreatment: string,
+  hasProjectLinks: boolean,
+): FinanceTreatment {
+  if (financeTreatment !== "AUTO") return financeTreatment as FinanceTreatment;
+  return hasProjectLinks ? "PROJECT_INCLUDED" : "STANDALONE";
 }
 
-export function isOrderStandalone(order: {
-  projectId: string | null;
-  financeTreatment: string;
-}): boolean {
-  const treatment = getOrderEffectiveTreatment(order);
-  return treatment === "STANDALONE";
+export function isOrderStandalone(financeTreatment: string, hasProjectLinks: boolean): boolean {
+  return getOrderEffectiveTreatment(financeTreatment, hasProjectLinks) === "STANDALONE";
 }
 
-export function isOrderProjectLinked(order: {
-  projectId: string | null;
-  financeTreatment: string;
-}): boolean {
-  const treatment = getOrderEffectiveTreatment(order);
-  return treatment === "PROJECT_INCLUDED" && !!order.projectId;
+export function isOrderProjectLinked(financeTreatment: string, hasProjectLinks: boolean): boolean {
+  return getOrderEffectiveTreatment(financeTreatment, hasProjectLinks) === "PROJECT_INCLUDED";
 }
 
 // ─── Progress receivable computation ───────────────────────────
 
 export interface ProgressReceivableResult {
   total: number;
-  serviceDeposit: number;   // 30% on start
-  serviceFinal: number;     // 70% on completion
-  productReceivable: number; // 100% on start
+  serviceDeposit: number;
+  serviceFinal: number;
+  productReceivable: number;
 }
 
 export function computeProjectProgressReceivable(
@@ -130,7 +118,7 @@ export function computeProjectProgressReceivable(
     projectType: string | null;
     startDate: Date | string | null;
     createdAt: Date | string;
-    completionDate: Date | null; // pre-resolved
+    completionDate: Date | null;
   },
   periodStart: Date,
   periodEnd: Date,
@@ -149,7 +137,6 @@ export function computeProjectProgressReceivable(
   if (isProductProject(project.projectType)) {
     if (startedInPeriod) productReceivable = budget;
   } else {
-    // Service project
     if (startedInPeriod && completedInPeriod) {
       serviceDeposit = budget * 0.3;
       serviceFinal = budget * 0.7;
@@ -160,39 +147,31 @@ export function computeProjectProgressReceivable(
     }
   }
 
-  return {
-    total: serviceDeposit + serviceFinal + productReceivable,
-    serviceDeposit,
-    serviceFinal,
-    productReceivable,
-  };
+  return { total: serviceDeposit + serviceFinal + productReceivable, serviceDeposit, serviceFinal, productReceivable };
 }
 
 export function computeStandaloneOrderReceivable(
   order: {
-    paidAmount: number | null;
+    totalAmount: number;
     financeAmountOverride: number | null;
-    financeCategory: string;
+    category: string;
     financeTreatment: string;
-    projectId: string | null;
-    orderAt: Date | string | null;
-    paidAt: Date | string | null;
+    hasProjectLinks: boolean;
+    orderedAt: Date | string | null;
+    confirmedAt: Date | string | null;
     createdAt: Date | string;
   },
   periodStart: Date,
   periodEnd: Date,
 ): number {
-  const treatment = getOrderEffectiveTreatment(order);
+  const treatment = getOrderEffectiveTreatment(order.financeTreatment, order.hasProjectLinks);
   if (treatment === "PROJECT_INCLUDED" || treatment === "EXCLUDED") return 0;
 
   const orderDate = getOrderDate(order);
   if (orderDate < periodStart || orderDate > periodEnd) return 0;
 
   const amount = computeOrderFinanceAmount(order);
-  const category = order.financeCategory;
-
-  if (category === "PRODUCT") return amount;
-  // SERVICE or UNKNOWN treated as service
+  if (order.category === "PRODUCT") return amount;
   return amount * 0.3;
 }
 
@@ -207,13 +186,13 @@ export async function computeAllProgressReceivables(
     status: string;
   }>,
   orders: Array<{
-    paidAmount: number | null;
+    totalAmount: number;
     financeAmountOverride: number | null;
-    financeCategory: string;
+    category: string;
     financeTreatment: string;
-    projectId: string | null;
-    orderAt: Date | string | null;
-    paidAt: Date | string | null;
+    hasProjectLinks: boolean;
+    orderedAt: Date | string | null;
+    confirmedAt: Date | string | null;
     createdAt: Date | string;
   }>,
 ): Promise<{

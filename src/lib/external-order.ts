@@ -347,20 +347,35 @@ const STATUS_PRIORITY: Record<string, number> = {
 export async function syncOrderInvoiceStatus(
   prisma: PrismaClient,
   externalOrderId: string,
+  orderId?: string | null,
 ): Promise<void> {
-  // Direct invoices + coverage invoices
-  const coverageRecords = await prisma.externalOrderInvoiceCoverage.findMany({
-    where: { externalOrderId },
-    select: { invoiceRequest: { select: { status: true } } },
-  });
+  // Direct invoices (via externalOrderId or orderId)
   const directInvoices = await prisma.externalOrderInvoiceRequest.findMany({
-    where: { externalOrderId },
+    where: {
+      OR: [
+        { externalOrderId },
+        ...(orderId ? [{ orderId }] : []),
+      ].filter(Boolean),
+    },
     select: { status: true },
   });
 
+  // Legacy coverage (via ExternalOrder)
+  const legacyCoverageRecords = await prisma.externalOrderInvoiceCoverage.findMany({
+    where: { externalOrderId },
+    select: { invoiceRequest: { select: { status: true } } },
+  });
+
+  // New coverage (via Order)
+  const newCoverageRecords = orderId ? await prisma.orderInvoiceCoverage.findMany({
+    where: { orderId },
+    select: { invoiceRequest: { select: { status: true } } },
+  }) : [];
+
   const allStatuses = [
     ...directInvoices.map((i) => i.status),
-    ...coverageRecords.map((c) => c.invoiceRequest.status),
+    ...legacyCoverageRecords.map((c) => c.invoiceRequest.status),
+    ...newCoverageRecords.map((c) => c.invoiceRequest.status),
   ];
 
   let highest = "NONE";
@@ -371,10 +386,14 @@ export async function syncOrderInvoiceStatus(
     }
   }
 
-  await prisma.externalOrder.update({
-    where: { id: externalOrderId },
-    data: { invoiceStatus: highest },
-  });
+  // Update legacy ExternalOrder.invoiceStatus (new Orders don't have this field)
+  const legacyExists = await prisma.externalOrder.count({ where: { id: externalOrderId } });
+  if (legacyExists > 0) {
+    await prisma.externalOrder.update({
+      where: { id: externalOrderId },
+      data: { invoiceStatus: highest },
+    });
+  }
 }
 
 // --- Dedup ---

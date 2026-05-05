@@ -61,6 +61,27 @@ export interface ProjectItem {
   _count?: { tickets: number; comments: number; attachments?: number };
   rep?: { id: string; name: string; email: string } | null;
   cust?: { id: string; name: string; customerCode: string; organization?: string | null; organizationId?: string | null } | null;
+  orderLinks?: Array<{
+    id: string;
+    treatment: string;
+    allocatedAmount: number | null;
+    isPrimary: boolean;
+    relationType: string;
+    order: {
+      id: string;
+      orderNo: string;
+      title: string;
+      category: string;
+      status: string;
+      deliveryStatus: string;
+      totalAmount: number;
+      financeAmountOverride: number | null;
+      financeTreatment: string;
+      source: string;
+      externalOrderNo: string | null;
+      customer?: { id: string; name: string } | null;
+    };
+  }>;
 }
 
 export interface TicketItem {

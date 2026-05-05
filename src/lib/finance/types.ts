@@ -21,6 +21,9 @@ export interface FinanceSummary {
   monthServiceDeposit: number;
   monthServiceFinal: number;
   monthProductReceivable: number;
+  costAmount: number;
+  profitAmount: number;
+  profitRate: number | null;
 }
 
 export interface CustomerFinanceItem {
@@ -65,13 +68,12 @@ export interface CustomerFinanceDetail {
   };
   onlineOrders: Array<{
     id: string;
-    externalOrderNo: string;
-    paidAmount: number | null;
-    orderAt: string | null;
+    orderNo: string;
+    totalAmount: number;
+    orderedAt: string | null;
     customerMatchStatus: string;
-    platform: string | null;
-    projectId: string | null;
-    financeCategory: string;
+    source: string;
+    category: string;
     financeTreatment: string;
     financeAmountOverride: number | null;
   }>;

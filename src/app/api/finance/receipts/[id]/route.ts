@@ -8,6 +8,7 @@ async function resolveReceiptCustomerId(receipt: {
   customerId: string | null;
   projectId: string | null;
   externalOrderId: string | null;
+  orderId: string | null;
   projectInvoiceId: string | null;
   externalOrderInvoiceRequestId: string | null;
 }): Promise<string | null> {
@@ -15,6 +16,10 @@ async function resolveReceiptCustomerId(receipt: {
   if (receipt.externalOrderId) {
     const eo = await prisma.externalOrder.findUnique({ where: { id: receipt.externalOrderId }, select: { customerId: true } });
     if (eo?.customerId) return eo.customerId;
+  }
+  if (receipt.orderId) {
+    const order = await prisma.order.findUnique({ where: { id: receipt.orderId }, select: { customerId: true } });
+    if (order?.customerId) return order.customerId;
   }
   if (receipt.projectId) {
     const proj = await prisma.project.findUnique({ where: { id: receipt.projectId }, select: { customerId: true } });
@@ -25,8 +30,15 @@ async function resolveReceiptCustomerId(receipt: {
     if (inv?.project?.customerId) return inv.project.customerId;
   }
   if (receipt.externalOrderInvoiceRequestId) {
-    const eoi = await prisma.externalOrderInvoiceRequest.findUnique({ where: { id: receipt.externalOrderInvoiceRequestId }, select: { externalOrder: { select: { customerId: true } } } });
+    const eoi = await prisma.externalOrderInvoiceRequest.findUnique({
+      where: { id: receipt.externalOrderInvoiceRequestId },
+      select: {
+        externalOrder: { select: { customerId: true } },
+        order: { select: { customerId: true } },
+      },
+    });
     if (eoi?.externalOrder?.customerId) return eoi.externalOrder.customerId;
+    if (eoi?.order?.customerId) return eoi.order.customerId;
   }
   return null;
 }
@@ -48,6 +60,7 @@ export async function GET(
       customer: { select: { id: true, name: true } },
       project: { select: { id: true, name: true } },
       externalOrder: { select: { id: true, externalOrderNo: true } },
+      order: { select: { id: true, orderNo: true } },
       projectInvoice: { select: { id: true, totalAmount: true } },
       externalOrderInvoiceRequest: { select: { id: true, totalAmount: true } },
       createdBy: { select: { id: true, name: true } },

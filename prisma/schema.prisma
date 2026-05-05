@@ -32,6 +32,7 @@ model User {
   externalOrderImportBatches   ExternalOrderImportBatch[]
   externalOrderInvoicesCreated ExternalOrderInvoiceRequest[]
   financeReceiptsCreated       FinanceReceipt[]
+  financeCostsCreated          FinanceCost[]
   crmOwnedProfiles             CrmCustomerProfile[]          @relation("CrmOwnedProfiles")
   crmInteractionsCreated       CrmInteraction[]              @relation("CrmInteractionsCreated")
   crmFollowUpOwned             CrmFollowUpTask[]             @relation("CrmFollowUpOwner")
@@ -158,6 +159,7 @@ model Customer {
   externalOrders       ExternalOrder[]
   orders               Order[]
   receipts             FinanceReceipt[]
+  financeCosts         FinanceCost[]
   crmApplications      CrmCustomerApplication[] @relation("CrmApplicationsCreatedCustomer")
   relationsFrom        CustomerRelation[]       @relation("RelationsFrom")
   relationsTo          CustomerRelation[]       @relation("RelationsTo")
@@ -236,6 +238,7 @@ model Project {
   externalOrders    ExternalOrder[]
   orderLinks        OrderProjectLink[]
   receipts          FinanceReceipt[]
+  financeCosts      FinanceCost[]
 }
 
 model ProjectMember {
@@ -506,8 +509,10 @@ model ExternalOrder {
 
 model ExternalOrderInvoiceRequest {
   id                    String                         @id @default(cuid())
-  externalOrder         ExternalOrder                  @relation(fields: [externalOrderId], references: [id], onDelete: Cascade)
-  externalOrderId       String
+  externalOrder         ExternalOrder?                 @relation(fields: [externalOrderId], references: [id], onDelete: SetNull)
+  externalOrderId       String?
+  orderId               String?
+  order                 Order?                         @relation("OrderInvoiceRequests", fields: [orderId], references: [id], onDelete: SetNull)
   contactName           String?
   sellerProfile         BillingProfile?                @relation(fields: [sellerProfileId], references: [id], onDelete: SetNull)
   sellerProfileId       String?
@@ -534,6 +539,7 @@ model ExternalOrderInvoiceRequest {
   items                 ExternalOrderInvoiceItem[]
   receipts              FinanceReceipt[]
   coverage              ExternalOrderInvoiceCoverage[]
+  orderCoverage         OrderInvoiceCoverage[]
 
   @@index([externalOrderId])
 }
@@ -562,6 +568,19 @@ model ExternalOrderInvoiceCoverage {
 
   @@unique([invoiceRequestId, externalOrderId])
   @@index([externalOrderId])
+  @@index([invoiceRequestId])
+}
+
+model OrderInvoiceCoverage {
+  id               String                      @id @default(cuid())
+  invoiceRequest   ExternalOrderInvoiceRequest @relation(fields: [invoiceRequestId], references: [id], onDelete: Cascade)
+  invoiceRequestId String
+  order            Order                       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId          String
+  createdAt        DateTime                    @default(now())
+
+  @@unique([invoiceRequestId, orderId])
+  @@index([orderId])
   @@index([invoiceRequestId])
 }
 
@@ -652,6 +671,9 @@ model Order {
   mergeSources          OrderMerge[]  @relation("OrderMergeSource")
   mergeTargets          OrderMerge[]  @relation("OrderMergeTarget")
   receipts              FinanceReceipt[]
+  invoiceCoverage       OrderInvoiceCoverage[]
+  invoiceRequests       ExternalOrderInvoiceRequest[]  @relation("OrderInvoiceRequests")
+  financeCosts          FinanceCost[]
 
   @@index([source, externalOrderNo])
   @@index([merchantOrderNo])
@@ -761,6 +783,30 @@ model OrderMerge {
 
   @@unique([sourceOrderId, targetOrderId])
   @@index([targetOrderId])
+}
+
+model FinanceCost {
+  id          String    @id @default(cuid())
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  orderId     String?
+  order       Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  amount      Float
+  costType    String
+  occurredAt  DateTime  @default(now())
+  remark      String?
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([projectId])
+  @@index([occurredAt])
+  @@index([costType])
 }
 
 // ─── CRM Models ──────────────────────────────────────────────

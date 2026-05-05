@@ -157,7 +157,7 @@ function ProgressContent() {
             <Card key={i}>
               <CardContent className="p-4 space-y-2">
                 <div className="flex items-center justify-between gap-2 min-w-0">
-                  <span className="font-mono text-xs truncate">{String(item.externalOrderNo)}</span>
+                  <span className="font-mono text-xs truncate">{String(item.orderNo || item.externalOrderNo)}</span>
                   <Badge variant="outline" className="shrink-0 whitespace-nowrap">
                     {item.eventType === "PRODUCT_ORDER" ? "商品订单" : "服务订单(30%)"}
                   </Badge>
@@ -196,7 +196,7 @@ function ProgressContent() {
                 <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">暂无数据</td></tr>
               ) : orderItems.map((item, i) => (
                 <tr key={i} className="border-b">
-                  <td className="py-2 px-2 font-mono text-xs">{String(item.externalOrderNo)}</td>
+                  <td className="py-2 px-2 font-mono text-xs">{String(item.orderNo || item.externalOrderNo)}</td>
                   <td className="py-2 px-2 text-muted-foreground">{String(item.customerName || "-")}</td>
                   <td className="py-2 px-2 text-center"><Badge variant="outline">{String(item.financeCategory)}</Badge></td>
                   <td className="py-2 px-2 text-center">

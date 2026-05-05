@@ -4,14 +4,35 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { syncOrderInvoiceStatus } from "@/lib/external-order";
 
-async function syncInvoiceAndCoverageOrders(invoiceId: string, directOrderId: string) {
-  const coverageOrders = await prisma.externalOrderInvoiceCoverage.findMany({
+async function syncInvoiceAndCoverageOrders(invoiceId: string, directOrderId: string | null, orderId?: string | null) {
+  const legacyCoverage = await prisma.externalOrderInvoiceCoverage.findMany({
     where: { invoiceRequestId: invoiceId },
     select: { externalOrderId: true },
   });
-  const allOrderIds = [directOrderId, ...coverageOrders.map((c) => c.externalOrderId)];
-  for (const oid of allOrderIds) {
+  // Also check new OrderInvoiceCoverage
+  const newCoverage = await prisma.orderInvoiceCoverage.findMany({
+    where: { invoiceRequestId: invoiceId },
+    select: { orderId: true },
+  });
+  // Sync all legacy externalOrderIds
+  const allExtIds = [directOrderId, ...legacyCoverage.map((c) => c.externalOrderId)].filter(Boolean) as string[];
+  for (const oid of allExtIds) {
     await syncOrderInvoiceStatus(prisma, oid);
+  }
+  // Sync all new orderIds
+  const allOrderIds = [orderId, ...newCoverage.map((c) => c.orderId)].filter(Boolean) as string[];
+  for (const oid of allOrderIds) {
+    // Find the matching externalOrderId if any (for legacy sync)
+    const legacyId = await prisma.externalOrder.findFirst({
+      where: { id: oid },
+      select: { id: true },
+    }).then((e) => e?.id ?? null);
+    if (legacyId) {
+      await syncOrderInvoiceStatus(prisma, legacyId, oid);
+    } else {
+      // New-style: only Order, no ExternalOrder
+      await syncOrderInvoiceStatus(prisma, oid, oid);
+    }
   }
 }
 
@@ -30,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params;
   const invoice = await prisma.externalOrderInvoiceRequest.findUnique({
     where: { id },
-    select: { externalOrderId: true, status: true, buyerTaxIdFromLookup: true },
+    select: { externalOrderId: true, orderId: true, status: true, buyerTaxIdFromLookup: true },
   });
   if (!invoice) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -74,7 +95,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       where: { id }, data,
       include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
     });
-    await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId);
+    await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId, invoice.orderId);
     return NextResponse.json({ invoice: updated });
   }
 
@@ -157,6 +178,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     include: { items: { orderBy: { sortOrder: "asc" } }, createdBy: { select: { id: true, name: true } } },
   });
 
-  await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId);
+  await syncInvoiceAndCoverageOrders(id, invoice.externalOrderId, invoice.orderId);
   return NextResponse.json({ invoice: updated });
 }

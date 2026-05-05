@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -27,6 +28,7 @@ import {
   Sparkles,
   ClipboardCopy,
   Receipt,
+  Package,
 } from "lucide-react";
 import { ProjectItem, TimelineItem, TicketItem, TicketReplyItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -864,7 +866,7 @@ export default function ProjectDetailPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={!isRep ? { gridTemplateColumns: "repeat(4, 1fr)" } : undefined}>
+        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={!isRep ? { gridTemplateColumns: "repeat(5, 1fr)" } : undefined}>
           <TabsTrigger value="timeline">
             <Activity className="mr-2 h-4 w-4" />
             时间流
@@ -877,6 +879,12 @@ export default function ProjectDetailPage() {
             <Paperclip className="mr-2 h-4 w-4" />
             文件
           </TabsTrigger>
+          {!isRep && (
+            <TabsTrigger value="orders">
+              <Package className="mr-2 h-4 w-4" />
+              关联订单
+            </TabsTrigger>
+          )}
           {!isRep && (
             <TabsTrigger value="invoices">
               <FileText className="mr-2 h-4 w-4" />
@@ -1334,6 +1342,38 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </TabsContent>
+
+        {/* Orders Tab */}
+        {!isRep && (
+          <TabsContent value="orders" className="space-y-4">
+            {project.orderLinks && project.orderLinks.length > 0 ? (
+              project.orderLinks.map((link) => (
+                <Card key={link.id} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Link href={`/orders/${link.order.id}`} className="font-medium text-primary hover:underline">
+                        {link.order.orderNo}
+                      </Link>
+                      <div className="text-sm text-muted-foreground">{link.order.title}</div>
+                    </div>
+                    <Badge variant="outline">{link.treatment}</Badge>
+                  </div>
+                  <div className="flex gap-2 mt-2 text-xs text-muted-foreground flex-wrap">
+                    <span>来源: {link.order.source}</span>
+                    <span>分类: {link.order.category}</span>
+                    <span>状态: {link.order.status} / {link.order.deliveryStatus}</span>
+                    <span className="font-medium">¥{(link.order.financeAmountOverride ?? link.order.totalAmount).toLocaleString()}</span>
+                    {link.allocatedAmount != null && <span>分摊: ¥{link.allocatedAmount.toLocaleString()}</span>}
+                  </div>
+                </Card>
+              ))
+            ) : (
+              <div className="text-sm text-muted-foreground py-8 text-center">
+                暂无关联订单。在 <Link href="/orders" className="text-primary underline">订单管理</Link> 中绑定项目。
+              </div>
+            )}
+          </TabsContent>
+        )}
 
         {/* Invoices Tab */}
         {!isRep && (

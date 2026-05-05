@@ -4,8 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { isFinanceBlocked, getFinanceProjectScopeWhere, getFinanceCustomerScopeWhere } from "@/lib/finance/permissions";
 import { prisma } from "@/lib/prisma";
 import { isProductProject } from "@/lib/finance/types";
-import { getProjectStartDate, getOrderDate, getOrderEffectiveTreatment, computeOrderFinanceAmount } from "@/lib/finance/progress";
-import { resolveProjectCompletionDate } from "@/lib/finance/progress";
+import { getProjectStartDate, getOrderDate, getOrderEffectiveTreatment, computeOrderFinanceAmount, resolveProjectCompletionDate } from "@/lib/finance/progress";
 
 function getWeekRange() {
   const now = new Date();
@@ -51,18 +50,45 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const orderWhere: Record<string, unknown> = { mergedIntoId: null };
-  if (customerScope) orderWhere.customerId = { in: customerScope.id.in };
+  // Order scope: customerScope OR projectScope→linked orders
+  const orderOrConditions: Record<string, unknown>[] = [];
+  if (customerScope) orderOrConditions.push({ customerId: { in: customerScope.id.in } });
+  if (session.user.role !== "ADMIN") {
+    const projScope = await getFinanceProjectScopeWhere(session.user.id, session.user.role);
+    if (projScope) {
+      const projectOrders = await prisma.orderProjectLink.findMany({
+        where: { projectId: { in: projScope.id.in } },
+        select: { orderId: true },
+        distinct: ["orderId"],
+      });
+      if (projectOrders.length > 0) orderOrConditions.push({ id: { in: projectOrders.map((l) => l.orderId) } });
+    }
+  }
+  const orderWhere: Record<string, unknown> = { deleted: false };
+  if (orderOrConditions.length === 1) Object.assign(orderWhere, orderOrConditions[0]);
+  else if (orderOrConditions.length > 1) orderWhere.OR = orderOrConditions;
 
-  const allOrders = await prisma.externalOrder.findMany({
+  const allOrders = await prisma.order.findMany({
     where: orderWhere,
     select: {
-      id: true, externalOrderNo: true, paidAmount: true,
-      financeCategory: true, financeTreatment: true, financeAmountOverride: true, projectId: true,
-      orderAt: true, paidAt: true, createdAt: true,
+      id: true, orderNo: true, totalAmount: true,
+      category: true, financeTreatment: true, financeAmountOverride: true,
+      orderedAt: true, confirmedAt: true, createdAt: true,
       customer: { select: { id: true, name: true } },
     },
   });
+
+  // Pre-fetch project links for AUTO resolution
+  const orderIds = allOrders.map((o) => o.id);
+  const linkMap = new Map<string, boolean>();
+  if (orderIds.length > 0) {
+    const links = await prisma.orderProjectLink.findMany({
+      where: { orderId: { in: orderIds } },
+      select: { orderId: true },
+      distinct: ["orderId"],
+    });
+    for (const l of links) linkMap.set(l.orderId, true);
+  }
 
   const projectItems: Array<Record<string, unknown>> = [];
   const orderItems: Array<Record<string, unknown>> = [];
@@ -115,27 +141,27 @@ export async function GET(req: NextRequest) {
   let orderProductTotal = 0;
 
   for (const o of allOrders) {
-    const treatment = getOrderEffectiveTreatment(o);
+    const treatment = getOrderEffectiveTreatment(o.financeTreatment, linkMap.has(o.id));
     if (treatment !== "STANDALONE") continue;
     const orderDate = getOrderDate(o);
     if (orderDate < range.start || orderDate > range.end) continue;
     const amount = computeOrderFinanceAmount(o);
-    const category = o.financeCategory;
-    if (category === "PRODUCT") {
+    const cat = o.category;
+    if (cat === "PRODUCT") {
       orderProductTotal += amount;
       orderItems.push({
-        orderId: o.id, externalOrderNo: o.externalOrderNo,
+        orderId: o.id, orderNo: o.orderNo,
         customerName: o.customer?.name || "",
-        financeCategory: category,
+        financeCategory: cat,
         eventType: "PRODUCT_ORDER", eventDate: orderDate.toISOString(),
         amount, receivableAmount: amount, rate: 1,
       });
     } else {
       orderDepositTotal += amount * 0.3;
       orderItems.push({
-        orderId: o.id, externalOrderNo: o.externalOrderNo,
+        orderId: o.id, orderNo: o.orderNo,
         customerName: o.customer?.name || "",
-        financeCategory: category,
+        financeCategory: cat,
         eventType: "SERVICE_ORDER_DEPOSIT", eventDate: orderDate.toISOString(),
         amount, receivableAmount: amount * 0.3, rate: 0.3,
       });

@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/finance/stat-card";
 import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
 import type { CustomerFinanceDetail } from "@/lib/finance/types";
-import { getOrderEffectiveTreatment } from "@/lib/finance/types";
+
 import { useMediaQuery } from "@/hooks/use-media-query";
 import {
   Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
@@ -48,6 +48,7 @@ function CustomerFinanceDetail() {
       return res.json();
     },
   });
+
 
   if (isLoading) {
     return (
@@ -189,12 +190,12 @@ function CustomerFinanceDetail() {
                   <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">暂无订单</td></tr>
                 ) : (
                   data.onlineOrders.map((o) => {
-                    const treatment = getOrderEffectiveTreatment(o);
+                    const label = o.financeTreatment === "AUTO" ? "自动" : o.financeTreatment === "PROJECT_INCLUDED" ? "并入项目" : o.financeTreatment === "STANDALONE" ? "独立计入" : o.financeTreatment === "EXCLUDED" ? "排除" : o.financeTreatment;
                     return (
                     <tr key={o.id} className="border-b">
-                      <td className="py-2 px-2 font-mono text-xs">{o.externalOrderNo}</td>
-                      <td className="py-2 px-2 text-right">{(o.paidAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                      <td className="py-2 px-2 text-muted-foreground">{o.orderAt ? new Date(o.orderAt).toLocaleDateString("zh-CN") : "-"}</td>
+                      <td className="py-2 px-2 font-mono text-xs">{o.orderNo}</td>
+                      <td className="py-2 px-2 text-right">{(o.totalAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
+                      <td className="py-2 px-2 text-muted-foreground">{o.orderedAt ? new Date(o.orderedAt).toLocaleDateString("zh-CN") : "-"}</td>
                       <td className="py-2 px-2 text-center">
                         <Badge variant={o.customerMatchStatus === "AUTO_MATCHED" ? "default" : "outline"}>
                           {o.customerMatchStatus === "AUTO_MATCHED" ? "自动匹配" : o.customerMatchStatus === "MANUAL_MATCHED" ? "人工绑定" : o.customerMatchStatus}
@@ -202,13 +203,11 @@ function CustomerFinanceDetail() {
                       </td>
                       <td className="py-2 px-2 text-center">
                         <Badge variant={
-                          treatment === "STANDALONE" ? "default" :
-                          treatment === "PROJECT_INCLUDED" ? "secondary" :
-                          treatment === "EXCLUDED" ? "destructive" : "outline"
+                          o.financeTreatment === "STANDALONE" ? "default" :
+                          o.financeTreatment === "PROJECT_INCLUDED" ? "secondary" :
+                          o.financeTreatment === "EXCLUDED" ? "destructive" : "outline"
                         }>
-                          {treatment === "STANDALONE" ? "独立计入" :
-                           treatment === "PROJECT_INCLUDED" ? "已并入项目" :
-                           treatment === "EXCLUDED" ? "已排除" : treatment}
+                          {label}
                         </Badge>
                       </td>
                     </tr>
