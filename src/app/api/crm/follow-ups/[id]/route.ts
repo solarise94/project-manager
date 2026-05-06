@@ -37,6 +37,10 @@ export async function PATCH(
   if (body.dueAt !== undefined) {
     data.dueAt = new Date(body.dueAt);
     data.reminderSent = false;
+    data.reminderStatus = "PENDING";
+    data.reminderLockedAt = null;
+    data.reminderSentAt = null;
+    data.reminderError = null;
   }
 
   if (body.status === "DONE") {

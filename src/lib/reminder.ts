@@ -4,60 +4,117 @@ import { sendMailInBackground } from "./mail";
 export async function checkAndSendReminders() {
   const now = new Date();
 
-  // Find all tickets with reminderDate that has already passed and not yet sent
+  // Recover stuck PROCESSING records (locked > 10 min ago)
+  const stuckCutoff = new Date(now.getTime() - 10 * 60 * 1000);
+  const recovered = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE Ticket
+       SET reminderStatus = 'PENDING',
+           reminderLockedAt = NULL,
+           reminderError = 'Recovered from stuck PROCESSING'
+     WHERE reminderStatus = 'PROCESSING'
+       AND reminderLockedAt IS NOT NULL
+       AND reminderLockedAt <= ?
+     RETURNING id`,
+    stuckCutoff.toISOString(),
+  );
+  if (recovered.length > 0) {
+    console.log(`[REMINDER][TICKET] Recovered ${recovered.length} stuck PROCESSING records`);
+  }
+
+  // Atomically lock candidates: PENDING/FAILED → PROCESSING
+  const locked = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE Ticket
+       SET reminderStatus = 'PROCESSING',
+           reminderLockedAt = ?
+     WHERE reminderDate IS NOT NULL
+       AND reminderDate <= ?
+       AND reminderStatus IN ('PENDING', 'FAILED')
+       AND status != 'CLOSED'
+       AND id IN (
+         SELECT id FROM Ticket
+         WHERE reminderDate IS NOT NULL
+           AND reminderDate <= ?
+           AND reminderStatus IN ('PENDING', 'FAILED')
+           AND status != 'CLOSED'
+         LIMIT 200
+       )
+     RETURNING id`,
+    now.toISOString(),
+    now.toISOString(),
+    now.toISOString(),
+  );
+
+  if (locked.length === 0) {
+    console.log("[REMINDER][TICKET] No pending ticket reminders");
+    return { processed: 0, failed: 0 };
+  }
+
+  const lockedIds = locked.map((r) => r.id);
+
   const tickets = await prisma.ticket.findMany({
-    where: {
-      reminderDate: {
-        lte: now,
-      },
-      reminderSent: false,
-      status: {
-        not: "CLOSED",
-      },
-    },
+    where: { id: { in: lockedIds } },
     include: {
       project: { select: { name: true, id: true } },
     },
   });
 
+  let processed = 0;
+  let failed = 0;
+
   for (const ticket of tickets) {
     try {
-      // Find the creator from activity log (first TICKET_CREATED for this ticket)
-      const activity = await prisma.activityLog.findFirst({
-        where: {
-          type: "TICKET_CREATED",
-          projectId: ticket.projectId,
-          metadata: {
-            contains: ticket.id,
-          },
-        },
-        include: {
-          user: { select: { email: true, name: true, id: true, emailOnReminder: true } },
-        },
-        orderBy: { createdAt: "asc" },
-      });
-
-      const creator = activity?.user;
-
-      // Create in-app notification first
-      if (creator?.id) {
-        const shouldEmail = !!(creator.email && creator.emailOnReminder);
-        const notification = await prisma.notification.create({
+      if (!ticket.createdBy) {
+        console.log(`[REMINDER][TICKET] Ticket ${ticket.id} has no createdBy, cannot deliver notification`);
+        await prisma.ticket.update({
+          where: { id: ticket.id },
           data: {
-            userId: creator.id,
-            title: `工单提醒: ${ticket.title}`,
-            content: `工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。`,
-            type: "REMINDER",
-            link: `/projects/${ticket.projectId}`,
-            emailStatus: shouldEmail ? "pending" : null,
+            reminderStatus: "FAILED",
+            reminderError: "Ticket has no createdBy",
           },
         });
-        if (shouldEmail) {
-          sendMailInBackground({
-            to: creator.email!,
-            subject: `[SciManage] 工单提醒: ${ticket.title}`,
-            text: `您好，\n\n您创建的工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。\n\n---\nSciManage 科研项目管理平台`,
-            html: `
+        failed++;
+        continue;
+      }
+
+      const creator = await prisma.user.findUnique({
+        where: { id: ticket.createdBy },
+        select: { id: true, email: true, name: true, emailOnReminder: true },
+      });
+
+      if (!creator?.id) {
+        console.log(`[REMINDER][TICKET] Creator ${ticket.createdBy} not found for ticket ${ticket.id}`);
+        await prisma.ticket.update({
+          where: { id: ticket.id },
+          data: {
+            reminderStatus: "FAILED",
+            reminderError: `Creator user ${ticket.createdBy} not found`,
+          },
+        });
+        failed++;
+        continue;
+      }
+
+      const shouldEmail = !!(creator.email && creator.emailOnReminder);
+
+      const notification = await prisma.notification.create({
+        data: {
+          userId: creator.id,
+          title: `工单提醒: ${ticket.title}`,
+          content: `工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。`,
+          type: "REMINDER",
+          link: `/projects/${ticket.projectId}`,
+          emailStatus: shouldEmail ? "pending" : null,
+        },
+      });
+
+      console.log(`[REMINDER][TICKET] Notification created for ticket ${ticket.id} -> user ${creator.id}`);
+
+      if (shouldEmail) {
+        sendMailInBackground({
+          to: creator.email!,
+          subject: `[SciManage] 工单提醒: ${ticket.title}`,
+          text: `您好，\n\n您创建的工单 "${ticket.title}"（项目: ${ticket.project.name}）即将到达提醒时间，请关注处理进度。\n\n---\nSciManage 科研项目管理平台`,
+          html: `
       <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
         <h2 style="color: #2563eb;">SciManage 工单提醒</h2>
         <p>您好，</p>
@@ -68,32 +125,87 @@ export async function checkAndSendReminders() {
         <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台</p>
       </div>
     `,
-          }, notification.id);
-        }
+        }, notification.id);
       }
 
       await prisma.ticket.update({
         where: { id: ticket.id },
-        data: { reminderSent: true },
+        data: {
+          reminderStatus: "SENT",
+          reminderSentAt: new Date(),
+          reminderSent: true,
+        },
       });
+      processed++;
     } catch (err) {
-      console.error("Failed to send reminder for ticket", ticket.id, err);
+      const msg = err instanceof Error ? err.message : "未知错误";
+      console.error(`[REMINDER][TICKET] Failed for ticket ${ticket.id}:`, msg);
+      await prisma.ticket.update({
+        where: { id: ticket.id },
+        data: {
+          reminderStatus: "FAILED",
+          reminderError: msg.slice(0, 500),
+        },
+      }).catch(() => {});
+      failed++;
     }
   }
 
-  return tickets.length;
+  console.log(`[REMINDER][TICKET] Scan complete: processed=${processed} failed=${failed}`);
+  return { processed, failed };
 }
 
 export async function checkAndSendCrmFollowUpReminders() {
   const now = new Date();
   const soon = new Date(now.getTime() + 30 * 60 * 1000);
 
+  // Recover stuck PROCESSING records (locked > 10 min ago)
+  const stuckCutoff = new Date(now.getTime() - 10 * 60 * 1000);
+  const recovered = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE CrmFollowUpTask
+       SET reminderStatus = 'PENDING',
+           reminderLockedAt = NULL,
+           reminderError = 'Recovered from stuck PROCESSING'
+     WHERE reminderStatus = 'PROCESSING'
+       AND reminderLockedAt IS NOT NULL
+       AND reminderLockedAt <= ?
+     RETURNING id`,
+    stuckCutoff.toISOString(),
+  );
+  if (recovered.length > 0) {
+    console.log(`[REMINDER][CRM] Recovered ${recovered.length} stuck PROCESSING records`);
+  }
+
+  // Atomically lock candidates: PENDING/FAILED → PROCESSING
+  const locked = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE CrmFollowUpTask
+       SET reminderStatus = 'PROCESSING',
+           reminderLockedAt = ?
+     WHERE status = 'OPEN'
+       AND dueAt <= ?
+       AND reminderStatus IN ('PENDING', 'FAILED')
+       AND id IN (
+         SELECT id FROM CrmFollowUpTask
+         WHERE status = 'OPEN'
+           AND dueAt <= ?
+           AND reminderStatus IN ('PENDING', 'FAILED')
+         LIMIT 200
+       )
+     RETURNING id`,
+    now.toISOString(),
+    soon.toISOString(),
+    soon.toISOString(),
+  );
+
+  if (locked.length === 0) {
+    console.log("[REMINDER][CRM] No pending CRM follow-up reminders");
+    return { processed: 0, failed: 0 };
+  }
+
+  const lockedIds = locked.map((r) => r.id);
+
   const tasks = await prisma.crmFollowUpTask.findMany({
-    where: {
-      status: "OPEN",
-      reminderSent: false,
-      dueAt: { lte: soon },
-    },
+    where: { id: { in: lockedIds } },
     include: {
       ownerUser: { select: { id: true, name: true, email: true, emailOnReminder: true } },
       profile: {
@@ -103,6 +215,9 @@ export async function checkAndSendCrmFollowUpReminders() {
       },
     },
   });
+
+  let processed = 0;
+  let failed = 0;
 
   for (const task of tasks) {
     try {
@@ -120,6 +235,8 @@ export async function checkAndSendCrmFollowUpReminders() {
           emailStatus: shouldEmail ? "pending" : null,
         },
       });
+
+      console.log(`[REMINDER][CRM] Notification created for task ${task.id} -> user ${user.id}`);
 
       if (shouldEmail) {
         sendMailInBackground({
@@ -141,45 +258,48 @@ export async function checkAndSendCrmFollowUpReminders() {
 
       await prisma.crmFollowUpTask.update({
         where: { id: task.id },
-        data: { reminderSent: true },
+        data: {
+          reminderStatus: "SENT",
+          reminderSentAt: new Date(),
+          reminderSent: true,
+        },
       });
+      processed++;
     } catch (err) {
-      console.error("Failed to send CRM follow-up reminder for task", task.id, err);
+      const msg = err instanceof Error ? err.message : "未知错误";
+      console.error(`[REMINDER][CRM] Failed for task ${task.id}:`, msg);
+      await prisma.crmFollowUpTask.update({
+        where: { id: task.id },
+        data: {
+          reminderStatus: "FAILED",
+          reminderError: msg.slice(0, 500),
+        },
+      }).catch(() => {});
+      failed++;
     }
   }
 
-  return tasks.length;
+  console.log(`[REMINDER][CRM] Scan complete: processed=${processed} failed=${failed}`);
+  return { processed, failed };
 }
 
-let intervalId: NodeJS.Timeout | null = null;
+export async function runAllReminders() {
+  const start = Date.now();
+  console.log("[REMINDER] Starting reminder scan...");
 
-export function startReminderScheduler(intervalMinutes = 5) {
-  if (intervalId) return;
-  console.log(`Starting reminder scheduler (every ${intervalMinutes} minutes)`);
-  checkAndSendReminders().catch(console.error);
-  checkAndSendCrmFollowUpReminders().catch(console.error);
-  intervalId = setInterval(() => {
-    checkAndSendReminders().catch(console.error);
-    checkAndSendCrmFollowUpReminders().catch(console.error);
-  }, intervalMinutes * 60 * 1000);
-}
+  const [ticketResult, crmResult] = await Promise.all([
+    checkAndSendReminders(),
+    checkAndSendCrmFollowUpReminders(),
+  ]);
 
-export function stopReminderScheduler() {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
-}
+  const durationMs = Date.now() - start;
+  console.log(`[REMINDER] Scan finished: tickets=${ticketResult.processed}/${ticketResult.processed + ticketResult.failed} crm=${crmResult.processed}/${crmResult.processed + crmResult.failed} durationMs=${durationMs}`);
 
-// Global flag to prevent multiple schedulers in dev mode
-const GLOBAL_KEY = "__scimanage_reminder_scheduler_started__";
-
-export function ensureSchedulerStarted() {
-  if (typeof globalThis !== "undefined") {
-    const g = globalThis as Record<string, unknown>;
-    if (!g[GLOBAL_KEY]) {
-      g[GLOBAL_KEY] = true;
-      startReminderScheduler(5);
-    }
-  }
+  return {
+    ticketProcessed: ticketResult.processed,
+    crmProcessed: crmResult.processed,
+    ticketFailed: ticketResult.failed,
+    crmFailed: crmResult.failed,
+    durationMs,
+  };
 }

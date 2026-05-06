@@ -6,12 +6,6 @@ import { Sidebar } from "@/components/sidebar";
 import { Header } from "@/components/header";
 import { MobileNav } from "@/components/mobile-nav";
 import { RuntimeDebugPanel } from "@/components/runtime-debug-panel";
-import { ensureSchedulerStarted } from "@/lib/reminder";
-
-// Only start scheduler in development; production should use external cron
-if (typeof window === "undefined" && process.env.NODE_ENV === "development") {
-  ensureSchedulerStarted();
-}
 
 const geistSans = Geist({
   variable: "--font-sans",

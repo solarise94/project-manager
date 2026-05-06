@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, isRepresentative } from "@/lib/permissions";
+import { canManageTicket } from "@/lib/permissions";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -24,16 +24,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "项目已删除，无法修改工单" }, { status: 400 });
     }
 
-    if (isRepresentative(session.user.role)) {
+    const canManage = await canManageTicket(existing.projectId, session.user.id, session.user.role);
+    if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    if (session.user.role !== "ADMIN") {
-      try {
-        await assertProjectMember(existing.projectId, session.user.id);
-      } catch {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
     }
 
     const updateData: Record<string, unknown> = {};
@@ -43,6 +36,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (reminderDate !== undefined) {
       updateData.reminderDate = reminderDate ? new Date(reminderDate) : null;
       updateData.reminderSent = false;
+      updateData.reminderStatus = "PENDING";
+      updateData.reminderLockedAt = null;
+      updateData.reminderSentAt = null;
+      updateData.reminderError = null;
     }
 
     const updated = await prisma.ticket.update({
@@ -117,16 +114,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       return NextResponse.json({ error: "项目已删除，无法删除工单" }, { status: 400 });
     }
 
-    if (isRepresentative(session.user.role)) {
+    const canManage = await canManageTicket(existing.projectId, session.user.id, session.user.role);
+    if (!canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    if (session.user.role !== "ADMIN") {
-      try {
-        await assertProjectMember(existing.projectId, session.user.id);
-      } catch {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
     }
 
     await prisma.$transaction([

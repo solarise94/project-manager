@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle, Mail, MailX, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   REMINDER: Clock,
@@ -28,9 +29,12 @@ const TYPE_COLORS: Record<string, string> = {
   SYSTEM: "text-slate-500",
 };
 
+const REMINDER_TYPES = new Set(["REMINDER", "CRM_FOLLOW_UP_REMINDER"]);
+
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
+  const seenReminderIds = useRef<Set<string>>(new Set());
 
   const { data, isLoading } = useQuery<{ notifications: NotificationItem[]; unreadCount: number }>({
     queryKey: ["notifications"],
@@ -41,6 +45,26 @@ export function NotificationCenter() {
     },
     refetchInterval: 30000,
   });
+
+  // Toast for new unread reminder notifications
+  useEffect(() => {
+    if (!data?.notifications) return;
+    for (const n of data.notifications) {
+      if (!n.read && REMINDER_TYPES.has(n.type) && !seenReminderIds.current.has(n.id)) {
+        seenReminderIds.current.add(n.id);
+        toast(n.title, {
+          description: n.content.length > 80 ? n.content.slice(0, 80) + "..." : n.content,
+          action: {
+            label: "查看",
+            onClick: () => {
+              if (n.link) window.location.href = n.link;
+            },
+          },
+          duration: 6000,
+        });
+      }
+    }
+  }, [data]);
 
   const markReadMutation = useMutation({
     mutationFn: async (id: string) => {

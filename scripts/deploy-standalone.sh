@@ -52,6 +52,7 @@ TENCENTCLOUD_SECRET_ID_VALUE="${TENCENTCLOUD_SECRET_ID:-}"
 TENCENTCLOUD_SECRET_KEY_VALUE="${TENCENTCLOUD_SECRET_KEY:-}"
 TENCENT_MAP_KEY_VALUE="${TENCENT_MAP_KEY:-}"
 NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE="${NEXT_PUBLIC_TENCENT_MAP_KEY:-}"
+REMINDER_CRON_TOKEN_VALUE="${REMINDER_CRON_TOKEN:-}"
 
 # Persistent config files live next to the database, survive deploys.
 SMTP_CONF="$(dirname "${RUNTIME_DB}")/smtp.conf"
@@ -60,6 +61,7 @@ TAVILY_CONF="$(dirname "${RUNTIME_DB}")/tavily.conf"
 TENCENT_ASR_CONF="$(dirname "${RUNTIME_DB}")/tencent-asr.conf"
 TENCENT_MAP_CONF="$(dirname "${RUNTIME_DB}")/tencent-map.conf"
 APP_CONF="$(dirname "${RUNTIME_DB}")/app.conf"
+REMINDER_CONF="$(dirname "${RUNTIME_DB}")/reminder.conf"
 
 # URL priority: shell NEXTAUTH_URL > shell APP_BASE_URL > app.conf > existing .env > script arg > hardcoded default
 NEXTAUTH_URL_VALUE="${NEXTAUTH_URL:-}"
@@ -255,6 +257,30 @@ if [[ -f "${EXISTING_ENV_FILE}" ]]; then
   done < <(grep -E '^APP_BASE_URL=' "${EXISTING_ENV_FILE}" || true)
 fi
 
+# Read reminder token: shell env > reminder.conf > existing runtime .env.
+if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" && -f "${REMINDER_CONF}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      REMINDER_CRON_TOKEN) [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]] && REMINDER_CRON_TOKEN_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^REMINDER_CRON_TOKEN=' "${REMINDER_CONF}" || true)
+fi
+
+if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" && -f "${EXISTING_ENV_FILE}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      REMINDER_CRON_TOKEN) [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]] && REMINDER_CRON_TOKEN_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^REMINDER_CRON_TOKEN=' "${EXISTING_ENV_FILE}" || true)
+fi
+
+if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
+  REMINDER_CRON_TOKEN_VALUE="$(node -e 'const crypto = require("crypto"); process.stdout.write(crypto.randomUUID() + crypto.randomUUID())')"
+  echo "  Generated REMINDER_CRON_TOKEN for standalone reminder timer"
+fi
+
 # Resolve NEXTAUTH_URL: shell NEXTAUTH_URL > APP_BASE_URL (shell > app.conf > .env) > script default > hardcoded
 if [[ -z "${NEXTAUTH_URL_VALUE}" ]]; then
   NEXTAUTH_URL_VALUE="${APP_BASE_URL_VALUE:-${SCRIPT_DEFAULT_URL:-http://localhost:3000}}"
@@ -293,6 +319,8 @@ echo "[6/8] Writing runtime .env..."
   echo "# Standalone server bind settings."
   echo "PORT=\"$(dotenv_quote "${PORT}")\""
   echo "HOSTNAME=\"$(dotenv_quote "${BIND_HOST}")\""
+  echo "# Internal reminder cron"
+  echo "REMINDER_CRON_TOKEN=\"$(dotenv_quote "${REMINDER_CRON_TOKEN_VALUE}")\""
 } > "${TARGET_DIR}/.env"
 
 echo "[7/8] Writing ${SERVICE_NAME} unit..."
@@ -315,10 +343,44 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
+REMINDER_SERVICE_NAME="${SERVICE_NAME%.service}-reminder.service"
+REMINDER_TIMER_NAME="${SERVICE_NAME%.service}-reminder.timer"
+REMINDER_SERVICE_FILE="${HOME}/.config/systemd/user/${REMINDER_SERVICE_NAME}"
+REMINDER_TIMER_FILE="${HOME}/.config/systemd/user/${REMINDER_TIMER_NAME}"
+
+echo "[7.5/8] Writing reminder timer units..."
+cat > "${REMINDER_SERVICE_FILE}" <<EOF
+[Unit]
+Description=Task Manager Reminder Runner (${SERVICE_NAME})
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${TARGET_DIR}
+EnvironmentFile=${TARGET_DIR}/.env
+ExecStart=/bin/bash -c 'set -a; source ${TARGET_DIR}/.env; set +a; exec curl -fsS -X POST -H "Authorization: Bearer \${REMINDER_CRON_TOKEN}" http://127.0.0.1:${PORT}/api/internal/reminders/run'
+EOF
+
+cat > "${REMINDER_TIMER_FILE}" <<EOF
+[Unit]
+Description=Task Manager Reminder Timer (${SERVICE_NAME})
+Requires=${REMINDER_SERVICE_NAME}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 echo "[8/8] Restarting ${SERVICE_NAME}..."
 systemctl --user daemon-reload
 systemctl --user restart "${SERVICE_NAME}"
+systemctl --user enable --now "${REMINDER_TIMER_NAME}"
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
+systemctl --user --no-pager --full status "${REMINDER_TIMER_NAME}" | sed -n '1,20p'
 
 echo ""
 echo "Smoke-testing /api/auth/session on port ${PORT}..."
