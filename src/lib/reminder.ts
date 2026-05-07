@@ -3,7 +3,10 @@ import { sendMailInBackground } from "./mail";
 
 export async function checkAndSendReminders() {
   const now = new Date();
+  const nowMs = now.getTime();
 
+  // SQLite stores Prisma DateTime values as integer milliseconds here.
+  // Use numeric comparisons, not ISO strings, or future reminders will match early.
   // Recover stuck PROCESSING records (locked > 10 min ago)
   const stuckCutoff = new Date(now.getTime() - 10 * 60 * 1000);
   const recovered = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
@@ -15,7 +18,7 @@ export async function checkAndSendReminders() {
        AND reminderLockedAt IS NOT NULL
        AND reminderLockedAt <= ?
      RETURNING id`,
-    stuckCutoff.toISOString(),
+    stuckCutoff.getTime(),
   );
   if (recovered.length > 0) {
     console.log(`[REMINDER][TICKET] Recovered ${recovered.length} stuck PROCESSING records`);
@@ -39,9 +42,9 @@ export async function checkAndSendReminders() {
          LIMIT 200
        )
      RETURNING id`,
-    now.toISOString(),
-    now.toISOString(),
-    now.toISOString(),
+    nowMs,
+    nowMs,
+    nowMs,
   );
 
   if (locked.length === 0) {
@@ -157,8 +160,11 @@ export async function checkAndSendReminders() {
 
 export async function checkAndSendCrmFollowUpReminders() {
   const now = new Date();
+  const nowMs = now.getTime();
   const soon = new Date(now.getTime() + 30 * 60 * 1000);
+  const soonMs = soon.getTime();
 
+  // Same SQLite DateTime rule as ticket reminders: compare against integer ms.
   // Recover stuck PROCESSING records (locked > 10 min ago)
   const stuckCutoff = new Date(now.getTime() - 10 * 60 * 1000);
   const recovered = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
@@ -170,7 +176,7 @@ export async function checkAndSendCrmFollowUpReminders() {
        AND reminderLockedAt IS NOT NULL
        AND reminderLockedAt <= ?
      RETURNING id`,
-    stuckCutoff.toISOString(),
+    stuckCutoff.getTime(),
   );
   if (recovered.length > 0) {
     console.log(`[REMINDER][CRM] Recovered ${recovered.length} stuck PROCESSING records`);
@@ -192,9 +198,9 @@ export async function checkAndSendCrmFollowUpReminders() {
          LIMIT 200
        )
      RETURNING id`,
-    now.toISOString(),
-    soon.toISOString(),
-    soon.toISOString(),
+    nowMs,
+    soonMs,
+    soonMs,
   );
 
   if (locked.length === 0) {
