@@ -2,21 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectContextReadable, isRepresentative } from "@/lib/permissions";
+import { canReadProject, canManageProject } from "@/lib/permissions";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const { id: projectId } = await params;
-  try {
-    await assertProjectContextReadable(projectId, session.user.id, session.user.role);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg === "NOT_FOUND") return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const canRead = await canReadProject(projectId, session.user.id, session.user.role);
+  if (!canRead) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -35,21 +29,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const { id: projectId } = await params;
-  let project: { deleted: boolean } | undefined;
-  try {
-    project = await assertProjectContextReadable(projectId, session.user.id, session.user.role) as { deleted: boolean };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "";
-    if (msg === "NOT_FOUND") return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const canManage = await canManageProject(projectId, session.user.id, session.user.role);
+  if (!canManage) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (project?.deleted) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { deleted: true },
+  });
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (project.deleted) {
     return NextResponse.json({ error: "已删除的项目不能新建开票申请" }, { status: 403 });
   }
 

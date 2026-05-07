@@ -32,6 +32,7 @@ interface CustomerMatchDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   orderId: string;
+  userId?: string;
   orderPrefill?: OrderPrefill;
   onBound: () => void;
 }
@@ -48,7 +49,7 @@ function extractOrgFromAddress(address: string | null): string {
   return "";
 }
 
-export function CustomerMatchDialog({ open, onOpenChange, orderId, orderPrefill, onBound }: CustomerMatchDialogProps) {
+export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, orderPrefill, onBound }: CustomerMatchDialogProps) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("existing");
   const [search, setSearch] = useState("");
@@ -113,10 +114,15 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, orderPrefill,
     if (!selectedId) return;
     setBinding(true);
     try {
-      const res = await fetch(`/api/finance/pingoodmice/${orderId}/bind-customer`, {
-        method: "POST",
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerId: selectedId }),
+        body: JSON.stringify({
+          customerId: selectedId,
+          customerMatchStatus: "MANUAL_MATCHED",
+          customerMatchScore: null,
+          customerMatchReason: `manual_bind_by_${userId || "unknown"}`,
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -182,10 +188,15 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, orderPrefill,
 
       const createdCustomer = newCust?.customer;
       if (createdCustomer?.id) {
-        const res = await fetch(`/api/finance/pingoodmice/${orderId}/bind-customer`, {
-          method: "POST",
+        const res = await fetch(`/api/orders/${orderId}`, {
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ customerId: createdCustomer.id }),
+          body: JSON.stringify({
+            customerId: createdCustomer.id,
+            customerMatchStatus: "MANUAL_MATCHED",
+            customerMatchScore: null,
+            customerMatchReason: `manual_bind_by_${userId || "unknown"}`,
+          }),
         });
         if (!res.ok) throw new Error("绑定失败");
         toast.success("客户创建并绑定成功");

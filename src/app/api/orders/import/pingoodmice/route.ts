@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
+import { normalizeOrderSource } from "@/lib/orders/constants";
 
 async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
   for (const row of rows) {
     // Check existing via OrderSourceRecord uniqueness
     const existingSrc = await prisma.orderSourceRecord.findUnique({
-      where: { source_externalOrderNo: { source: row.source, externalOrderNo: row.externalOrderNo } },
+      where: { source_externalOrderNo: { source: normalizeOrderSource(row.source), externalOrderNo: row.externalOrderNo } },
       select: { orderId: true },
     });
 
@@ -71,6 +72,7 @@ export async function POST(req: NextRequest) {
           buyerPhoneSnapshot: row.receiverPhone ?? undefined,
           buyerAddressSnapshot: row.receiverAddress ?? undefined,
           buyerWechatSnapshot: row.orderUser ?? undefined,
+          buyerOrgNameSnapshot: row.storeName ?? undefined,
           orderedAt: row.orderAt ?? undefined,
           confirmedAt: row.paidAt ?? undefined,
           title: row.productNamesRaw ?? undefined,
@@ -93,52 +95,54 @@ export async function POST(req: NextRequest) {
     }
     const orderNo = `${prefix}-${dateStr}-${String(seq).padStart(4, "0")}`;
 
-    // Create new order + source record
+    // Create new order + source record + line in a transaction
     const rawJson = JSON.stringify(row);
-    const order = await prisma.order.create({
-      data: {
-        orderNo,
-        source: row.source,
-        externalOrderNo: row.externalOrderNo,
-        merchantOrderNo: row.merchantOrderNo,
-        title: row.productNamesRaw || `${row.receiverName || "未知"}的拼好鼠订单`,
-        category: "UNKNOWN",
-        status: "CONFIRMED",
-        deliveryStatus: "DELIVERED",
-        orderedAt: row.orderAt ?? null,
-        confirmedAt: row.paidAt ?? null,
-        deliveredAt: row.paidAt ?? new Date(),
-        buyerNameSnapshot: row.receiverName,
-        buyerPhoneSnapshot: row.receiverPhone,
-        buyerAddressSnapshot: row.receiverAddress,
-        buyerWechatSnapshot: row.orderUser,
-        totalAmount,
-        createdById: session.user.id,
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      const order = await tx.order.create({
+        data: {
+          orderNo,
+          source: normalizeOrderSource(row.source),
+          sourcePlatform: row.platform || row.source,
+          externalOrderNo: row.externalOrderNo,
+          merchantOrderNo: row.merchantOrderNo,
+          title: row.productNamesRaw || `${row.receiverName || "未知"}的拼好鼠订单`,
+          category: "UNKNOWN",
+          status: "CONFIRMED",
+          deliveryStatus: "DELIVERED",
+          orderedAt: row.orderAt ?? null,
+          confirmedAt: row.paidAt ?? null,
+          deliveredAt: row.paidAt ?? new Date(),
+          buyerNameSnapshot: row.receiverName,
+          buyerPhoneSnapshot: row.receiverPhone,
+          buyerAddressSnapshot: row.receiverAddress,
+          buyerWechatSnapshot: row.orderUser,
+          buyerOrgNameSnapshot: row.storeName,
+          totalAmount,
+          createdById: session.user.id,
+        },
+      });
 
-    // Source record
-    await prisma.orderSourceRecord.create({
-      data: {
-        orderId: order.id,
-        source: row.source,
-        platform: row.platform,
-        externalOrderNo: row.externalOrderNo,
-        merchantOrderNo: row.merchantOrderNo,
-        rawJson,
-      },
-    });
+      await tx.orderSourceRecord.create({
+        data: {
+          orderId: order.id,
+          source: normalizeOrderSource(row.source),
+          platform: row.platform || row.source,
+          externalOrderNo: row.externalOrderNo,
+          merchantOrderNo: row.merchantOrderNo,
+          rawJson,
+        },
+      });
 
-    // Order line
-    const itemName = row.productNamesRaw || row.externalOrderNo || "拼好鼠订单";
-    await prisma.orderLine.create({
-      data: {
-        orderId: order.id,
-        itemName: String(itemName).slice(0, 200),
-        amount: totalAmount,
-        category: "UNKNOWN",
-        sortOrder: 0,
-      },
+      const itemName = row.productNamesRaw || row.externalOrderNo || "拼好鼠订单";
+      await tx.orderLine.create({
+        data: {
+          orderId: order.id,
+          itemName: String(itemName).slice(0, 200),
+          amount: totalAmount,
+          category: "UNKNOWN",
+          sortOrder: 0,
+        },
+      });
     });
 
     created++;

@@ -19,19 +19,19 @@ function extractPhones(s: string | null | undefined): string[] {
 
 export async function matchSourceOrders(source: string, orderIds?: string[]): Promise<MatchScanResult> {
   const baseWhere: Record<string, unknown> = orderIds?.length
-    ? { id: { in: orderIds }, mergedIntoId: null }
-    : { source, customerMatchStatus: "UNMATCHED", mergedIntoId: null };
+    ? { id: { in: orderIds }, deleted: false }
+    : { source, customerMatchStatus: "UNMATCHED", deleted: false, mergeSources: { none: {} } };
 
-  const orders = await prisma.externalOrder.findMany({
+  const orders = await prisma.order.findMany({
     where: baseWhere,
     select: {
       id: true,
       externalOrderNo: true,
-      receiverName: true,
-      receiverPhone: true,
-      receiverAddress: true,
-      orderUser: true,
-      storeName: true,
+      buyerNameSnapshot: true,
+      buyerPhoneSnapshot: true,
+      buyerAddressSnapshot: true,
+      buyerWechatSnapshot: true,
+      buyerOrgNameSnapshot: true,
       customerId: true,
     },
   });
@@ -130,7 +130,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
   for (const order of orders) {
     if (order.customerId) continue;
 
-    const orderOrgFromAddress = matchOrgAgainstOrderAddress(order.receiverAddress, order.storeName);
+    const orderOrgFromAddress = matchOrgAgainstOrderAddress(order.buyerAddressSnapshot, order.buyerOrgNameSnapshot);
 
     const candidates: Array<{ customerId: string; name: string; score: number; reason: string }> = [];
 
@@ -139,7 +139,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       let reason = "";
 
       // Layer 1: Wechat match
-      const orderUserNorm = normalizeText(order.orderUser);
+      const orderUserNorm = normalizeText(order.buyerWechatSnapshot);
       const wechatNorm = normalizeText(cust.wechat);
       if (orderUserNorm && wechatNorm && orderUserNorm === wechatNorm) {
         score = 100;
@@ -147,8 +147,8 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       }
 
       // Layer 2: Phone match
-      if (score === 0 && order.receiverPhone) {
-        const orderPhone = normalizePhone(order.receiverPhone);
+      if (score === 0 && order.buyerPhoneSnapshot) {
+        const orderPhone = normalizePhone(order.buyerPhoneSnapshot);
         const principalPhones = extractPhones(cust.principal);
         if (orderPhone && principalPhones.some((p) => normalizePhone(p) === orderPhone)) {
           score = 95;
@@ -158,7 +158,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
 
       // Layer 3: Name + Organization match (org from address, not storeName)
       if (score === 0 && orderOrgFromAddress) {
-        const orderName = normalizeText(order.receiverName);
+        const orderName = normalizeText(order.buyerNameSnapshot);
         const custName = normalizeText(cust.name);
         const custAliases = (cust.org?.aliases || []).map((a) => a.alias).filter(Boolean) as string[];
 
@@ -179,9 +179,9 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
 
       // Layer 4: Name + Address match
       if (score === 0) {
-        const orderName = normalizeText(order.receiverName);
+        const orderName = normalizeText(order.buyerNameSnapshot);
         const custName = normalizeText(cust.name);
-        const orderAddr = normalizeText(order.receiverAddress);
+        const orderAddr = normalizeText(order.buyerAddressSnapshot);
         const custAddr = normalizeText(cust.address);
 
         const nameExact = orderName && custName && orderName === custName;
@@ -210,7 +210,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       unmatched++;
       details.push({
         orderId: order.id,
-        externalOrderNo: order.externalOrderNo,
+        externalOrderNo: order.externalOrderNo ?? "",
         status: "UNMATCHED",
         score: null,
         matchedCustomerId: null,
@@ -222,7 +222,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       candidates[0].score - candidates[1].score >= 10
     ) {
       const best = candidates[0];
-      await prisma.externalOrder.update({
+      await prisma.order.update({
         where: { id: order.id },
         data: {
           customerId: best.customerId,
@@ -234,7 +234,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       matched++;
       details.push({
         orderId: order.id,
-        externalOrderNo: order.externalOrderNo,
+        externalOrderNo: order.externalOrderNo ?? "",
         status: "MATCHED",
         score: best.score,
         matchedCustomerId: best.customerId,
@@ -242,7 +242,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
         reason: best.reason,
       });
     } else {
-      await prisma.externalOrder.update({
+      await prisma.order.update({
         where: { id: order.id },
         data: {
           customerMatchStatus: "CONFLICT",
@@ -259,7 +259,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       conflicted++;
       details.push({
         orderId: order.id,
-        externalOrderNo: order.externalOrderNo,
+        externalOrderNo: order.externalOrderNo ?? "",
         status: "CONFLICT",
         score: candidates[0].score,
         matchedCustomerId: null,

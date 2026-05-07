@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, assertProjectOwner, isProjectOwner, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { canReadProject, canManageProject, buildProjectPermissions } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -54,46 +54,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     : null;
   const resolvedProject = { ...project, cust: resolvedCust };
 
-  // Representatives can access their own associated non-deleted projects
-  if (isRepresentative(session.user.role)) {
-    if (resolvedProject.deleted) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    const repProjectIds = await getRepresentativeProjectIds(session.user.id);
-    if (!repProjectIds.includes(id)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    const myTicketCount = await prisma.ticket.count({
-      where: { projectId: id, createdBy: session.user.id },
-    });
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { orderLinks: _orderLinks, ...restProject } = resolvedProject;
-    const result = {
-      ...restProject,
-      _count: {
-        tickets: myTicketCount,
-        comments: 0,
-        attachments: 0,
-      },
-    };
-    return NextResponse.json({ project: result as typeof project });
+  // Unified capability-based access check
+  const canRead = await canReadProject(id, session.user.id, session.user.role);
+  if (!canRead) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Deleted projects: only ADMIN or owner can access
-  if (resolvedProject.deleted) {
-    const isOwner = await isProjectOwner(id, session.user.id);
-    if (!isOwner && session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectMember(id, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
+  const permissions = await buildProjectPermissions(id, session.user.id, session.user.role);
 
-  return NextResponse.json({ project: resolvedProject });
+  return NextResponse.json({ project: resolvedProject, permissions });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -102,17 +71,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params;
 
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden: representatives cannot modify projects" }, { status: 403 });
-  }
-
-  // ADMIN can edit any project; non-admin must be project owner
-  if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectOwner(id, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
-    }
+  const canManage = await canManageProject(id, session.user.id, session.user.role);
+  if (!canManage) {
+    return NextResponse.json({ error: "Forbidden: only ADMIN or project owner can modify projects" }, { status: 403 });
   }
 
   try {
@@ -423,17 +384,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { id } = await params;
 
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden: representatives cannot delete projects" }, { status: 403 });
-  }
-
-  // ADMIN can delete any project; non-admin must be project owner
-  if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectOwner(id, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden: owner only" }, { status: 403 });
-    }
+  const canManage = await canManageProject(id, session.user.id, session.user.role);
+  if (!canManage) {
+    return NextResponse.json({ error: "Forbidden: only ADMIN or project owner can delete projects" }, { status: 403 });
   }
 
   try {

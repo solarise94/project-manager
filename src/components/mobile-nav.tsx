@@ -2,19 +2,38 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FolderKanban, Ticket, User, HeartHandshake } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { LayoutDashboard, Package, FolderKanban, HeartHandshake, Banknote } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { canAccessOrders, canAccessFinance } from "@/lib/role-guards";
 
-const navItems = [
-  { href: "/dashboard", label: "看板", icon: LayoutDashboard },
-  { href: "/projects", label: "项目", icon: FolderKanban },
-  { href: "/tickets", label: "工单", icon: Ticket },
-  { href: "/crm", label: "CRM", icon: HeartHandshake },
-  { href: "/profile", label: "我的", icon: User },
-];
+function useMobileNavItems() {
+  const { data: session } = useSession();
+  const role = session?.user?.role;
+
+  const items: { href: string; label: string; icon: React.ElementType }[] = [
+    { href: "/dashboard", label: "仪表盘", icon: LayoutDashboard },
+  ];
+
+  if (canAccessOrders(role)) {
+    items.push({ href: "/orders", label: "订单", icon: Package });
+  }
+
+  items.push(
+    { href: "/projects", label: "项目", icon: FolderKanban },
+    { href: "/crm", label: "CRM", icon: HeartHandshake }
+  );
+
+  if (canAccessFinance(role)) {
+    items.push({ href: "/finance", label: "财务", icon: Banknote });
+  }
+
+  return items;
+}
 
 export function MobileNav() {
   const pathname = usePathname();
+  const navItems = useMobileNavItems();
 
   return (
     <nav

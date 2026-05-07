@@ -29,6 +29,7 @@ import {
   ClipboardCopy,
   Receipt,
   Package,
+  X,
 } from "lucide-react";
 import { ProjectItem, TimelineItem, TicketItem, TicketReplyItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -129,9 +130,13 @@ export default function ProjectDetailPage() {
   const [replyContent, setReplyContent] = useState<Record<string, string>>({});
   const [showLowWeight, setShowLowWeight] = useState(false);
   const [pluginRunning, setPluginRunning] = useState(false);
+  const [editMembers, setEditMembers] = useState<Array<{ userId: string; role: string; user: { id: string; name: string; email: string } }>>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSearchResults, setMemberSearchResults] = useState<Array<{ id: string; name: string; email: string; role: string }>>([]);
+  const [memberSearching, setMemberSearching] = useState(false);
   const commentFileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: projectData, isLoading: projectLoading } = useQuery<{ project: ProjectItem }>({
+  const { data: projectData, isLoading: projectLoading } = useQuery<{ project: ProjectItem; permissions?: { canRead: boolean; canContribute: boolean; canManage: boolean; canViewInvoices: boolean } }>({
     queryKey: ["project", projectId],
     queryFn: async () => {
       const res = await fetch(`/api/projects/${projectId}`);
@@ -177,42 +182,6 @@ export default function ProjectDetailPage() {
       });
       if (!res.ok) throw new Error("Failed to update");
       return res.json();
-    },
-    onSuccess: async () => {
-      toast.success("更新成功");
-      setEditOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-
-      // Post-save: offer to link customer to selected organization
-      // Only if customer has no org (editCustomerOrgId is null) and user selected one
-      const custId = editForm.customerId;
-      const orgId = editOrgId;
-      const orgName = editForm.organization;
-      const custHadOrg = !!editCustomerOrgId;
-
-      if (custId && orgId && orgName && !custHadOrg) {
-        const confirmed = confirm(`是否将单位「${orgName}」同步关联到客户主数据？`);
-        if (confirmed) {
-          try {
-            const linkRes = await fetch(`/api/customers/${custId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ organizationId: orgId, organization: orgName }),
-            });
-            if (linkRes.ok) {
-              toast.success("客户已关联到该单位");
-              queryClient.invalidateQueries({ queryKey: ["customers-list"] });
-            } else {
-              toast.warning("客户关联单位失败，项目已保存成功");
-            }
-          } catch {
-            toast.warning("客户关联单位失败，项目已保存成功");
-          }
-        }
-      }
     },
     onError: () => {
       toast.error("更新失败");
@@ -421,10 +390,10 @@ export default function ProjectDetailPage() {
   const timeline = timelineData?.timeline || [];
   const tickets = ticketsData?.tickets || [];
   const attachments = timeline.filter((t) => t.kind === "attachment");
-  const isOwner = project.members?.some((m) => m.user.id === session?.user?.id && m.role === "OWNER");
+  const permissions = projectData?.permissions;
   const isAdmin = session?.user?.role === "ADMIN";
-  const canManageProject = isOwner || isAdmin;
-  const isRep = session?.user?.role === "REPRESENTATIVE";
+  const isInternal = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const canManageTicket = isInternal || (project.members?.some((m: { user: { id: string }; role: string }) => m.user.id === session?.user?.id && m.role === "OWNER") ?? false);
 
   async function runTimelinePlugin(pluginKey: string) {
     setPluginRunning(true);
@@ -528,50 +497,60 @@ export default function ProjectDetailPage() {
             </div>
             <p className="text-muted-foreground">{project.description || "暂无描述"}</p>
           </div>
-          {canManageProject && !project.deleted && !isRep && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => archiveMutation.mutate(!project.archived)}
-                disabled={archiveMutation.isPending}
-              >
-                <Archive className="mr-1 h-3 w-3" />
-                {project.archived ? "取消归档" : "归档"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                onClick={() => setDeleteOpen(true)}
-              >
-                <Trash2 className="mr-1 h-3 w-3" />
-                删除
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const text = projectToFeishuRow(project);
-                  navigator.clipboard.writeText(text).then(
-                    () => toast.success("已复制到剪贴板，可直接粘贴到飞书"),
-                    () => toast.error("复制失败"),
-                  );
-                }}
-              >
-                <ClipboardCopy className="mr-1 h-3 w-3" />
-                复制到飞书
-              </Button>
-              <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); }} />}>
-                  编辑项目
-                </DialogTrigger>
+          {!project.deleted && permissions?.canManage && (
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {isAdmin && (
+                <Link href={`/orders/new?fromProjectId=${project.id}`}>
+                  <Button variant="default" size="sm">
+                    <Plus className="mr-1 h-3 w-3" />
+                    从本项目创建订单
+                  </Button>
+                </Link>
+              )}
+              {permissions?.canManage && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => archiveMutation.mutate(!project.archived)}
+                    disabled={archiveMutation.isPending}
+                  >
+                    <Archive className="mr-1 h-3 w-3" />
+                    {project.archived ? "取消归档" : "归档"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={() => setDeleteOpen(true)}
+                  >
+                    <Trash2 className="mr-1 h-3 w-3" />
+                    删除
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const text = projectToFeishuRow(project);
+                      navigator.clipboard.writeText(text).then(
+                        () => toast.success("已复制到剪贴板，可直接粘贴到飞书"),
+                        () => toast.error("复制失败"),
+                      );
+                    }}
+                  >
+                    <ClipboardCopy className="mr-1 h-3 w-3" />
+                    复制到飞书
+                  </Button>
+                  <Dialog open={editOpen} onOpenChange={setEditOpen}>
+                    <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); const ms = (project.members || []).map((m: Record<string, unknown>) => ({ userId: (m.userId || (m.user as Record<string, unknown>)?.id) as string, role: m.role as string, user: m.user as { id: string; name: string; email: string } })); setEditMembers(ms); }} />}>
+                      编辑项目
+                    </DialogTrigger>
               <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>编辑项目</DialogTitle>
               </DialogHeader>
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   const payload: Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }> = {
                     name: editForm.name,
@@ -597,7 +576,75 @@ export default function ProjectDetailPage() {
                     payload.representative = editForm.representative;
                     payload.representativeId = editForm.representativeId;
                   }
-                  updateMutation.mutate(payload);
+
+                  // Step 1: update project
+                  try {
+                    await updateMutation.mutateAsync(payload);
+                  } catch {
+                    return; // onError already shows toast
+                  }
+
+                  // Step 2: save collaborators if changed
+                  const membersChanged = (() => {
+                    const origMemberIds = (project.members || []).map((m: Record<string, unknown>) => (m.userId || (m.user as Record<string, unknown>)?.id) as string).sort().join(",");
+                    const newMemberIds = editMembers.map((m) => m.userId).sort().join(",");
+                    if (origMemberIds !== newMemberIds) return true;
+                    return editMembers.some((m) => {
+                      const orig = (project.members || []).find((om: Record<string, unknown>) => (om.userId || (om.user as Record<string, unknown>)?.id) === m.userId);
+                      return orig && orig.role !== m.role;
+                    });
+                  })();
+
+                  if (membersChanged) {
+                    try {
+                      const collabRes = await fetch(`/api/projects/${projectId}/collaborators`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ members: editMembers.map((m) => ({ userId: m.userId, role: m.role })) }),
+                      });
+                      if (!collabRes.ok) {
+                        toast.error("协作者保存失败");
+                        return;
+                      }
+                    } catch {
+                      toast.error("协作者保存失败");
+                      return;
+                    }
+                  }
+
+                  // Both succeeded
+                  toast.success("更新成功");
+                  setEditOpen(false);
+                  queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+                  queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
+                  queryClient.invalidateQueries({ queryKey: ["projects"] });
+                  queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+
+                  // Post-save: offer to link customer to selected organization
+                  const custId = editForm.customerId;
+                  const orgId = editOrgId;
+                  const orgName = editForm.organization;
+                  const custHadOrg = !!editCustomerOrgId;
+                  if (custId && orgId && orgName && !custHadOrg) {
+                    const confirmed = confirm(`是否将单位「${orgName}」同步关联到客户主数据？`);
+                    if (confirmed) {
+                      try {
+                        const linkRes = await fetch(`/api/customers/${custId}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ organizationId: orgId, organization: orgName }),
+                        });
+                        if (linkRes.ok) {
+                          toast.success("客户已关联到该单位");
+                          queryClient.invalidateQueries({ queryKey: ["customers-list"] });
+                        } else {
+                          toast.warning("客户关联单位失败，项目已保存成功");
+                        }
+                      } catch {
+                        toast.warning("客户关联单位失败，项目已保存成功");
+                      }
+                    }
+                  }
                 }}
                 className="space-y-4"
               >
@@ -634,10 +681,7 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">单位</label>
-                    {isRep ? (
-                      <Input value={editForm.organization || ""} onChange={(e) => setEditForm({ ...editForm, organization: e.target.value })} />
-                    ) : (
-                      <OrganizationSelect
+                    <OrganizationSelect
                         value={editOrgId}
                         displayValue={editForm.organization || undefined}
                         disabled={!!editCustomerOrgId}
@@ -646,7 +690,6 @@ export default function ProjectDetailPage() {
                           setEditForm({ ...editForm, organization: name });
                         }}
                       />
-                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -669,6 +712,80 @@ export default function ProjectDetailPage() {
                       displayValue={editForm.representative || ""}
                       onChange={(id, name) => { setEditForm({ ...editForm, representativeId: id || "", representative: name }); setRepTouched(true); }}
                     />
+                  </div>
+                </div>
+                {/* Collaborator management */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">协作者</label>
+                  {/* Current members */}
+                  {editMembers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {editMembers.map((m, i) => (
+                        <Badge key={m.userId} variant="secondary" className="gap-1 text-xs">
+                          <select
+                            className="bg-transparent border-0 text-xs p-0 cursor-pointer"
+                            value={m.role}
+                            onChange={(e) => {
+                              const updated = [...editMembers];
+                              updated[i] = { ...updated[i], role: e.target.value };
+                              setEditMembers(updated);
+                            }}
+                          >
+                            <option value="OWNER">负责人</option>
+                            <option value="MEMBER">成员</option>
+                          </select>
+                          <span className="text-muted-foreground">{m.user.name || m.user.email}</span>
+                          <X
+                            className="h-3 w-3 cursor-pointer hover:text-destructive"
+                            onClick={() => setEditMembers(editMembers.filter((_, j) => j !== i))}
+                          />
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {/* Search + add */}
+                  <div className="flex gap-2">
+                    <div className="flex-1 relative">
+                      <Input
+                        className="h-8 text-xs"
+                        placeholder="搜索用户名或邮箱添加..."
+                        value={memberSearch}
+                        onChange={async (e) => {
+                          setMemberSearch(e.target.value);
+                          if (e.target.value.length < 2) { setMemberSearchResults([]); return; }
+                          setMemberSearching(true);
+                          try {
+                            const res = await fetch(`/api/users?search=${encodeURIComponent(e.target.value)}`);
+                            if (res.ok) {
+                              const d = await res.json();
+                              setMemberSearchResults((d.users || []).filter(
+                                (u: { id: string }) => !editMembers.some((m) => m.userId === u.id),
+                              ));
+                            }
+                          } finally { setMemberSearching(false); }
+                        }}
+                      />
+                      {memberSearchResults.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 z-50 mt-1 border rounded-md bg-popover shadow-lg max-h-40 overflow-y-auto">
+                          {memberSearchResults.map((u) => (
+                            <button
+                              key={u.id}
+                              type="button"
+                              className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center justify-between"
+                              onClick={() => {
+                                setEditMembers([...editMembers, { userId: u.id, role: "MEMBER", user: { id: u.id, name: u.name, email: u.email } }]);
+                                setMemberSearch("");
+                                setMemberSearchResults([]);
+                              }}
+                            >
+                              <span>{u.name} <span className="text-muted-foreground">{u.email}</span></span>
+                              <Badge variant="outline" className="text-[10px]">{u.role}</Badge>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {memberSearching && <div className="absolute top-full left-0 right-0 z-50 mt-1 border rounded-md bg-popover shadow p-2 text-xs text-muted-foreground">搜索中...</div>}
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -785,8 +902,10 @@ export default function ProjectDetailPage() {
               </div>
             </DialogContent>
           </Dialog>
-        </div>
-          )}
+                  </>
+                )}
+              </div>
+            )}
         </div>
 
         {/* Deleted warning banner */}
@@ -812,7 +931,7 @@ export default function ProjectDetailPage() {
             <span>项目进度</span>
             <span className="font-medium">{project.progress}%</span>
           </div>
-          {canManageProject && !project.deleted ? (
+          {permissions?.canManage && !project.deleted ? (
             <Slider
               value={[sliderValue !== undefined ? sliderValue : project.progress]}
               max={100}
@@ -866,7 +985,7 @@ export default function ProjectDetailPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={!isRep ? { gridTemplateColumns: "repeat(5, 1fr)" } : undefined}>
+        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
           <TabsTrigger value="timeline">
             <Activity className="mr-2 h-4 w-4" />
             时间流
@@ -879,18 +998,14 @@ export default function ProjectDetailPage() {
             <Paperclip className="mr-2 h-4 w-4" />
             文件
           </TabsTrigger>
-          {!isRep && (
-            <TabsTrigger value="orders">
-              <Package className="mr-2 h-4 w-4" />
-              关联订单
-            </TabsTrigger>
-          )}
-          {!isRep && (
-            <TabsTrigger value="invoices">
-              <FileText className="mr-2 h-4 w-4" />
-              开票
-            </TabsTrigger>
-          )}
+          <TabsTrigger value="orders">
+            <Package className="mr-2 h-4 w-4" />
+            关联订单
+          </TabsTrigger>
+          <TabsTrigger value="invoices">
+            <FileText className="mr-2 h-4 w-4" />
+            开票
+          </TabsTrigger>
         </TabsList>
 
         {/* Timeline Tab */}
@@ -1046,7 +1161,7 @@ export default function ProjectDetailPage() {
           </Card>
 
           {/* Comment Input */}
-          {!project.deleted && !isRep && (
+          {!project.deleted && permissions?.canContribute && (
             <div className="flex gap-2">
               <Textarea
                 placeholder="发表评论..."
@@ -1212,39 +1327,37 @@ export default function ProjectDetailPage() {
                               </p>
                             )}
                           </div>
-                          {!project.deleted && !isRep && (
+                          {!project.deleted && canManageTicket && (
                             <DropdownMenu>
                               <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="shrink-0" />}>
                                 <MoreHorizontal className="h-4 w-4" />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                {!isRep && ticket.status !== "IN_PROGRESS" && (
+                                {ticket.status !== "IN_PROGRESS" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "IN_PROGRESS" })}>
                                     标记为处理中
                                   </DropdownMenuItem>
                                 )}
-                                {!isRep && ticket.status !== "CLOSED" && (
+                                {ticket.status !== "CLOSED" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "CLOSED" })}>
                                     标记为已关闭
                                   </DropdownMenuItem>
                                 )}
-                                {!isRep && ticket.status !== "OPEN" && (
+                                {ticket.status !== "OPEN" && (
                                   <DropdownMenuItem onClick={() => updateTicketMutation.mutate({ ticketId: ticket.id, status: "OPEN" })}>
                                     重新打开
                                   </DropdownMenuItem>
                                 )}
-                                {!isRep && (
-                                  <DropdownMenuItem
-                                    className="text-red-600"
-                                    onClick={() => {
-                                      if (confirm(`确认删除工单 "${ticket.title}"？此操作不可撤销。`)) {
-                                        deleteTicketMutation.mutate(ticket.id);
-                                      }
-                                    }}
-                                  >
-                                    删除工单
-                                  </DropdownMenuItem>
-                                )}
+                                <DropdownMenuItem
+                                  className="text-red-600"
+                                  onClick={() => {
+                                    if (confirm(`确认删除工单 "${ticket.title}"？此操作不可撤销。`)) {
+                                      deleteTicketMutation.mutate(ticket.id);
+                                    }
+                                  }}
+                                >
+                                  删除工单
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           )}
@@ -1267,7 +1380,7 @@ export default function ProjectDetailPage() {
                             replyContent={replyContent}
                             setReplyContent={setReplyContent}
                             replyMutation={replyMutation}
-                            readOnly={isRep}
+                            readOnly={!permissions?.canContribute}
                           />
                         )}
                       </CardContent>
@@ -1344,7 +1457,6 @@ export default function ProjectDetailPage() {
         </TabsContent>
 
         {/* Orders Tab */}
-        {!isRep && (
           <TabsContent value="orders" className="space-y-4">
             {project.orderLinks && project.orderLinks.length > 0 ? (
               project.orderLinks.map((link) => (
@@ -1368,19 +1480,29 @@ export default function ProjectDetailPage() {
                 </Card>
               ))
             ) : (
-              <div className="text-sm text-muted-foreground py-8 text-center">
-                暂无关联订单。在 <Link href="/orders" className="text-primary underline">订单管理</Link> 中绑定项目。
+              <div className="text-sm text-muted-foreground py-8 text-center space-y-3">
+                <p>暂无关联订单</p>
+                <div className="flex items-center justify-center gap-3">
+                  {isAdmin && (
+                    <Link href={`/orders/new?fromProjectId=${project.id}`}>
+                      <Button size="sm">
+                        <Plus className="mr-1 h-3 w-3" />
+                        从本项目创建订单
+                      </Button>
+                    </Link>
+                  )}
+                  <Link href="/orders">
+                    <Button variant="outline" size="sm">去订单管理查看/绑定</Button>
+                  </Link>
+                </div>
               </div>
             )}
           </TabsContent>
-        )}
 
         {/* Invoices Tab */}
-        {!isRep && (
           <TabsContent value="invoices" className="space-y-4">
             <ProjectInvoiceSection projectId={projectId} />
           </TabsContent>
-        )}
       </Tabs>
 
       {/* Image Preview Dialog */}

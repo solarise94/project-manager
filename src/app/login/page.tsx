@@ -10,21 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { getSafeRedirect } from "@/lib/safe-redirect";
 
 function getSafeCallbackUrl(callbackUrl: string | null) {
-  if (!callbackUrl) return "/dashboard";
-  if (callbackUrl.startsWith("/")) return callbackUrl;
-
-  try {
-    const url = new URL(callbackUrl, window.location.origin);
-    if (url.origin === window.location.origin) {
-      return `${url.pathname}${url.search}${url.hash}`;
-    }
-  } catch {
-    // Fall back to dashboard for invalid callback URLs.
-  }
-
-  return "/dashboard";
+  return getSafeRedirect(callbackUrl, "/dashboard");
 }
 
 function formatLockTime(iso: string): string {
@@ -46,30 +35,31 @@ function LoginForm() {
 
     const email = form.email.trim().toLowerCase();
 
-    const result = await signIn("credentials", {
-      email,
-      password: form.password,
-      redirect: false,
-      callbackUrl,
-    });
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password: form.password,
+        redirect: false,
+        callbackUrl,
+      });
 
-    setLoading(false);
-
-    if (result?.error) {
-      if (result.error.startsWith("LOCKED:")) {
-        const lockedUntil = result.error.replace("LOCKED:", "");
-        toast.error("账号已锁定", {
-          description: `登录失败次数过多，请 ${formatLockTime(lockedUntil)} 后再试`,
-        });
-      } else if (result.error.startsWith("INVALID:")) {
-        const remaining = parseInt(result.error.replace("INVALID:", ""), 10);
-        toast.error("登录失败", {
-          description: `邮箱或密码错误，剩余 ${Math.max(0, remaining)} 次尝试机会`,
-        });
-      } else {
-        toast.error("登录失败", { description: "邮箱或密码错误" });
+      if (result?.error) {
+        if (result.error.startsWith("LOCKED:")) {
+          const lockedUntil = result.error.replace("LOCKED:", "");
+          toast.error("账号已锁定", {
+            description: `登录失败次数过多，请 ${formatLockTime(lockedUntil)} 后再试`,
+          });
+        } else if (result.error.startsWith("INVALID:")) {
+          const remaining = parseInt(result.error.replace("INVALID:", ""), 10);
+          toast.error("登录失败", {
+            description: `邮箱或密码错误，剩余 ${Math.max(0, remaining)} 次尝试机会`,
+          });
+        } else {
+          toast.error("登录失败", { description: "邮箱或密码错误" });
+        }
+        return;
       }
-    } else {
+
       toast.success("登录成功", { description: "欢迎回来！" });
 
       void fetch("/api/notifications", {
@@ -86,6 +76,10 @@ function LoginForm() {
 
       const nextUrl = getSafeCallbackUrl(result?.url || callbackUrl);
       window.location.assign(nextUrl);
+    } catch {
+      toast.error("登录失败", { description: "网络错误，请稍后重试" });
+    } finally {
+      setLoading(false);
     }
   }
 

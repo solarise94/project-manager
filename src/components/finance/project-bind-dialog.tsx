@@ -45,7 +45,7 @@ export function ProjectBindDialog({ open, onOpenChange, orderId, onBound }: Proj
     if (!selectedId) return;
     setBinding(true);
     try {
-      const res = await fetch(`/api/finance/pingoodmice/${orderId}/bind-project`, {
+      const res = await fetch(`/api/orders/${orderId}/project-links`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: selectedId }),

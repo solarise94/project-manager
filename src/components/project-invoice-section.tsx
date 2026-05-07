@@ -1,6 +1,5 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, FileText, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,9 +31,6 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline" | "des
 export function ProjectInvoiceSection({
   projectId,
 }: ProjectInvoiceSectionProps) {
-  const { data: session } = useSession();
-  const isRep = session?.user?.role === "REPRESENTATIVE";
-
   const { data: invoicesData, isLoading } = useQuery<{ invoices: InvoiceRecord[] }>({
     queryKey: ["project-invoices", projectId],
     queryFn: async () => {
@@ -42,11 +38,8 @@ export function ProjectInvoiceSection({
       if (!res.ok) throw new Error("Failed to load invoices");
       return res.json();
     },
-    enabled: !isRep,
   });
   const invoices = invoicesData?.invoices || [];
-
-  if (isRep) return null;
 
   const draftCount = invoices.filter((i) => i.status === "DRAFT").length;
   const requestedCount = invoices.filter((i) => i.status === "REQUESTED").length;

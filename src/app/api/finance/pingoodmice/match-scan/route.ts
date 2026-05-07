@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   }
 
   const url = req.nextUrl;
-  const source = url.searchParams.get("source")?.trim() || "微信小商店";
+  const source = url.searchParams.get("source")?.trim() || "PINGOODMICE";
 
   let body: { orderIds?: string[] } = {};
   try { body = await req.json(); } catch {}

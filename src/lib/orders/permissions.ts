@@ -1,16 +1,18 @@
 import { prisma } from "@/lib/prisma";
-import { isRepresentative } from "@/lib/permissions";
+
+export function canAccessOrders(role: string): boolean {
+  return role === "ADMIN" || role === "USER" || role === "REPRESENTATIVE" || role === "REGIONAL_MANAGER";
+}
 
 export function isOrderAccessBlocked(role: string): boolean {
-  // REPRESENTATIVE and REGIONAL_MANAGER are CRM roles, not order-management roles.
-  return isRepresentative(role) || role === "REGIONAL_MANAGER";
+  return !canAccessOrders(role);
 }
 
 /**
  * Build a Prisma where clause for Order scoping.
  * ADMIN → null (all orders)
  * USER  → scoped to project-linked orders, CRM customer orders, and own created orders
- * REP / REGIONAL_MANAGER → blocked (caller should return 403 before using this)
+ * REP / REGIONAL_MANAGER → orders linked to the representative's projects
  */
 export async function getOrderScopeWhere(
   userId: string,
@@ -61,7 +63,89 @@ export async function getOrderScopeWhere(
     return { OR: orConditions };
   }
 
-  // REPRESENTATIVE / REGIONAL_MANAGER — blocked explicitly above; this fallback
-  // exists for any unknown future role.
+  // REPRESENTATIVE / REGIONAL_MANAGER: orders linked to representative's projects
+  if (role === "REPRESENTATIVE" || role === "REGIONAL_MANAGER") {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    if (!user?.email) return { id: { in: ["__NO_MATCH__"] } };
+
+    // Collect representative IDs to query
+    const repIds: string[] = [];
+
+    // 1. Check if the user has their own Representative record
+    const ownRep = await prisma.representative.findUnique({
+      where: { email: user.email, archived: false },
+      select: { id: true },
+    });
+    if (ownRep) repIds.push(ownRep.id);
+
+    // 2. For REGIONAL_MANAGER: also get subordinate representatives
+    if (role === "REGIONAL_MANAGER") {
+      const manager = await prisma.crmRegionManager.findUnique({
+        where: { userId, archived: false },
+        include: {
+          reps: {
+            include: {
+              representative: { select: { id: true, archived: true } },
+            },
+          },
+        },
+      });
+      if (manager) {
+        for (const r of manager.reps) {
+          if (!r.representative.archived && !repIds.includes(r.representative.id)) {
+            repIds.push(r.representative.id);
+          }
+        }
+      }
+    }
+
+    if (repIds.length === 0) return { id: { in: ["__NO_MATCH__"] } };
+
+    // Find projects linked to all collected representatives (by representativeId)
+    const byId = await prisma.project.findMany({
+      where: { representativeId: { in: repIds }, deleted: false },
+      select: { id: true },
+    });
+    const projectIds = new Set(byId.map((p) => p.id));
+
+    // Merge name fallback (uniqueness-gated) for all collected representatives
+    const repsWithNames = await prisma.representative.findMany({
+      where: { id: { in: repIds } },
+      select: { name: true },
+    });
+    const seenNames = new Set<string>();
+    for (const r of repsWithNames) {
+      if (!r.name || seenNames.has(r.name)) continue;
+      seenNames.add(r.name);
+      const nameCount = await prisma.representative.count({
+        where: { name: r.name, archived: false },
+      });
+      if (nameCount === 1) {
+        const byName = await prisma.project.findMany({
+          where: { representativeId: null, representative: r.name, deleted: false },
+          select: { id: true },
+        });
+        for (const p of byName) projectIds.add(p.id);
+      }
+    }
+
+    if (projectIds.size === 0) return { id: { in: ["__NO_MATCH__"] } };
+
+    const projectIdArr = [...projectIds];
+    const linkedOrderIds = (await prisma.orderProjectLink.findMany({
+      where: { projectId: { in: projectIdArr } },
+      select: { orderId: true },
+      distinct: ["orderId"],
+    })).map((l) => l.orderId);
+
+    if (linkedOrderIds.length === 0) return { id: { in: ["__NO_MATCH__"] } };
+
+    return { id: { in: linkedOrderIds } };
+  }
+
+  // Unknown future role — blocked
   return { id: { in: ["__NO_MATCH__"] } };
 }

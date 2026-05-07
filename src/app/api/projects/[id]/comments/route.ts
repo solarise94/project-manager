@@ -2,29 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, isRepresentative } from "@/lib/permissions";
+import { canContributeProject } from "@/lib/permissions";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden: representatives cannot post comments" }, { status: 403 });
-  }
-
   const { id } = await params;
+
+  const canContribute = await canContributeProject(id, session.user.id, session.user.role);
+  if (!canContribute) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const project = await prisma.project.findUnique({ where: { id } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   if (project.deleted) return NextResponse.json({ error: "项目已删除，无法发表评论" }, { status: 400 });
-
-  if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectMember(id, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
 
   try {
     const { content } = await req.json();

@@ -133,3 +133,13 @@ export function mapExternalOrderStatus(params: {
     financeTreatment: ORDER_FINANCE_TREATMENT.AUTO,
   };
 }
+
+const SOURCE_ALIASES: Record<string, string> = {
+  PINGOODMICE: "PINGOODMICE",
+  "微信小商店": "PINGOODMICE",
+  "拼好鼠": "PINGOODMICE",
+};
+
+export function normalizeOrderSource(raw: string): string {
+  return SOURCE_ALIASES[raw] ?? raw;
+}

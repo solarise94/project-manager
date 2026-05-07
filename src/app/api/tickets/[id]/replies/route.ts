@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { canReadProject, canContributeProject } from "@/lib/permissions";
 
 export async function GET(
   request: NextRequest,
@@ -28,32 +28,9 @@ export async function GET(
     return NextResponse.json({ error: "项目已删除" }, { status: 400 });
   }
 
-  if (isRepresentative(session.user.role)) {
-    const repProjectIds = await getRepresentativeProjectIds(session.user.id);
-    if (!repProjectIds.includes(existing.projectId)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (existing.createdBy !== session.user.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    const replies = await prisma.ticketReply.findMany({
-      where: { ticketId: id },
-      include: {
-        author: {
-          select: { id: true, name: true, avatar: true },
-        },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-    return NextResponse.json({ replies });
-  }
-
-  if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectMember(existing.projectId, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  const canRead = await canReadProject(existing.projectId, session.user.id, session.user.role);
+  if (!canRead) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const replies = await prisma.ticketReply.findMany({
@@ -93,16 +70,9 @@ export async function POST(
     return NextResponse.json({ error: "项目已删除，无法回复工单" }, { status: 400 });
   }
 
-  if (isRepresentative(session.user.role)) {
+  const canContribute = await canContributeProject(existing.projectId, session.user.id, session.user.role);
+  if (!canContribute) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectMember(existing.projectId, session.user.id);
-    } catch {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
   }
 
   const body = await request.json();

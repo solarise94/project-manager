@@ -57,6 +57,16 @@ npm run dev
 - 监听地址：`0.0.0.0:31080`
 - 外网地址：`https://task.solarise94.fun:39090`
 
+### `scripts/deploy-remote-prod.sh`
+
+部署到远程服务器：
+
+- 运行目录：`/home/ubuntu/task-manager`
+- 服务名：`task-manager.service`
+- Next.js 监听地址：`127.0.0.1:31081`
+- HTTPS 入口：远程 nginx 监听 `0.0.0.0:31080`，反代到 `127.0.0.1:31081`
+- 外网地址：`https://task.solarise94.fun:31080`
+
 ### `scripts/deploy-standalone.sh`
 
 这是 demo 和正式版共用的底层部署脚本，数据库策略非常重要：

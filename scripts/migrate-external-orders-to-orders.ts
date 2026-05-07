@@ -83,6 +83,11 @@ function computeTotalAmount(eo: {
   return sum > 0 ? sum : 0;
 }
 
+function normalizeSource(raw: string): string {
+  const aliases: Record<string, string> = { PINGOODMICE: "PINGOODMICE", "微信小商店": "PINGOODMICE", "拼好鼠": "PINGOODMICE" };
+  return aliases[raw] ?? raw;
+}
+
 function buildOrderData(
   eo: Record<string, unknown>,
   date: Date,
@@ -94,8 +99,8 @@ function buildOrderData(
   const category = mapCategory(String(eo.financeCategory ?? "UNKNOWN"));
 
   return {
-    orderNo: genOrderNo(String(eo.source ?? "MANUAL"), date, seq),
-    source: String(eo.source ?? "MANUAL"),
+    orderNo: genOrderNo(normalizeSource(String(eo.source ?? "MANUAL")), date, seq),
+    source: normalizeSource(String(eo.source ?? "MANUAL")),
     sourcePlatform: eo.platform as string | null,
     externalOrderNo: eo.externalOrderNo as string | null,
     merchantOrderNo: eo.merchantOrderNo as string | null,
@@ -254,7 +259,7 @@ async function main() {
       const existingSrc = await prisma.orderSourceRecord.findUnique({
         where: {
           source_externalOrderNo: {
-            source: eo.source,
+            source: normalizeSource(eo.source as string),
             externalOrderNo: eo.externalOrderNo,
           },
         },
@@ -324,7 +329,7 @@ async function main() {
           data: {
             orderId: order.id,
             importBatchId: eo.importBatchId,
-            source: eo.source,
+            source: normalizeSource(eo.source as string),
             platform: eo.platform,
             externalOrderNo: eo.externalOrderNo,
             merchantOrderNo: eo.merchantOrderNo,
@@ -523,7 +528,7 @@ async function recoverPartialMigration(
   const existingSrc = await prisma.orderSourceRecord.findUnique({
     where: {
       source_externalOrderNo: {
-        source: eo.source as string,
+        source: normalizeSource(eo.source as string),
         externalOrderNo: eo.externalOrderNo as string,
       },
     },
@@ -534,7 +539,7 @@ async function recoverPartialMigration(
       data: {
         orderId,
         importBatchId: eo.importBatchId as string | null,
-        source: eo.source as string,
+        source: normalizeSource(eo.source as string),
         platform: eo.platform as string | null,
         externalOrderNo: eo.externalOrderNo as string,
         merchantOrderNo: eo.merchantOrderNo as string | null,

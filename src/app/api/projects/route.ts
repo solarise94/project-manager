@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getUserProjectIds, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { getReadableProjectIds, isRepresentative } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import type { Prisma } from "@prisma/client";
 
@@ -20,12 +20,9 @@ export async function GET(req: NextRequest) {
   const isAdmin = session.user.role === "ADMIN";
 
   let projectIds: string[] | null = null; // null = no filter (admin)
-  if (isRepresentative(session.user.role)) {
-    projectIds = await getRepresentativeProjectIds(session.user.id);
-    if (projectIds.length === 0) return NextResponse.json({ projects: [] });
-  } else if (!isAdmin) {
-    projectIds = await getUserProjectIds(session.user.id);
-    if (projectIds.length === 0) return NextResponse.json({ projects: [] });
+  if (!isAdmin) {
+    projectIds = await getReadableProjectIds(session.user.id, session.user.role);
+    if (!projectIds || projectIds.length === 0) return NextResponse.json({ projects: [] });
   }
 
   const where: Prisma.ProjectWhereInput = {};
@@ -116,24 +113,6 @@ export async function GET(req: NextRequest) {
     const { org, ...custRest } = p.cust;
     return { ...p, cust: { ...custRest, organization: getCustomerOrganizationName({ organization: custRest.organization, org }) } };
   });
-
-  if (isRepresentative(session.user.role)) {
-    const pids = resolved.map((p) => p.id);
-    const myTickets = await prisma.ticket.groupBy({
-      by: ["projectId"],
-      where: { projectId: { in: pids }, createdBy: session.user.id },
-      _count: { id: true },
-    });
-    const ticketMap = new Map(myTickets.map((t) => [t.projectId, t._count.id]));
-    const result = resolved.map((p) => ({
-      ...p,
-      _count: {
-        tickets: ticketMap.get(p.id) || 0,
-        comments: 0,
-      },
-    }));
-    return NextResponse.json({ projects: result as typeof projects });
-  }
 
   return NextResponse.json({ projects: resolved });
 }

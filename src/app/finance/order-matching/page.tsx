@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, Suspense } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Play, Search, Link2, FolderTree, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -59,9 +59,95 @@ interface OrderItem {
   financeAmountOverride: number | null;
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function computeInvoiceStatus(order: Record<string, any>): string {
+  const STATUS_PRIORITY: Record<string, number> = { ISSUED: 4, REQUESTED: 3, DRAFT: 2 };
+  let best = "NONE";
+  for (const inv of (order.invoiceRequests as any[]) || []) {
+    if ((STATUS_PRIORITY[inv.status] || 0) > (STATUS_PRIORITY[best] || 0)) best = inv.status;
+  }
+  for (const cov of (order.invoiceCoverage as any[]) || []) {
+    const s = ((cov as any).invoiceRequest as any)?.status;
+    if (s && (STATUS_PRIORITY[s] || 0) > (STATUS_PRIORITY[best] || 0)) best = s;
+  }
+  return best;
+}
+
+function mapOrderToOrderItem(order: Record<string, any>): OrderItem {
+  const plinks = (order.projectLinks as any[]) || [];
+  const primaryLink = plinks.find((l) => l.isPrimary) || plinks[0];
+
+  return {
+    id: order.id as string,
+    externalOrderNo: (order.externalOrderNo || order.orderNo) as string,
+    receiverName: order.buyerNameSnapshot as string | null,
+    receiverPhone: order.buyerPhoneSnapshot as string | null,
+    orderUser: order.buyerWechatSnapshot as string | null,
+    receiverAddress: order.buyerAddressSnapshot as string | null,
+    paidAmount: ((order.financeAmountOverride ?? order.totalAmount) as number) ?? 0,
+    storeName: order.buyerOrgNameSnapshot as string | null,
+    productNamesRaw: order.title as string | null,
+    itemCount: (order._count as any)?.lines ?? null,
+    invoiceStatus: computeInvoiceStatus(order),
+    duplicateStatus: ((order.sourceRecords as any[])?.[0]?.duplicateStatus as string) || "UNREVIEWED",
+    mergedIntoId: ((order.mergeSources as any[])?.[0]?.targetOrderId as string) ?? null,
+    customerMatchStatus: order.customerMatchStatus as string,
+    customerMatchScore: order.customerMatchScore as number | null,
+    customerMatchReason: order.customerMatchReason as string | null,
+    customerId: order.customerId as string | null,
+    customer: order.customer as OrderItem["customer"],
+    projectId: primaryLink?.project?.id ?? null,
+    project: primaryLink?.project ?? null,
+    financeCategory: order.category as string,
+    financeTreatment: order.financeTreatment as string,
+    financeAmountOverride: order.financeAmountOverride as number | null,
+  };
+}
+
+function mapOrderDetailToOrderItem(detail: Record<string, any>): OrderItem {
+  const plinks = (detail.projectLinks as any[]) || [];
+  const primaryLink = plinks.find((l: any) => l.isPrimary) || plinks[0];
+
+  return {
+    id: detail.id as string,
+    externalOrderNo: (detail.externalOrderNo || detail.orderNo) as string,
+    receiverName: detail.buyerNameSnapshot as string | null,
+    receiverPhone: detail.buyerPhoneSnapshot as string | null,
+    orderUser: detail.buyerWechatSnapshot as string | null,
+    receiverAddress: detail.buyerAddressSnapshot as string | null,
+    paidAmount: ((detail.financeAmountOverride ?? detail.totalAmount) as number) ?? 0,
+    storeName: detail.buyerOrgNameSnapshot as string | null,
+    productNamesRaw: detail.title as string | null,
+    itemCount: (detail._count as any)?.lines ?? null,
+    invoiceStatus: computeInvoiceStatus(detail),
+    duplicateStatus: ((detail.sourceRecords as any[])?.[0]?.duplicateStatus as string) || "UNREVIEWED",
+    mergedIntoId: ((detail.mergeSources as any[])?.[0]?.targetOrderId as string) ?? null,
+    customerMatchStatus: detail.customerMatchStatus as string,
+    customerMatchScore: detail.customerMatchScore as number | null,
+    customerMatchReason: detail.customerMatchReason as string | null,
+    customerId: detail.customerId as string | null,
+    customer: detail.customer as OrderItem["customer"],
+    projectId: primaryLink?.project?.id ?? null,
+    project: primaryLink?.project ?? null,
+    financeCategory: detail.category as string,
+    financeTreatment: detail.financeTreatment as string,
+    financeAmountOverride: detail.financeAmountOverride as number | null,
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 export default function OrderMatchingPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+      <OrderMatchingWrapper />
+    </Suspense>
+  );
+}
+
+function OrderMatchingWrapper() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const sp = useSearchParams();
 
   if (status === "loading") {
     return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
@@ -69,13 +155,13 @@ export default function OrderMatchingPage() {
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
 
-  return <OrderMatchingContent isAdmin={session.user.role === "ADMIN"} />;
+  return <OrderMatchingContent isAdmin={session.user.role === "ADMIN"} userId={session.user.id} initialSearch={sp.get("search") || ""} />;
 }
 
-function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
+function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boolean; userId: string; initialSearch: string }) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("unmatched");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [matchDialogOrder, setMatchDialogOrder] = useState<OrderItem | null>(null);
   const [projectDialogOrderId, setProjectDialogOrderId] = useState<string | null>(null);
@@ -127,7 +213,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
     const masterOrder = selected[0];
 
     setMergeCoveredOrderIds(selected.map((o) => o.id));
-    setMergeCreateUrl(`/api/external-orders/${masterOrder.id}/invoices`);
+    setMergeCreateUrl("/api/finance/order-invoices");
     setMergeDefaults({
       contactName: names.length === 1 ? names[0] : (names[0] || masterOrder.receiverName || ""),
       buyerOrgName: stores.length === 1 ? stores[0] : (stores[0] || ""),
@@ -145,25 +231,29 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
   }
 
   const { data: orders, isLoading } = useQuery<{ orders: OrderItem[]; total: number }>({
-    queryKey: ["external-orders", "matching", activeTab, search],
+    queryKey: ["orders", "matching", activeTab, search],
     queryFn: async () => {
       const params = new URLSearchParams();
+      params.set("source", "PINGOODMICE");
       if (search) params.set("search", search);
       params.set("pageSize", "50");
-      // Filter by match status
       if (activeTab === "unmatched") params.set("customerMatchStatus", "UNMATCHED");
       else if (activeTab === "matched") params.set("customerMatchStatus", "AUTO_MATCHED");
       else if (activeTab === "conflict") params.set("customerMatchStatus", "CONFLICT");
       else if (activeTab === "manual") params.set("customerMatchStatus", "MANUAL_MATCHED");
-      const res = await fetch(`/api/external-orders?${params}`);
+      const res = await fetch(`/api/orders?${params}`);
       if (!res.ok) throw new Error("Failed to load");
-      return res.json();
+      const data = await res.json();
+      return {
+        orders: (data.orders || []).map(mapOrderToOrderItem),
+        total: data.total,
+      };
     },
   });
 
   const scanMutation = useMutation<MatchScanResult, Error, string[] | undefined>({
     mutationFn: async (orderIds?: string[]) => {
-      const res = await fetch("/api/finance/pingoodmice/match-scan?source=微信小商店", {
+      const res = await fetch("/api/finance/pingoodmice/match-scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(orderIds?.length ? { orderIds } : {}),
@@ -172,7 +262,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
       return res.json();
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
       clearSelection();
       toast.success(`扫描 ${data.scanned} 条，自动匹配 ${data.matched} 条，冲突 ${data.conflicted} 条，未匹配 ${data.unmatched} 条`);
     },
@@ -180,7 +270,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
 
   const financeMutation = useMutation({
     mutationFn: async ({ orderId, field, value }: { orderId: string; field: string; value: string | null }) => {
-      const res = await fetch(`/api/finance/pingoodmice/${orderId}/finance-settings`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: value }),
@@ -189,7 +279,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
       toast.success("财务分类已更新");
     },
     onError: () => toast.error("更新失败"),
@@ -198,7 +288,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
   const batchCategoryMutation = useMutation({
     mutationFn: async ({ ids, field, value }: { ids: string[]; field: string; value: string }) => {
       await Promise.all(ids.map((id) =>
-        fetch(`/api/finance/pingoodmice/${id}/finance-settings`, {
+        fetch(`/api/orders/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ [field]: value }),
@@ -206,7 +296,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
       ));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
       clearSelection();
       toast.success("批量更新完成");
     },
@@ -215,19 +305,19 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
 
   // Order detail + invoices
   const { data: detailData } = useQuery<{
-    order: OrderItem & { storeName?: string | null; orderAt?: string | null; paidAt?: string | null; productNamesRaw?: string | null };
+    order: OrderItem;
     invoices: InvoiceRecord[];
   }>({
     queryKey: ["order-detail", detailOrderId],
     queryFn: async () => {
       const [orderRes, invoiceRes] = await Promise.all([
-        fetch(`/api/external-orders/${detailOrderId}`),
-        fetch(`/api/external-orders/${detailOrderId}/invoices`),
+        fetch(`/api/orders/${detailOrderId}`),
+        fetch(`/api/finance/order-invoices?orderId=${detailOrderId}`),
       ]);
       const orderData = await orderRes.json();
       const invoiceData = await invoiceRes.json();
       return {
-        order: orderData.order || orderData,
+        order: mapOrderDetailToOrderItem(orderData.order || orderData),
         invoices: invoiceData.invoices || [],
       };
     },
@@ -236,12 +326,12 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
 
   const invalidateDetail = () => {
     queryClient.invalidateQueries({ queryKey: ["order-detail", detailOrderId] });
-    queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+    queryClient.invalidateQueries({ queryKey: ["orders"] });
   };
 
   const invoiceStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const res = await fetch(`/api/external-order-invoices/${id}`, {
+      const res = await fetch(`/api/finance/order-invoices/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -256,7 +346,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
 
   const invoiceRemarkMutation = useMutation({
     mutationFn: async ({ id, remark }: { id: string; remark: string }) => {
-      const res = await fetch(`/api/external-order-invoices/${id}`, {
+      const res = await fetch(`/api/finance/order-invoices/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ remark }),
@@ -271,7 +361,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
 
   const invoiceConfirmTaxIdMutation = useMutation({
     mutationFn: async (invoiceId: string) => {
-      const res = await fetch(`/api/external-order-invoices/${invoiceId}/confirm-tax-id`, { method: "POST" });
+      const res = await fetch(`/api/finance/order-invoices/${invoiceId}/confirm-tax-id`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "同步失败");
       return data;
@@ -284,12 +374,18 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const tabs = [
+  const tabs = useMemo(() => [
     { value: "unmatched", label: "待匹配" },
     { value: "matched", label: "已匹配" },
     { value: "conflict", label: "冲突待确认" },
     { value: "manual", label: "已人工绑定" },
-  ];
+  ], []);
+
+  // Map PATCH field names: financeCategory -> category, financeTreatment -> financeTreatment (same)
+  function financeFieldToPatchField(field: string): string {
+    if (field === "financeCategory") return "category";
+    return field;
+  }
 
   return (
     <div className="space-y-6 max-w-full overflow-x-hidden pb-36">
@@ -335,10 +431,10 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                     {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
                     匹配选中
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeCategory", value: "PRODUCT" })}>
+                  <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "category", value: "PRODUCT" })}>
                     设为商品
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeCategory", value: "SERVICE" })}>
+                  <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "category", value: "SERVICE" })}>
                     设为服务
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeTreatment", value: "EXCLUDED" })}>
@@ -390,7 +486,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                           <td className="py-2 px-2 text-center">
                             <Select
                               value={o.financeCategory}
-                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: "financeCategory", value: v })}
+                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}
                             >
                               <SelectTrigger className="h-7 text-xs w-24">
                                 <SelectDisplay label="分类" valueLabel={o.financeCategory === "UNKNOWN" ? "未分类" : o.financeCategory === "PRODUCT" ? "商品" : "服务"} placeholder="分类" />
@@ -442,7 +538,6 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                   return (
                     <Card key={o.id} className="relative">
                       <CardContent className="p-4 space-y-2">
-                        {/* Checkbox + 订单号 + 匹配状态 */}
                         <div className="flex items-center gap-2 min-w-0">
                           {isAdmin && (
                             <input
@@ -463,7 +558,6 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                           </div>
                         </div>
 
-                        {/* 收件人 + 金额 */}
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="text-sm font-medium truncate">{o.receiverName || "未知收件人"}</p>
@@ -472,13 +566,12 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                           <span className="text-sm font-medium shrink-0">{(o.paidAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
                         </div>
 
-                        {/* 财务分类 + 计入方式 */}
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs text-muted-foreground shrink-0">财务：</span>
                           {isAdmin ? (
                             <Select
                               value={o.financeCategory}
-                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: "financeCategory", value: v })}
+                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}
                             >
                               <SelectTrigger className="h-7 text-xs w-24">
                                 <SelectDisplay label="分类" valueLabel={o.financeCategory === "UNKNOWN" ? "未分类" : o.financeCategory === "PRODUCT" ? "商品" : "服务"} placeholder="分类" />
@@ -499,7 +592,6 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                           </Badge>
                         </div>
 
-                        {/* 客户 + 项目 */}
                         <div className="space-y-1">
                           <p className="text-xs text-primary truncate">
                             客户：{o.customer ? `${o.customer.name} (${o.customer.customerCode})` : "未绑定"}
@@ -509,7 +601,6 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                           </p>
                         </div>
 
-                        {/* 操作按钮 */}
                         {isAdmin && (
                           <div className="flex gap-2 pt-1">
                             <Button size="sm" variant="outline" className="flex-1" onClick={() => setMatchDialogOrder(o)}>
@@ -538,13 +629,14 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
           open={!!matchDialogOrder}
           onOpenChange={(open) => { if (!open) setMatchDialogOrder(null); }}
           orderId={matchDialogOrder.id}
+          userId={userId}
           orderPrefill={{
             receiverName: matchDialogOrder.receiverName,
             receiverPhone: matchDialogOrder.receiverPhone,
             orderUser: matchDialogOrder.orderUser,
             receiverAddress: matchDialogOrder.receiverAddress,
           }}
-          onBound={() => queryClient.invalidateQueries({ queryKey: ["external-orders"] })}
+          onBound={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
         />
       )}
 
@@ -553,7 +645,7 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
           open={!!projectDialogOrderId}
           onOpenChange={(open) => { if (!open) setProjectDialogOrderId(null); }}
           orderId={projectDialogOrderId}
-          onBound={() => queryClient.invalidateQueries({ queryKey: ["external-orders"] })}
+          onBound={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
         />
       )}
 
@@ -614,11 +706,12 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
                   open={invoiceOpen}
                   onOpenChange={setInvoiceOpen}
                   editingInvoice={editingInvoice}
-                  createUrl={`/api/external-orders/${detailOrderId}/invoices`}
-                  patchUrlPrefix="/api/external-order-invoices"
+                  createUrl="/api/finance/order-invoices"
+                  patchUrlPrefix="/api/finance/order-invoices"
                   onSuccess={invalidateDetail}
                   showProjectCode={false}
                   aiDraftUrl={null}
+                  extraPayload={{ orderId: detailOrderId }}
                 />
               )}
             </>
@@ -633,15 +726,15 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
           onOpenChange={(v) => { setMergeInvoiceOpen(v); if (!v) { setMergeCreateUrl(""); setMergeCoveredOrderIds([]); } }}
           editingInvoice={null}
           createUrl={mergeCreateUrl}
-          patchUrlPrefix="/api/external-order-invoices"
+          patchUrlPrefix="/api/finance/order-invoices"
           onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["external-orders"] });
+            queryClient.invalidateQueries({ queryKey: ["orders"] });
             clearSelection();
           }}
           defaultValues={mergeDefaults as Record<string, unknown> & { contactName?: string; contentSummary?: string; remark?: string; items?: Array<{ itemName: string; spec: string; unit: string; quantity: string; amount: string }>; buyerOrgName?: string; buyerOrgId?: string; buyerTaxId?: string; invoiceType?: string; projectCode?: string }}
           showProjectCode={false}
           aiDraftUrl={null}
-          extraPayload={{ coveredOrderIds: mergeCoveredOrderIds }}
+          extraPayload={{ orderId: mergeCoveredOrderIds[0], coveredOrderIds: mergeCoveredOrderIds }}
         />
       )}
 
@@ -657,10 +750,10 @@ function OrderMatchingContent({ isAdmin }: { isAdmin: boolean }) {
               {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
               匹配
             </Button>
-            <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeCategory", value: "PRODUCT" })}>
+            <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "category", value: "PRODUCT" })}>
               设商品
             </Button>
-            <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeCategory", value: "SERVICE" })}>
+            <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "category", value: "SERVICE" })}>
               设服务
             </Button>
             <Button size="sm" variant="outline" onClick={() => batchCategoryMutation.mutate({ ids: Array.from(selectedIds), field: "financeTreatment", value: "EXCLUDED" })}>

@@ -1,7 +1,8 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
@@ -23,19 +24,28 @@ import { Badge } from "@/components/ui/badge";
 import { Search, UserCog, Filter, X } from "lucide-react";
 
 export default function CrmCustomersPage() {
+  return (
+    <Suspense fallback={<div className="p-6">加载中...</div>}>
+      <CrmCustomersWrapper />
+    </Suspense>
+  );
+}
+
+function CrmCustomersWrapper() {
   const { status } = useSession();
   const router = useRouter();
+  const sp = useSearchParams();
 
   if (status === "unauthenticated") { router.push("/login"); return null; }
   if (status === "loading") return <div className="p-6">加载中...</div>;
 
-  return <CustomerPool />;
+  return <CustomerPool initialSearch={sp.get("search") || ""} />;
 }
 
-function CustomerPool() {
+function CustomerPool({ initialSearch }: { initialSearch: string }) {
   const { data: session } = useSession();
   const router = useRouter();
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch);
   const [stage, setStage] = useState("ALL");
   const [importance, setImportance] = useState("ALL");
   const [personCategory, setPersonCategory] = useState("ALL");

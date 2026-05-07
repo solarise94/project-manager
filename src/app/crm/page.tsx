@@ -12,14 +12,35 @@ import { CustomerProfilePicker } from "@/components/crm/customer-profile-picker"
 import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog";
 import { CheckinFlow } from "@/components/crm/checkin-flow";
 import type { CrmDashboardStats } from "@/lib/crm/types";
-import { Users, ClipboardList, AlertTriangle, MapPin, ClipboardCheck, CalendarClock, Network, Share2, ArrowRight, BarChart3, UserCog, Layers, Handshake, MessageSquare } from "lucide-react";
+import {
+  Users,
+  ClipboardList,
+  AlertTriangle,
+  MapPin,
+  ClipboardCheck,
+  CalendarClock,
+  Network,
+  Share2,
+  ArrowRight,
+  BarChart3,
+  UserCog,
+  Layers,
+  Handshake,
+  MessageSquare,
+  Building2,
+  Contact,
+  FileCheck,
+} from "lucide-react";
 import Link from "next/link";
 
 export default function CrmDashboardPage() {
   const { status } = useSession();
   const router = useRouter();
 
-  if (status === "unauthenticated") { router.push("/login"); return null; }
+  if (status === "unauthenticated") {
+    router.push("/login");
+    return null;
+  }
   if (status === "loading") return <div className="p-6">加载中...</div>;
 
   return <CrmDashboard />;
@@ -27,7 +48,10 @@ export default function CrmDashboardPage() {
 
 function CrmDashboard() {
   const { data: session } = useSession();
-  const isRep = session?.user?.role === "REPRESENTATIVE";
+  const role = session?.user?.role;
+  const isRep = role === "REPRESENTATIVE";
+  const isAdmin = role === "ADMIN";
+  const isInternalStaff = role === "ADMIN" || role === "USER";
   const [quickAction, setQuickAction] = useState<"interaction" | "checkin" | null>(null);
   const [quickProfileId, setQuickProfileId] = useState("");
   const [quickCustomerId, setQuickCustomerId] = useState("");
@@ -133,7 +157,9 @@ function CrmDashboard() {
 
       <div className="grid md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle className="text-base">阶段分布</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">阶段分布</CardTitle>
+          </CardHeader>
           <CardContent>
             {stats.stageDistribution.length === 0 ? (
               <p className="text-sm text-muted-foreground">暂无数据</p>
@@ -151,7 +177,9 @@ function CrmDashboard() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">最近沟通</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">最近沟通</CardTitle>
+          </CardHeader>
           <CardContent>
             {stats.recentInteractions.length === 0 ? (
               <p className="text-sm text-muted-foreground">暂无记录</p>
@@ -172,8 +200,84 @@ function CrmDashboard() {
         </Card>
       </div>
 
+      {isInternalStaff && (
+        <div className="space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground">客户与单位主数据</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <Link href="/customers">
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Contact className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">客户管理</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">客户主数据维护</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+            <Link href="/crm/customers">
+              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                <CardContent className="pt-5 pb-5">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <Users className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">CRM 客户池</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">销售跟进档案管理</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+            {isAdmin && (
+              <>
+                <Link href="/admin/organizations">
+                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                    <CardContent className="pt-5 pb-5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <Building2 className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">单位主数据</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">机构/单位标准化管理</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/admin/organization-reviews">
+                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
+                    <CardContent className="pt-5 pb-5">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <FileCheck className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">单位复核</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">AI/人工单位治理任务</p>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
-        <h2 className="text-sm font-medium text-muted-foreground">工作台</h2>
+        <h2 className="text-sm font-medium text-muted-foreground">CRM 工作台</h2>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Link href="/crm/customers">
             <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
@@ -258,7 +362,7 @@ function CrmDashboard() {
                 </CardContent>
               </Card>
             </Link>
-            {session?.user?.role === "ADMIN" && (
+            {isAdmin && (
               <>
                 <Link href="/crm/region-managers">
                   <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">

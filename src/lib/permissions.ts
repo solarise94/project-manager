@@ -49,15 +49,135 @@ export async function getRepresentativeProjectIds(userId: string): Promise<strin
 
   const rep = await prisma.representative.findUnique({
     where: { email: user.email },
-    select: { id: true, archived: true },
+    select: { id: true, name: true, archived: true },
   });
   if (!rep || rep.archived) return [];
 
-  const projects = await prisma.project.findMany({
+  // Primary: projects linked by representativeId
+  const byId = await prisma.project.findMany({
     where: { representativeId: rep.id, deleted: false },
     select: { id: true },
   });
-  return projects.map((p) => p.id);
+
+  // Fallback: projects where representativeId is null but representative text matches rep name.
+  // Only apply when the rep name is unique among active representatives to avoid over-authorization.
+  const nameCount = await prisma.representative.count({
+    where: { name: rep.name, archived: false },
+  });
+  if (nameCount > 1) return byId.map((p) => p.id);
+
+  const alreadyCovered = new Set(byId.map((p) => p.id));
+  const byName = await prisma.project.findMany({
+    where: {
+      representativeId: null,
+      representative: rep.name,
+      deleted: false,
+    },
+    select: { id: true },
+  });
+
+  const all = [...byId, ...byName.filter((p) => !alreadyCovered.has(p.id))];
+  return all.map((p) => p.id);
+}
+
+/**
+ * Returns all project IDs the user can read.
+ * - ADMIN: null (meaning all projects)
+ * - Sales roles (REPRESENTATIVE, REGIONAL_MANAGER): projects linked via representativeId or representative name
+ * - USER: projects where user is a ProjectMember + any representative-linked projects
+ */
+export async function getReadableProjectIds(userId: string, role: string): Promise<string[] | null> {
+  if (role === "ADMIN") return null;
+
+  const ids = new Set<string>();
+
+  // Always check membership (covers OWNER, MEMBER, COLLABORATOR)
+  const memberIds = await getUserProjectIds(userId);
+  for (const id of memberIds) ids.add(id);
+
+  // Check representative linkage (for REPRESENTATIVE, REGIONAL_MANAGER, and USER who may also be reps)
+  const repIds = await getRepresentativeProjectIds(userId);
+  for (const id of repIds) ids.add(id);
+
+  return [...ids];
+}
+
+/**
+ * Check if a user can read a specific project.
+ * - Deleted projects: only ADMIN or project OWNER
+ * - Active projects: must be in readable project set (unless ADMIN)
+ */
+export async function canReadProject(projectId: string, userId: string, role: string): Promise<boolean> {
+  if (role === "ADMIN") return true;
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, deleted: true },
+  });
+  if (!project) return false;
+
+  if (project.deleted) {
+    return isProjectOwner(projectId, userId);
+  }
+
+  const ids = await getReadableProjectIds(userId, role);
+  if (ids === null) return true; // ADMIN (already handled above)
+  return ids.includes(projectId);
+}
+
+/**
+ * Check if a user can contribute to a project (create tickets, comments, replies).
+ * Same as canReadProject but additionally requires the project not be deleted.
+ */
+export async function canContributeProject(projectId: string, userId: string, role: string): Promise<boolean> {
+  if (role === "ADMIN") return true;
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true, deleted: true },
+  });
+  if (!project || project.deleted) return false;
+
+  return canReadProject(projectId, userId, role);
+}
+
+/**
+ * Check if a user can manage a project (edit, delete, archive).
+ * Only ADMIN or project OWNER can manage.
+ */
+export async function canManageProject(projectId: string, userId: string, role: string): Promise<boolean> {
+  if (role === "ADMIN") return true;
+  return isProjectOwner(projectId, userId);
+}
+
+/**
+ * Check if a user can manage tickets (change status, delete).
+ * ADMIN can manage any project's tickets.
+ * USER can manage tickets on projects they can read (member or representative-linked).
+ * Project OWNER (any role) can manage tickets on their project.
+ * Representatives and collaborators can only create tickets and reply.
+ */
+export async function canManageTicket(projectId: string, userId: string, role: string): Promise<boolean> {
+  if (role === "ADMIN") return true;
+  if (role === "USER") return canReadProject(projectId, userId, role);
+  return isProjectOwner(projectId, userId);
+}
+
+/**
+ * Build a permissions object for API responses.
+ */
+export async function buildProjectPermissions(projectId: string, userId: string, role: string) {
+  const [canRead, canContribute, canManage] = await Promise.all([
+    canReadProject(projectId, userId, role),
+    canContributeProject(projectId, userId, role),
+    canManageProject(projectId, userId, role),
+  ]);
+  return {
+    canRead,
+    canContribute,
+    canManage,
+    canViewInvoices: canRead,
+  };
 }
 
 /**

@@ -49,30 +49,63 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
   const [order, project] = await Promise.all([
-    prisma.order.findUnique({ where: { id: orderId }, select: { id: true } }),
+    prisma.order.findUnique({ where: { id: orderId }, select: { id: true, customerId: true } }),
     prisma.project.findUnique({ where: { id: projectId as string }, select: { id: true, customerId: true } }),
   ]);
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
+  // Check duplicate first — before any mutation
   const existing = await prisma.orderProjectLink.findUnique({
     where: { orderId_projectId: { orderId, projectId: projectId as string } },
   });
   if (existing) return NextResponse.json({ error: "Link already exists" }, { status: 409 });
 
-  const link = await prisma.orderProjectLink.create({
-    data: {
-      orderId,
-      projectId: projectId as string,
-      treatment: (treatment as string) || "PROJECT_INCLUDED",
-      allocatedAmount: allocatedAmount != null ? Number(allocatedAmount) : null,
-      isPrimary: isPrimary === true,
-      note: (note as string)?.trim() || null,
-      createdById: session.user.id,
-    },
-    include: {
-      project: { select: { id: true, name: true, status: true } },
-    },
+  // Customer consistency: conflict if both have different customers
+  if (order.customerId && project.customerId && order.customerId !== project.customerId) {
+    return NextResponse.json({
+      error: "订单客户与项目客户不一致",
+      orderCustomerId: order.customerId,
+      projectCustomerId: project.customerId,
+    }, { status: 409 });
+  }
+
+  // Do customer inheritance + link create in one transaction
+  const link = await prisma.$transaction(async (tx) => {
+    // Inherit customer: order has none, project has one
+    if (!order.customerId && project.customerId) {
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          customerId: project.customerId,
+          customerMatchStatus: "MANUAL_MATCHED",
+          customerMatchReason: "inherited_from_project_link",
+        },
+      });
+    }
+
+    // Inherit customer: project has none, order has one
+    if (order.customerId && !project.customerId) {
+      await tx.project.update({
+        where: { id: projectId as string },
+        data: { customerId: order.customerId },
+      });
+    }
+
+    return tx.orderProjectLink.create({
+      data: {
+        orderId,
+        projectId: projectId as string,
+        treatment: (treatment as string) || "PROJECT_INCLUDED",
+        allocatedAmount: allocatedAmount != null ? Number(allocatedAmount) : null,
+        isPrimary: isPrimary === true,
+        note: (note as string)?.trim() || null,
+        createdById: session.user.id,
+      },
+      include: {
+        project: { select: { id: true, name: true, status: true } },
+      },
+    });
   });
 
   return NextResponse.json({ link }, { status: 201 });

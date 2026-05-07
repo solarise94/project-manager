@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, FileText, ShoppingBag } from "lucide-react";
+import { Loader2, FileText, ShoppingBag, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
@@ -15,10 +16,20 @@ const STATUS_LABELS: Record<string, string> = { DRAFT: "草稿", REQUESTED: "已
 const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = { DRAFT: "secondary", REQUESTED: "default", ISSUED: "default", CANCELLED: "destructive" };
 
 export default function InvoicesPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+      <InvoicesContent />
+    </Suspense>
+  );
+}
+
+function InvoicesContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("all");
+  const orderId = searchParams.get("orderId");
 
   if (status === "loading") return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
   if (!session) { router.push("/login"); return null; }
@@ -59,23 +70,27 @@ export default function InvoicesPage() {
         </Link>
       </div>
 
-      <InvoicesSearchSection search={search} setSearch={setSearch} tab={tab} setTab={setTab} />
+      <InvoicesSearchSection search={search} setSearch={setSearch} tab={tab} setTab={setTab} orderId={orderId} />
     </div>
   );
 }
 
-function InvoicesSearchSection({ search, setSearch, tab, setTab }: { search: string; setSearch: (s: string) => void; tab: string; setTab: (t: string) => void }) {
+function InvoicesSearchSection({ search, setSearch, tab, setTab, orderId }: { search: string; setSearch: (s: string) => void; tab: string; setTab: (t: string) => void; orderId: string | null }) {
+  const router = useRouter();
   const p = new URLSearchParams();
   if (search) p.set("search", search);
   if (tab !== "all") p.set("status", tab.toUpperCase());
   p.set("pageSize", "50");
+  if (orderId) p.set("orderId", orderId);
 
   const { data: projData, isLoading: projLoading } = useQuery<{ invoices: Array<Record<string, unknown>>; total: number }>({
-    queryKey: ["finance", "all-invoices", "project", search, tab],
-    queryFn: () => fetch(`/api/finance/project-invoices?${p.toString()}`).then(r => r.ok ? r.json() : { invoices: [], total: 0 }),
+    queryKey: ["finance", "all-invoices", "project", search, tab, orderId],
+    queryFn: () => orderId
+      ? { invoices: [], total: 0 }
+      : fetch(`/api/finance/project-invoices?${p.toString()}`).then(r => r.ok ? r.json() : { invoices: [], total: 0 }),
   });
   const { data: orderData, isLoading: orderLoading } = useQuery<{ invoices: Array<Record<string, unknown>>; total: number }>({
-    queryKey: ["finance", "all-invoices", "order", search, tab],
+    queryKey: ["finance", "all-invoices", "order", search, tab, orderId],
     queryFn: () => fetch(`/api/finance/order-invoices?${p.toString()}`).then(r => r.ok ? r.json() : { invoices: [], total: 0 }),
   });
 
@@ -85,6 +100,14 @@ function InvoicesSearchSection({ search, setSearch, tab, setTab }: { search: str
 
   return (
     <div className="space-y-3">
+      {orderId && (
+        <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700">
+          <span>当前仅查看该订单的发票</span>
+          <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => router.push("/finance/invoices")}>
+            <X className="h-3 w-3 mr-1" />清除筛选
+          </Button>
+        </div>
+      )}
       <div className="flex gap-2">
         <Input placeholder="搜索发票..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
         <Tabs value={tab} onValueChange={setTab}>

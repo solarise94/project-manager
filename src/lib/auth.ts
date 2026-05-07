@@ -173,12 +173,19 @@ export const authOptions: NextAuthOptions = {
           where: { token: credentials.token },
         });
 
-        if (!rep || !rep.tokenExpiresAt || rep.tokenExpiresAt < new Date()) {
+        if (!rep) {
+          console.log(`[MAGIC_LINK] action=consume suffix=${credentials.token.slice(-6)} result=INVALID`);
           return null;
         }
 
         if (rep.archived) {
+          console.log(`[MAGIC_LINK] action=consume rep=${rep.email} suffix=${credentials.token.slice(-6)} result=ARCHIVED`);
           throw new Error("ARCHIVED");
+        }
+
+        if (!rep.tokenExpiresAt || rep.tokenExpiresAt < new Date()) {
+          console.log(`[MAGIC_LINK] action=consume rep=${rep.email} suffix=${credentials.token.slice(-6)} result=EXPIRED`);
+          throw new Error("EXPIRED");
         }
 
         // Ensure corresponding User exists (shared helper)
@@ -189,6 +196,8 @@ export const authOptions: NextAuthOptions = {
           where: { id: rep.id },
           data: { token: null, tokenExpiresAt: null },
         });
+
+        console.log(`[MAGIC_LINK] action=consume rep=${rep.email} suffix=${credentials.token.slice(-6)} result=ok`);
 
         const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user) throw new Error("User sync failed");

@@ -81,6 +81,9 @@ src/
     auth.ts               # NextAuth 配置
     prisma.ts             # Prisma Client 单例
     permissions.ts        # 项目级权限守卫
+    role-guards.ts        # Client-safe 角色判断（isAdmin/isInternalStaff/canAccessOrders）
+    orders/               # 统一订单系统（constants, permissions, types）
+    finance/              # 财务模块（progress, calculations, costs, pingoodmice-match, types）
     crm/                  # CRM 业务逻辑、常量、Query Keys、权限
     draft/                # AI 草稿工作流
       form-schemas/       # 表单 Schema（project.create, project.edit, customer.create, ticket.create）
@@ -89,7 +92,7 @@ src/
       builtin/            # 内置插件：project-digest, project-smart-fill, project-auto-draft
     mail.ts               # 邮件发送（nodemailer，自动回退 Ethereal）
     reminder.ts           # 工单到期提醒
-    external-order.ts     # 外部订单 CSV 解析与标准化
+    external-order.ts     # 外部订单 CSV 解析与标准化 (Legacy)
     export-invoice-pdf.tsx# 发票 PDF 导出（html-to-image + jsPDF）
     feishu-export.ts      # 飞书多维表格导出格式
     app-url.ts            # 集中式 URL 构建器
@@ -102,8 +105,8 @@ prisma/
 scripts/
   deploy-standalone.sh    # 底层部署脚本
   deploy-demo.sh          # Demo 环境部署
-  deploy-prod.sh          # 生产环境部署
-  deploy-remote-prod.sh   # 远程服务器部署
+  deploy-prod.sh          # 本机生产镜像/预演部署（非正式线上）
+  deploy-remote-prod.sh   # 正式线上部署（远程 101 服务器）
   mobile-screenshot.py    # 移动端截图工具（Python + Playwright）
 public/
   uploads/                # 用户上传文件（照片、附件）
@@ -125,10 +128,14 @@ public/
 - **ESLint**：flat config (`eslint.config.mjs`)，继承 `eslint-config-next/core-web-vitals` + `typescript`，关闭了 `@next/next/no-img-element`。
 - **API 路由标准模式**：每个 `route.ts` 必须内联调用 `getServerSession(authOptions)` 进行认证，不存在 `middleware.ts`。
 - **页面组件**：均为 `"use client"`，认证通过 `useSession()` + 客户端重定向实现。
+- **`useSearchParams`**：使用 `useSearchParams()` 的页面必须用 `<Suspense>` 包裹，否则 build 阶段报 `missing-suspense-with-csr-bailout`。标准模式：`export default function Page() { return <Suspense fallback={...}><Inner /></Suspense>; }`，Inner 为实际组件。
 - **Prisma 单例**：始终从 `@/lib/prisma` 导入 `prisma`，禁止直接 `new PrismaClient()`。
 - **URL 构建**：禁止手动拼接 `process.env.NEXTAUTH_URL`，统一使用 `@/lib/app-url` 中的 `getAppBaseUrl()` / `getAppUrl()` / `getMagicLinkUrl()`。
 - **打印/PDF**：`globals.css` 中 `@media print` 规则会隐藏 `#invoice-print-root` 以外的全部内容。新增打印友好视图请遵循此模式。
 - **无测试框架**：当前未配置任何测试框架，也没有项目级测试。新增测试需从零搭建。
+- **Scope 查询 AND-composition**：Order/Cost/Invoice API 中 scope WHERE 与用户搜索/筛选条件必须通过 `{ AND: [scopeWhere, searchOR, filters] }` 合并，严禁直接覆盖 where 对象，否则会导致 scope 绕过。
+- **Per-row $transaction**：导入/批量写入涉及多表（Order + OrderSourceRecord + OrderLine）的操作用 `prisma.$transaction()` 包住，防止中途失败产生孤儿数据。幂等检查优先查 OrderSourceRecord uniqueness。
+- **deep-link 预填**：页面从 URL query 读取预填参数后，用 `useRef` 或 `prefilledProjectIdRef` 跳过重复预填，避免 useEffect 覆盖用户手动修改。
 
 ---
 
@@ -168,7 +175,14 @@ Prisma + SQLite（`prisma/schema.prisma`）。核心实体：
 - **Ticket / TicketReply**：工单与回复，支持提醒日期（`reminderDate`）。
 - **Comment / Attachment / ActivityLog / Notification**：评论、附件、活动日志、站内通知。
 - **BillingProfile / ProjectInvoice / ExternalOrderInvoiceRequest**：开票方档案、项目发票、外部订单开票申请，均支持行项目。
-- **ExternalOrder / ExternalOrderImportBatch**：外部订单批量导入。
+- **Order / OrderLine / OrderSourceRecord**：统一订单模型（PR 1-10 引入，替代 ExternalOrder）。支持手动创建（source=MANUAL）、拼好鼠导入（source=PINGOODMICE）、其他导入。`OrderSourceRecord` 维护 legacy ExternalOrder 的字段镜像与 raw JSON，`OrderLine` 替代 ExternalOrder 的单体金额。
+- **OrderProjectLink**：Order 与 Project 的多对多关联，含 `treatment`（PROJECT_INCLUDED/STANDALONE）、`allocatedAmount` 分摊、`isPrimary` 主关联。
+- **OrderStatusHistory**：订单状态变更日志。
+- **OrderMerge**：订单合并关系（sourceOrder → targetOrder）。
+- **OrderInvoiceCoverage**：统一订单发票的覆盖记录（`orderId + invoiceRequestId`），与 legacy `ExternalOrderInvoiceCoverage` 并行为双覆盖模型。
+- **FinanceCost**：独立成本跟踪（`costType`、`amount`、`occurredAt`），支持关联 customer/order/project。
+- **ExternalOrder / ExternalOrderImportBatch**：Legacy 外部订单表，只读追溯，所有写操作已迁移到 Order 模型。
+- **ExternalOrderInvoiceRequest**：发票申请（项目发票和订单发票共用）。`orderId`（可选）直接关联 Order，`externalOrderId`（可选）关联 legacy ExternalOrder。两套 coverage 模型并存。
 - **OrganizationReviewTask**：AI 辅助机构去重审核工作流。
 - **DevLog**：应用内版本更新日志。
 - **FailedLoginAttempt**：暴力破解锁定跟踪。
@@ -191,13 +205,14 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 
 ## 数据库环境
 
-三套完全隔离的 SQLite 数据库，严禁混用：
+各环境使用完全隔离的 SQLite 数据库，严禁混用：
 
 | 环境 | 路径 |
 |------|------|
 | 开发 | `prisma/dev.db`（仅本地 `npm run dev`） |
 | Demo | `/home/solarise/task-manager-data/demo/dev.db` |
-| 生产 | `/home/solarise/task-manager-data/prod/dev.db` |
+| 本机生产镜像/预演 | `/home/solarise/task-manager-data/prod/dev.db` |
+| 正式线上生产 | 远程 `101.34.158.217:/home/ubuntu/task-manager-data/prod/dev.db` |
 
 **注意**：`/home/solarise/project-manage/dev.db` 不是正常路径，若存在通常是调试残留。
 
@@ -219,9 +234,15 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 |------|---------|--------|--------|---------|
 | `deploy-demo.sh` | `/home/solarise/task-manager-demo` | `/home/solarise/task-manager-data/demo/dev.db` | `task-manager-demo.service` | `127.0.0.1:31081` |
 | `deploy-prod.sh` | `/home/solarise/task-manager` | `/home/solarise/task-manager-data/prod/dev.db` | `task-manager.service` | `0.0.0.0:31080` |
-| `deploy-remote-prod.sh` | 远程 `101.34.158.217` | `/home/ubuntu/task-manager-data/prod/dev.db` | — | — |
+| `deploy-remote-prod.sh` | 远程 `101.34.158.217:/home/ubuntu/task-manager` | 远程 `/home/ubuntu/task-manager-data/prod/dev.db` | `task-manager.service` | `127.0.0.1:31081` |
 
-三者均调用 `deploy-standalone.sh`，流程为：完整构建 → rsync standalone 输出 → Prisma client shim 生成 → `prisma db push` → 重写运行时 `.env` → systemd 服务重启 → 健康检查（`/api/auth/session` 200）。
+**正式线上生产只使用 `scripts/deploy-remote-prod.sh`。** 用户说“线上”“生产”“prod”时，默认指远程 `101.34.158.217` 服务器，而不是本机 `/home/solarise/task-manager`。`scripts/deploy-prod.sh` 仅用于本机生产镜像/预演，除非用户明确要求部署到本机 prod。
+
+远程正式生产的公网 HTTPS 由远程 nginx 监听 `0.0.0.0:31080` 提供，反代到 Next.js standalone 的 `127.0.0.1:31081`；外网地址为 `https://task.solarise94.fun:31080`。
+
+本机 demo / 本机生产镜像脚本调用 `deploy-standalone.sh`，流程为：完整构建 → rsync standalone 输出 → Prisma client shim 生成 → `prisma db push` → 重写运行时 `.env` → systemd 服务重启 → 健康检查（`/api/auth/session` 200）。
+
+远程正式生产脚本 `deploy-remote-prod.sh` 会本地构建 → SSH/rsync 到 `101.34.158.217` → 拉取远程 SQLite 到本地临时目录执行 `prisma db push` → 上传更新后的远程库 → 写远程 `.env` 和 systemd unit → 重启远程服务 → 在远程服务器本机 smoke test `127.0.0.1:31081/api/auth/session`。
 
 ### 关键部署注意事项
 
@@ -279,13 +300,54 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 - **ExternalOrderInvoiceRequest**：基于外部订单的开票申请，可自动预填收货人信息。
 - **导出格式**：PDF（A4 打印）+ 飞书多维表格制表符分隔文本（`src/lib/feishu-export.ts`）。
 
-### 外部订单系统
+### 统一订单系统 (Order Model)
+
+PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
+
+**数据模型**（`prisma/schema.prisma`）：6 个 Order 家族模型 — `Order`（主表，含 buyer snapshot、customer match、finance 字段）、`OrderLine`（多行明细）、`OrderSourceRecord`（legacy 字段镜像 + raw JSON）、`OrderProjectLink`（多对多项目关联）、`OrderStatusHistory`（状态日志）、`OrderMerge`（合并关系）。
+
+**关键模块**：
+- `src/lib/orders/constants.ts` — 枚举常量（`ORDER_SOURCE`、`ORDER_CATEGORY`、`ORDER_STATUS`）、`mapExternalOrderStatus()`、`normalizeOrderSource()`（"微信小商店"/"拼好鼠" → `PINGOODMICE`）
+- `src/lib/orders/permissions.ts` — 订单 Scope：ADMIN 全量；USER 限 project-linked / CRM-customer / own-created；REPRESENTATIVE 限自己代表项目关联订单；REGIONAL_MANAGER 合并自己代表项目与下辖代表项目关联订单。
+- `src/lib/orders/types.ts` — TypeScript 类型定义
+
+**核心 API**：
+- `GET /api/orders` — 列表，支持 AND-composition scope + 13 个筛选参数（source/status/category/customerMatchStatus/financeTreatment/customerId/projectId 等），返回含 projectLinks、customer、invoiceStatus 的完整 select
+- `POST /api/orders` — 创建（手动）或带 `projectAction: GENERATE|LINK` 自动生成/绑定项目
+- `GET /api/orders/[id]` — 详情，含 lines、projectLinks、sourceRecords、receipts、financeCosts、invoiceRequests、statusHistory
+- `PATCH /api/orders/[id]` — 更新（ADMIN-only），支持 customerId/financeTreatment/category/customerMatch* 等全部字段
+- `GET /api/orders/[id]/project-links` — 查看关联项目
+- `POST /api/orders/[id]/project-links` — 绑定项目，含 customer 一致性校验（409 冲突 + 双向继承）
+- `DELETE /api/orders/[id]/project-links/[linkId]` — 解绑
+- `POST /api/orders/import/pingoodmice` — CSV 导入，per-row `$transaction`（Order + OrderSourceRecord + OrderLine）
+
+**Finance 模块** (`src/lib/finance/`)：
+- `progress.ts` — `getOrderEffectiveTreatment()`（AUTO 时检查 OrderProjectLink 决定 STANDALONE/PROJECT_INCLUDED）、`computeAllProgressReceivables(projects, orders)`
+- `calculations.ts` — `getFinanceSummary()`（含 cost/profit 聚合）、`getCustomerFinanceList()`（含 bulk `buildOrderProjectLinkMap`）
+- `costs.ts` — `resolveAndValidateCostRefs()` 校验 customer/order/project 一致性
+- `pingoodmice-match.ts` — 自动客户匹配扫描（微信/电话/姓名+机构/姓名+地址 四层匹配）
+- `types.ts` — `MatchResult`、`MatchScanResult`、`FinanceTreatment` 等类型
+- `permissions.ts` — 财务模块权限
+
+**Legacy 接口状态**：7 个旧 ExternalOrder 写 API（`/api/external-orders/import`、`/api/external-orders/batch-delete`、`/api/external-orders/[id]/merge` 等）返回 410 Gone。`/api/finance/pingoodmice/[orderId]/bind-customer`、`bind-project`、`finance-settings` 返回 410，已迁移至 `/api/orders`。
+
+**页面入口**：
+- `/orders` — 订单管理中枢，含筛选、URL query 同步、快捷入口（项目/财务/CRM）、ProjectBindDialog
+- `/orders/new` — 新建订单（支持 `?fromProjectId=xxx` 预填）
+- `/orders/[id]` — 详情（7 tabs: 概览/明细/客户/项目/财务设置/来源记录/操作日志），顶部 action bar
+- `/finance/order-matching` — 拼好鼠订单匹配（读 `/api/orders?source=PINGOODMICE`，写 `/api/orders`）
+- `/finance/invoices` — 统一发票工作台（含 `orderId` 深链筛选）
+- `/finance/costs` — 成本管理（含 `orderId`/`customerId`/`projectId` 深链预填）
+
+### 外部订单 (Legacy)
 
 `src/lib/external-order.ts` — 批量导入来自电商平台的 CSV 订单：
 - 支持 GBK/UTF-8 自动检测与转码（`iconv-lite`）。
 - 标准化字段映射（`ORDER_HEADER_MAP`）。
 - 按 `externalOrderNo` 去重，已存在订单更新而非重复插入。
-- 可基于订单数据自动预填发票表单。
+- `syncOrderInvoiceStatus()` 兼容新旧双路径（legacy `ExternalOrder` + new `Order`）。
+
+**注意**：`ExternalOrder` 表及其 API 仅用于历史数据追溯，所有新读写必须走统一 Order 模型。
 
 ### 机构去重与 enrichment
 
@@ -336,12 +398,19 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 | 认证配置 | `src/lib/auth.ts` |
 | Prisma 单例 | `src/lib/prisma.ts` |
 | 权限守卫 | `src/lib/permissions.ts` |
+| 角色守卫 (client-safe) | `src/lib/role-guards.ts` |
+| Order 权限/Scope | `src/lib/orders/permissions.ts` |
+| Order 常量/枚举 | `src/lib/orders/constants.ts` |
 | CRM 权限 | `src/lib/crm/permissions.ts` |
 | URL 构建 | `src/lib/app-url.ts` |
 | 邮件 | `src/lib/mail.ts` |
 | 提醒调度 | `src/lib/reminder.ts` |
 | 运行时信息 | `src/lib/runtime-info.ts` |
-| 外部订单 | `src/lib/external-order.ts` |
+| 外部订单导入 (Legacy) | `src/lib/external-order.ts` |
+| 财务计算/汇总 | `src/lib/finance/calculations.ts` |
+| 财务进度/口径 | `src/lib/finance/progress.ts` |
+| 自动客户匹配 | `src/lib/finance/pingoodmice-match.ts` |
+| 成本校验 | `src/lib/finance/costs.ts` |
 | 发票 PDF | `src/lib/export-invoice-pdf.tsx` |
 | 飞书导出 | `src/lib/feishu-export.ts` |
 | 智能填写 | `src/lib/smart-fill.ts` |

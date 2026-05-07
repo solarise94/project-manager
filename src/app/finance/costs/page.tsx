@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -22,8 +22,21 @@ const COST_TYPES = [
 ];
 
 export default function CostsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-muted-foreground">加载中...</div>}>
+      <CostsContent />
+    </Suspense>
+  );
+}
+
+function CostsContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const sp = useSearchParams();
+  const defaultOrderId = sp.get("orderId") || "";
+  const defaultCustomerId = sp.get("customerId") || "";
+  const defaultProjectId = sp.get("projectId") || "";
+
   if (status === "loading") return <div className="p-8 text-muted-foreground">加载中...</div>;
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
@@ -36,21 +49,21 @@ export default function CostsPage() {
           <h1 className="text-xl font-bold mt-1">成本管理</h1>
         </div>
       </div>
-      <CostForm onCreated={() => {}} />
-      <CostList />
+      <CostForm onCreated={() => {}} defaultOrderId={defaultOrderId} defaultCustomerId={defaultCustomerId} defaultProjectId={defaultProjectId} />
+      <CostList orderId={defaultOrderId} customerId={defaultCustomerId} projectId={defaultProjectId} />
     </div>
   );
 }
 
-function CostForm({ onCreated }: { onCreated: () => void }) {
+function CostForm({ onCreated, defaultOrderId, defaultCustomerId, defaultProjectId }: { onCreated: () => void; defaultOrderId?: string; defaultCustomerId?: string; defaultProjectId?: string }) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = session?.user?.role === "ADMIN";
   const [amount, setAmount] = useState("");
   const [costType, setCostType] = useState("OTHER");
-  const [customerId, setCustomerId] = useState("");
-  const [orderId, setOrderId] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [customerId, setCustomerId] = useState(defaultCustomerId || "");
+  const [orderId, setOrderId] = useState(defaultOrderId || "");
+  const [projectId, setProjectId] = useState(defaultProjectId || "");
   const [remark, setRemark] = useState("");
   const [open, setOpen] = useState(false);
 
@@ -66,7 +79,7 @@ function CostForm({ onCreated }: { onCreated: () => void }) {
     onSuccess: () => {
       toast.success("成本已记录");
       queryClient.invalidateQueries({ queryKey: ["finance", "costs"] });
-      setAmount(""); setRemark(""); setCustomerId(""); setOrderId(""); setProjectId(""); setOpen(false);
+      setAmount(""); setRemark(""); setCustomerId(defaultCustomerId || ""); setOrderId(defaultOrderId || ""); setProjectId(defaultProjectId || ""); setOpen(false);
       onCreated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -101,14 +114,21 @@ function CostForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function CostList() {
+function CostList({ orderId, customerId, projectId }: { orderId?: string; customerId?: string; projectId?: string }) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
 
+  const sp = new URLSearchParams();
+  sp.set("page", String(page));
+  sp.set("pageSize", "20");
+  if (orderId) sp.set("orderId", orderId);
+  if (customerId) sp.set("customerId", customerId);
+  if (projectId) sp.set("projectId", projectId);
+
   const { data, isLoading } = useQuery<{ costs: Array<Record<string, unknown>>; total: number; totalPages: number }>({
-    queryKey: ["finance", "costs", page],
-    queryFn: () => fetch(`/api/finance/costs?page=${page}&pageSize=20`).then(r => r.json()),
+    queryKey: ["finance", "costs", page, orderId, customerId, projectId],
+    queryFn: () => fetch(`/api/finance/costs?${sp.toString()}`).then(r => r.json()),
   });
 
   const deleteMutation = useMutation({

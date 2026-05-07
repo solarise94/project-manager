@@ -148,6 +148,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票，不能重复开票` }, { status: 400 });
     }
 
+    // Check direct orderId on ExternalOrderInvoiceRequest (without OrderInvoiceCoverage)
+    const directOrderInvoice = await prisma.externalOrderInvoiceRequest.findFirst({
+      where: { orderId: cid, status: { not: "CANCELLED" } },
+    });
+    if (directOrderInvoice) {
+      return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票(direct)，不能重复开票` }, { status: 400 });
+    }
+
     // Also check legacy: via Order.legacyExternalOrderId → ExternalOrder
     const orderWithLegacy = await prisma.order.findUnique({
       where: { id: cid },

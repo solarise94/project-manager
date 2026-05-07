@@ -4,12 +4,29 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { FolderOpen, FolderPlus, Clock, AlertCircle, TrendingUp, Users, UserPlus, ClipboardList, ShoppingCart, Building2, Store, Settings, UserCog, Building, ArrowRight } from "lucide-react";
+import {
+  FolderOpen,
+  FolderPlus,
+  Clock,
+  AlertCircle,
+  TrendingUp,
+  Users,
+  UserPlus,
+  ClipboardList,
+  ShoppingCart,
+  Package,
+  FileText,
+  Receipt,
+  Settings,
+  UserCog,
+  ArrowRight,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 import type { DashboardStats } from "@/lib/types";
 import Link from "next/link";
+import { canAccessOrders, canAccessFinance } from "@/lib/role-guards";
 
 const STATUS_COLORS: Record<string, string> = {
   NOT_STARTED: "#94a3b8",
@@ -34,45 +51,56 @@ interface WorkbenchGroup {
 }
 
 function getWorkbenchGroups(role: string | undefined): WorkbenchGroup[] {
-  const groups: WorkbenchGroup[] = [
-    {
-      title: "项目与工单",
-      items: [
-        ...(role !== "REPRESENTATIVE"
-          ? [{ label: "新建项目", href: "/projects?create=1", icon: FolderPlus, description: "创建新的科研项目" }]
-          : []),
-        { label: "项目列表", href: "/projects", icon: FolderOpen, description: "查看所有项目" },
-        { label: "待处理工单", href: "/tickets", icon: AlertCircle, description: "需要关注的工单" },
-      ],
-    },
-    {
-      title: "CRM",
-      items: [
-        { label: "CRM客户池", href: "/crm/customers", icon: Users, description: "管理客户档案" },
-        { label: "跟进工作台", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
-        { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: role === "REPRESENTATIVE" ? "提交或查看客户准入申请" : "处理新客户申请" },
-      ],
-    },
-  ];
+  const groups: WorkbenchGroup[] = [];
 
-  if (role !== "REPRESENTATIVE") {
+  if (canAccessOrders(role)) {
     groups.push({
-      title: "订单与开票",
+      title: "订单中枢",
       items: [
-        { label: "拼好鼠订单", href: "/external-orders", icon: ShoppingCart, description: "导入线上平台订单、匹配客户、合并开票" },
+        { label: "订单管理", href: "/orders", icon: Package, description: "查看和管理所有订单" },
+        ...(role === "ADMIN"
+          ? [{ label: "新建服务订单", href: "/orders/new", icon: FolderPlus, description: "创建新的服务订单" }]
+          : []),
+        { label: "拼好鼠订单", href: "/orders?source=PINGOODMICE", icon: ShoppingCart, description: "查看拼好鼠平台订单" },
+      ],
+    });
+  }
+
+  groups.push({
+    title: "项目交付",
+    items: [
+      { label: "项目列表", href: "/projects", icon: FolderOpen, description: "查看所有科研项目" },
+      { label: "工单管理", href: "/tickets", icon: AlertCircle, description: "需要关注的工单" },
+    ],
+  });
+
+  groups.push({
+    title: "CRM 增长",
+    items: [
+      { label: "CRM 客户池", href: "/crm/customers", icon: Users, description: "管理客户销售档案" },
+      { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: role === "REPRESENTATIVE" ? "提交或查看客户准入申请" : "处理新客户申请" },
+      { label: "跟进任务", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
+    ],
+  });
+
+  if (canAccessFinance(role)) {
+    groups.push({
+      title: "财务闭环",
+      items: [
+        { label: "发票工作台", href: "/finance/invoices", icon: FileText, description: "统一发票管理" },
+        { label: "成本管理", href: "/finance/costs", icon: Receipt, description: "登记采购/实验/人工等成本" },
+        { label: "客户财务", href: "/finance/customers", icon: Users, description: "查看客户应收和到款明细" },
       ],
     });
   }
 
   if (role === "ADMIN") {
     groups.push({
-      title: "管理",
+      title: "系统管理",
       items: [
         { label: "用户管理", href: "/admin/users", icon: UserCog, description: "管理系统用户" },
         { label: "代表账号管理", href: "/admin/representatives", icon: Settings, description: "管理代表账号" },
-        { label: "单位主数据", href: "/admin/organizations", icon: Building, description: "管理单位信息" },
-        { label: "开票主体", href: "/admin/billing-profiles", icon: Building2, description: "管理开票主体信息" },
-        { label: "采购渠道", href: "/admin/procurement-channels", icon: Store, description: "管理采购渠道" },
+        { label: "开发日志", href: "/admin/dev-logs", icon: FileText, description: "查看版本变更记录" },
       ],
     });
   }

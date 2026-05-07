@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { getSafeRedirect } from "@/lib/safe-redirect";
 
 export default function RepresentativeLoginPage() {
   const router = useRouter();
@@ -21,10 +22,16 @@ export default function RepresentativeLoginPage() {
     setLoading(true);
 
     try {
+      // Read redirect from current URL so the replacement link lands at the original destination
+      const rawRedirect = new URLSearchParams(window.location.search).get("redirect");
+      const safeRedirect = getSafeRedirect(rawRedirect, "");
+      const body: Record<string, string> = { email: email.trim().toLowerCase() };
+      if (safeRedirect) body.redirect = safeRedirect;
+
       const res = await fetch("/api/representatives/request-magic-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -64,7 +71,7 @@ export default function RepresentativeLoginPage() {
               </p>
               <p className="text-xs text-muted-foreground">
                 请稍候查收邮箱（包括垃圾邮件文件夹），点击邮件中的链接即可登录。
-                链接有效期为 1 天。
+                链接有效期 24 小时。
               </p>
               <Button variant="outline" className="w-full" onClick={() => { setSent(false); setEmail(""); }}>
                 使用其他邮箱

@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const order = await prisma.order.findUnique({
     where: { id },
     include: {
-      customer: { select: { id: true, name: true, customerCode: true } },
+      customer: { select: { id: true, name: true, customerCode: true, crmProfile: { select: { sourceCustomerId: true } } } },
       representative: { select: { id: true, name: true } },
       lines: { orderBy: { sortOrder: "asc" } },
       sourceRecords: { orderBy: { createdAt: "desc" } },
@@ -32,6 +32,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       mergeTargets: {
         include: { targetOrder: { select: { id: true, orderNo: true } } },
       },
+      receipts: { select: { id: true, amount: true }, take: 5, orderBy: { createdAt: "desc" } },
+      financeCosts: { select: { id: true, amount: true, costType: true }, take: 5, orderBy: { createdAt: "desc" } },
+      invoiceRequests: { select: { id: true, status: true, totalAmount: true }, take: 10, orderBy: { createdAt: "desc" } },
+      invoiceCoverage: { select: { invoiceRequest: { select: { id: true, status: true, totalAmount: true } } }, take: 10 },
       _count: { select: { lines: true, sourceRecords: true, projectLinks: true, receipts: true } },
     },
   });
