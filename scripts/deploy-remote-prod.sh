@@ -92,23 +92,26 @@ TMP_DIR="$(mktemp -d)"
 SERVICE_WAS_RUNNING=false
 DB_BAK_MADE=false
 
-# Single EXIT trap: clean up temp dir, restore DB backup if replacement failed, restart service if needed
+# Single EXIT trap: release lock, clean up temp dir, restore DB backup if replacement failed, restart service if needed
 on_exit() {
   local exit_code=$?
-  # Restore DB from .bak if we created a backup but the new files are still .new (replacement incomplete)
+  if declare -f release_lock &>/dev/null; then release_lock; fi
+
+  # Restore DB from backup if we created one but the new files are still .new (replacement incomplete)
   if [[ "${DB_BAK_MADE}" == "true" ]]; then
     if remote_ssh "test -f ${REMOTE_DB_PATH}.new" 2>/dev/null; then
-      echo "  Restoring database from backup..."
-      remote_ssh "
-        for f in ${REMOTE_DB_PATH} ${REMOTE_DB_PATH}-wal ${REMOTE_DB_PATH}-shm ${REMOTE_DB_PATH}-journal; do
-          if [ -f \${f}.bak ]; then mv \${f}.bak \${f}; fi
-        done
-        rm -f ${REMOTE_DB_PATH}.new ${REMOTE_DB_PATH}-wal.new ${REMOTE_DB_PATH}-shm.new ${REMOTE_DB_PATH}-journal.new
-      " 2>/dev/null || true
-    else
-      # Replacement succeeded — just clean up .bak files
-      remote_ssh "rm -f ${REMOTE_DB_PATH}.bak ${REMOTE_DB_PATH}-wal.bak ${REMOTE_DB_PATH}-shm.bak ${REMOTE_DB_PATH}-journal.bak" 2>/dev/null || true
+      echo "  Restoring database from backup (${DB_BAK_TS:-latest})..."
+      if [[ -n "${DB_BAK_TS:-}" ]]; then
+        remote_ssh "
+          for f in ${REMOTE_DB_PATH} ${REMOTE_DB_PATH}-wal ${REMOTE_DB_PATH}-shm ${REMOTE_DB_PATH}-journal; do
+            if [ -f \${f}.bak-${DB_BAK_TS} ]; then cp \${f}.bak-${DB_BAK_TS} \${f}; fi
+          done
+          rm -f ${REMOTE_DB_PATH}.new ${REMOTE_DB_PATH}-wal.new ${REMOTE_DB_PATH}-shm.new ${REMOTE_DB_PATH}-journal.new
+        " 2>/dev/null || true
+      fi
     fi
+    # On success, keep timestamped backup — clean up only backups older than 7 days
+    remote_ssh "find \$(dirname ${REMOTE_DB_PATH}) -name 'dev.db.bak-*' -mtime +7 -delete 2>/dev/null" 2>/dev/null || true
   fi
   rm -rf "${TMP_DIR}"
   if [[ "${SERVICE_WAS_RUNNING}" == "true" ]]; then
@@ -141,6 +144,48 @@ SSH_CHECK_OUT="$(remote_ssh "echo connected: \$(hostname)" 2>&1)" || {
   exit 1
 }
 echo "  ${SSH_CHECK_OUT}"
+
+# ── Deploy lock: atomic mkdir prevents concurrent deploys ─────────────────
+LOCK_DIR="/tmp/deploy-task-manager.lock"
+LOCK_TOKEN="$(date +%s)-$$-$RANDOM"
+# Try to atomically acquire the lock directory on the remote
+if remote_ssh "mkdir ${LOCK_DIR} 2>/dev/null" 2>/dev/null; then
+  # We hold the lock — write our identity inside
+  remote_ssh "echo 'token=${LOCK_TOKEN}' > ${LOCK_DIR}/info"
+  remote_ssh "echo 'local_host=$(hostname)' >> ${LOCK_DIR}/info"
+  remote_ssh "echo 'local_pid=$$' >> ${LOCK_DIR}/info"
+  remote_ssh "echo 'started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)' >> ${LOCK_DIR}/info"
+else
+  # Lock directory exists — check staleness via age (>2h)
+  LOCK_AGE="$(remote_ssh "stat -c '%Y' ${LOCK_DIR} 2>/dev/null" 2>/dev/null || echo "0")"
+  NOW="$(date +%s)"
+  STALE_THRESHOLD=$(( 2 * 3600 ))  # 2 hours
+  if [[ -n "${LOCK_AGE}" && "${LOCK_AGE}" -gt 0 && $(( NOW - LOCK_AGE )) -gt ${STALE_THRESHOLD} ]]; then
+    echo "  Existing deploy lock is stale (>2h), removing..."
+    remote_ssh "rm -rf ${LOCK_DIR}" 2>/dev/null || true
+    if remote_ssh "mkdir ${LOCK_DIR} 2>/dev/null" 2>/dev/null; then
+      remote_ssh "echo 'token=${LOCK_TOKEN}' > ${LOCK_DIR}/info"
+    else
+      echo "ERROR: Unable to acquire deploy lock even after clearing stale lock." >&2
+      exit 1
+    fi
+  else
+    echo "ERROR: Another deploy is already in progress (lock: ${LOCK_DIR})." >&2
+    remote_ssh "cat ${LOCK_DIR}/info 2>/dev/null" 2>/dev/null || true
+    echo "Wait for the current deploy to finish, or if stuck >2h, manually run:" >&2
+    echo "  ssh ${SSH_TARGET} 'sudo rm -rf ${LOCK_DIR}'" >&2
+    exit 1
+  fi
+fi
+
+# Release lock only if we hold it (token match)
+release_lock() {
+  local current_token
+  current_token="$(remote_ssh "grep '^token=' ${LOCK_DIR}/info 2>/dev/null | cut -d= -f2" 2>/dev/null || echo "")"
+  if [[ "${current_token}" == "${LOCK_TOKEN}" ]]; then
+    remote_ssh "rm -rf ${LOCK_DIR}" 2>/dev/null || true
+  fi
+}
 
 # ── [1/8] Build locally ──────────────────────────────────────────────────
 echo ""
@@ -189,12 +234,30 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     remote_ssh "sudo systemctl stop ${REMOTE_SERVICE}"
   fi
 
+  # Also stop reminder timer+service during DB migration to prevent background writes
+  REMINDER_SERVICE="task-manager-reminder.service"
+  REMINDER_TIMER="task-manager-reminder.timer"
+  REMINDER_WAS_ACTIVE=false
+  if remote_ssh "sudo systemctl is-active --quiet ${REMINDER_TIMER}" 2>/dev/null; then
+    REMINDER_WAS_ACTIVE=true
+    echo "  Stopping reminder timer during DB migration..."
+    remote_ssh "sudo systemctl stop ${REMINDER_TIMER}" 2>/dev/null || true
+  fi
+  if remote_ssh "sudo systemctl is-active --quiet ${REMINDER_SERVICE}" 2>/dev/null; then
+    REMINDER_WAS_ACTIVE=true
+    echo "  Stopping reminder service (oneshot may still be running)..."
+    remote_ssh "sudo systemctl stop ${REMINDER_SERVICE}" 2>/dev/null || true
+  fi
+
   echo "  Pulling remote database..."
   remote_rsync -a "${SSH_TARGET}:${REMOTE_DB_PATH}" "${TMP_DIR}/dev.db"
   for suffix in -wal -shm -journal; do
     remote_ssh "test -f ${REMOTE_DB_PATH}${suffix}" 2>/dev/null && \
       remote_rsync -a "${SSH_TARGET}:${REMOTE_DB_PATH}${suffix}" "${TMP_DIR}/dev.db${suffix}" || true
   done
+
+  # Record checksum of the snapshot we are about to migrate
+  SNAPSHOT_CHECKSUM="$(sha256sum "${TMP_DIR}/dev.db" | cut -d' ' -f1)"
 
   echo "  Pushing schema..."
   if ! DATABASE_URL="file:${TMP_DIR}/dev.db" npx prisma db push 2>&1; then
@@ -213,7 +276,7 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     fi
   fi
 
-  # Upload: write to .new temp files. Old files are backed up to .bak before replacement.
+  # Upload: write to .new temp files.
   echo "  Uploading migrated database..."
   remote_rsync -a "${TMP_DIR}/dev.db" "${SSH_TARGET}:${REMOTE_DB_PATH}.new"
   if [[ "${WAL_CHECKPOINT_OK}" != "true" ]]; then
@@ -224,14 +287,34 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     done
   fi
 
-  # Atomically replace: backup old → mv .new → clean .bak on success
+  # Verify remote DB has not been modified since we pulled our snapshot.
+  # If the checksum differs, someone wrote to the remote DB during migration — abort.
+  REMOTE_CURRENT_CHECKSUM="$(remote_ssh "sha256sum ${REMOTE_DB_PATH} 2>/dev/null | cut -d' ' -f1" 2>/dev/null || echo "")"
+  if [[ -n "${REMOTE_CURRENT_CHECKSUM}" && "${REMOTE_CURRENT_CHECKSUM}" != "${SNAPSHOT_CHECKSUM}" ]]; then
+    echo ""
+    echo "ERROR: Remote database was modified during migration (checksum mismatch)." >&2
+    echo "  Snapshot: ${SNAPSHOT_CHECKSUM}" >&2
+    echo "  Current:  ${REMOTE_CURRENT_CHECKSUM}" >&2
+    echo "This means the database changed between pulling the snapshot and uploading." >&2
+    echo "Another deploy or background process may have written to it. ABORTING to prevent data loss." >&2
+    remote_ssh "rm -f ${REMOTE_DB_PATH}.new ${REMOTE_DB_PATH}-wal.new ${REMOTE_DB_PATH}-shm.new ${REMOTE_DB_PATH}-journal.new" 2>/dev/null || true
+    # Re-enable reminder timer if we stopped it
+    if [[ "${REMINDER_WAS_ACTIVE}" == "true" ]]; then
+      remote_ssh "sudo systemctl start ${REMINDER_TIMER}" 2>/dev/null || true
+      remote_ssh "sudo systemctl start ${REMINDER_SERVICE}" 2>/dev/null || true
+    fi
+    exit 1
+  fi
+
+  # Atomically replace: backup with timestamp → mv .new → keep backup on success
+  BACKUP_TS="$(date +%Y%m%d-%H%M%S)"
   remote_ssh "
-    # Backup current files
     for f in ${REMOTE_DB_PATH} ${REMOTE_DB_PATH}-wal ${REMOTE_DB_PATH}-shm ${REMOTE_DB_PATH}-journal; do
-      if [ -f \${f} ]; then cp \${f} \${f}.bak; fi
+      if [ -f \${f} ]; then cp \${f} \${f}.bak-${BACKUP_TS}; fi
     done
   "
   DB_BAK_MADE=true
+  DB_BAK_TS="${BACKUP_TS}"
 
   remote_ssh "
     mv ${REMOTE_DB_PATH}.new ${REMOTE_DB_PATH}
@@ -242,9 +325,15 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
         rm -f ${REMOTE_DB_PATH}\${s}
       fi
     done
-    rm -f ${REMOTE_DB_PATH}.bak ${REMOTE_DB_PATH}-wal.bak ${REMOTE_DB_PATH}-shm.bak ${REMOTE_DB_PATH}-journal.bak
   "
   DB_BAK_MADE=false
+  echo "  DB backup retained as ${REMOTE_DB_PATH}.bak-${DB_BAK_TS}"
+
+  # Re-enable reminder timer if we stopped it
+  if [[ "${REMINDER_WAS_ACTIVE}" == "true" ]]; then
+    remote_ssh "sudo systemctl start ${REMINDER_TIMER}" 2>/dev/null || true
+    remote_ssh "sudo systemctl start ${REMINDER_SERVICE}" 2>/dev/null || true
+  fi
 elif [[ "${MISSING_DB_POLICY}" == "bootstrap" ]]; then
   echo "  Remote database not found at ${SSH_TARGET}:${REMOTE_DB_PATH}, bootstrapping..."
   BOOTSTRAP_SRC="${BOOTSTRAP_DB:-${LOCAL_PROD_DB}}"
