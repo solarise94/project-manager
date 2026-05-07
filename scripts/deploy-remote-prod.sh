@@ -120,11 +120,12 @@ on_exit() {
     remote_ssh "sudo systemctl start ${REMOTE_SERVICE}" 2>/dev/null || true
   fi
 
-  # Restore reminder timer+service if we stopped them (covers all failure paths)
-  if [[ "${REMINDER_WAS_ACTIVE:-false}" == "true" ]]; then
-    echo "  Restoring reminder timer+service..."
+  # Restore reminder timer on failure paths only.
+  # On success, [9/8] will re-write and enable --now the timer, so we must NOT
+  # start it here — that would fire a reminder scan immediately after deploy.
+  if [[ "${REMINDER_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
+    echo "  Restoring reminder timer (deploy failed, exit=${exit_code})..."
     remote_ssh "sudo systemctl start ${REMINDER_TIMER:-task-manager-reminder.timer}" 2>/dev/null || true
-    remote_ssh "sudo systemctl start ${REMINDER_SERVICE:-task-manager-reminder.service}" 2>/dev/null || true
   fi
 
   rm -rf "${TMP_DIR}"
