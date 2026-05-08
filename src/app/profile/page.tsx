@@ -254,7 +254,7 @@ function NotificationPrefsCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {[
-          { key: "emailOnReminder" as const, label: "工单提醒邮件", desc: "工单到达提醒时间时发送邮件" },
+          { key: "emailOnReminder" as const, label: "提醒邮件", desc: "工单提醒和 CRM 跟进提醒到期时发送邮件通知" },
           { key: "emailOnStatusChange" as const, label: "项目状态变更邮件", desc: "项目状态发生变化时发送邮件" },
           { key: "emailOnTicketReply" as const, label: "工单回复邮件", desc: "有人回复您的工单时发送邮件" },
           { key: "emailOnComment" as const, label: "项目评论邮件", desc: "有人评论您的项目时发送邮件" },

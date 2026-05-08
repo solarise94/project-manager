@@ -11,7 +11,8 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
-import { FolderTree, Receipt, Banknote, UserRound, ChevronDown, ChevronRight } from "lucide-react";
+import { FolderTree, Receipt, Banknote, UserRound, ChevronDown, ChevronRight, Pencil } from "lucide-react";
+import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
 
 const SOURCE_LABELS: Record<string, string> = { MANUAL: "手动", PINGOODMICE: "拼好鼠", OTHER_IMPORT: "其他导入" };
@@ -30,6 +31,7 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [showManualBind, setShowManualBind] = useState(false);
 
   const fetchOrder = useCallback(async () => {
@@ -101,6 +103,11 @@ export default function OrderDetailPage() {
 
       {/* Action bar */}
       <div className="flex flex-wrap gap-2">
+        {isAdmin && (
+          <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
+            <Pencil className="h-3 w-3 mr-1" />编辑订单
+          </Button>
+        )}
         {projectLinks.length > 0 ? (
           <Link href={`/projects/${(projectLinks[0].project as Record<string, unknown>)?.id}`}>
             <Button size="sm" variant="outline"><FolderTree className="h-3 w-3 mr-1" />打开项目{projectLinks.length > 1 ? ` (+${projectLinks.length - 1})` : ""}</Button>
@@ -362,6 +369,12 @@ export default function OrderDetailPage() {
           onBound={() => { fetchOrder(); setProjectDialogOpen(false); }}
         />
       )}
+      <OrderEditDialog
+        orderId={id}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        onUpdated={() => fetchOrder()}
+      />
     </div>
   );
 }

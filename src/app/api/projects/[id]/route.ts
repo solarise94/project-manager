@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { canReadProject, canManageProject, buildProjectPermissions } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
+import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -79,7 +80,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, orderNumber, organization, client, representativeId, customerId, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -127,11 +128,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    // representativeId drives the text snapshot — always sync from DB to prevent stale client overwrites
-    if (representativeId !== undefined) {
+    // ── Resolve representative ──────────────────────────────────────────
+    const customerTouched = customerId !== undefined;
+    const normalizedCustomerId = customerTouched ? ((customerId as string) || null) : null;
+    const effectiveCustomerId = customerTouched ? normalizedCustomerId : existing.customerId;
+
+    if (effectiveCustomerId) {
+      // Customer exists — force CRM owner, ignore any passed representativeId
+      const resolved = await resolveCustomerRepresentative(effectiveCustomerId);
+      data.representativeId = resolved.representativeId;
+      data.representative = resolved.representativeName;
+    } else if (customerTouched) {
+      // Customer explicitly cleared — clear representative too
+      data.representativeId = null;
+      data.representative = null;
+    } else if (representativeId !== undefined) {
+      // No customer and customer not being changed — allow manual rep
       if (representativeId) {
         const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
-        if (!rep) {
+        if (!rep || rep.archived) {
           return NextResponse.json({ error: "指定的代表不存在" }, { status: 400 });
         }
         data.representativeId = representativeId;
@@ -140,10 +155,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         data.representativeId = null;
         data.representative = null;
       }
-    } else if (representative !== undefined) {
-      // Only trust client text when representativeId is NOT being changed
-      data.representative = representative;
     }
+
+    // Compute whether representative actually changed (for activity log / notification)
+    const representativeChanged =
+      data.representativeId !== undefined &&
+      data.representativeId !== existing.representativeId;
 
     // Pre-compute order sync data for COMPLETED transition
     const isCompleting = status === "COMPLETED" && existing.status !== "COMPLETED";
@@ -317,9 +334,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Log representative change
-    if (representativeId !== undefined && representativeId !== existing.representativeId) {
-      const newRep = representativeId
-        ? await prisma.representative.findUnique({ where: { id: representativeId } })
+    if (representativeChanged) {
+      const nextRepId = data.representativeId as string | null;
+      const newRep = nextRepId
+        ? await prisma.representative.findUnique({ where: { id: nextRepId } })
         : null;
       const oldRep = existing.representativeId
         ? await prisma.representative.findUnique({ where: { id: existing.representativeId } })
@@ -332,7 +350,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             : `为项目设置了代表 "${newRep?.name || ""}"`,
           metadata: JSON.stringify({
             oldRepresentativeId: existing.representativeId,
-            newRepresentativeId: representativeId || null,
+            newRepresentativeId: nextRepId,
             oldRepresentativeName: oldRep?.name || null,
             newRepresentativeName: newRep?.name || null,
           }),
@@ -368,7 +386,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       status !== undefined && status !== existing.status ||
       progress !== undefined && progress !== existing.progress ||
       archived !== undefined && archived !== existing.archived ||
-      representativeId !== undefined && representativeId !== existing.representativeId;
+      representativeChanged;
     if (!hasSpecificChange) {
       await prisma.activityLog.create({
         data: {

@@ -9,7 +9,7 @@ const projectAutoDraft: FormDraftPlugin = {
     name: "AI 智能填写",
     description: "从文本中智能提取项目信息，支持实体匹配和搜索补齐，生成可审阅草稿",
     capability: "form-draft",
-    formKeys: ["project.create", "project.edit", "customer.create", "ticket.create"],
+    formKeys: ["project.create", "project.edit", "customer.create", "ticket.create", "order.create"],
   },
   async execute(
     input: string | Record<string, unknown>,

@@ -39,14 +39,16 @@ function CrmCustomersWrapper() {
   if (status === "unauthenticated") { router.push("/login"); return null; }
   if (status === "loading") return <div className="p-6">加载中...</div>;
 
-  return <CustomerPool initialSearch={sp.get("search") || ""} />;
+  return <CustomerPool initialSearch={sp.get("search") || ""} initialOrganizationId={sp.get("organizationId") || ""} initialOrganizationName={sp.get("organizationName") || ""} initialAssignee={sp.get("assignee") || ""} initialStage={sp.get("stage") || ""} />;
 }
 
-function CustomerPool({ initialSearch }: { initialSearch: string }) {
+function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizationName, initialAssignee, initialStage }: { initialSearch: string; initialOrganizationId: string; initialOrganizationName: string; initialAssignee: string; initialStage: string }) {
   const { data: session } = useSession();
   const router = useRouter();
   const [search, setSearch] = useState(initialSearch);
-  const [stage, setStage] = useState("ALL");
+  const [organizationId, setOrganizationId] = useState(initialOrganizationId);
+  const [organizationName, setOrganizationName] = useState(initialOrganizationName);
+  const [stage, setStage] = useState(initialStage || "ALL");
   const [importance, setImportance] = useState("ALL");
   const [personCategory, setPersonCategory] = useState("ALL");
   const [graduationStatus, setGraduationStatus] = useState("ALL");
@@ -56,10 +58,11 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   const [order, setOrder] = useState("desc");
   const [page, setPage] = useState(1);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
-  const [assignee, setAssignee] = useState("ALL");
+  const [assignee, setAssignee] = useState(initialAssignee || "ALL");
 
   const params = new URLSearchParams();
   if (search) params.set("search", search);
+  if (organizationId) params.set("organizationId", organizationId);
   if (stage !== "ALL") params.set("stage", stage);
   if (importance !== "ALL") params.set("importance", importance);
   if (personCategory !== "ALL") params.set("personCategory", personCategory);
@@ -73,7 +76,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   params.set("pageSize", "20");
 
   const { data, isLoading } = useQuery<{ profiles: CrmCustomerProfileItem[]; total: number; page: number; pageSize: number; totalPages: number }>({
-    queryKey: ["crm-profiles", search, stage, importance, personCategory, graduationStatus, siteType, jobTitle, assignee, sort, order, page],
+    queryKey: ["crm-profiles", search, organizationId, stage, importance, personCategory, graduationStatus, siteType, jobTitle, assignee, sort, order, page],
     queryFn: () => fetch(`/api/crm/profiles?${params}`).then((r) => r.json()),
   });
 
@@ -86,7 +89,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   const isRep = session?.user?.role === "REPRESENTATIVE";
   const isMobile = useMediaQuery("(max-width: 767px)");
 
-  const activeFilterCount = [stage, importance, personCategory, graduationStatus, siteType, assignee].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0);
+  const activeFilterCount = [stage, importance, personCategory, graduationStatus, siteType, assignee].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0) + (organizationId ? 1 : 0);
 
   function clearAllFilters() {
     setStage("ALL");
@@ -96,8 +99,11 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
     setSiteType("ALL");
     setJobTitle("");
     setAssignee("ALL");
+    setOrganizationId("");
+    setOrganizationName("");
     setSort("updatedAt");
     setOrder("desc");
+    setPage(1);
   }
 
   function handleCardClick(e: React.MouseEvent, href: string) {
@@ -108,9 +114,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   const FilterControls = (
     <div className="space-y-4 max-w-full overflow-x-hidden">
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">阶段</label>
+        <label className="text-xs text-muted-foreground font-medium">阶段</label>
         <Select value={stage} onValueChange={(v) => { setStage(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="阶段" valueLabel={stage === "ALL" ? "全部阶段" : STAGE_LABELS[stage] || "未知"} placeholder="阶段" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="阶段" valueLabel={stage === "ALL" ? "全部阶段" : STAGE_LABELS[stage] || "未知"} placeholder="阶段" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部阶段</SelectItem>
             {CRM_STAGES.map((s) => (
@@ -120,9 +126,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">重要度</label>
+        <label className="text-xs text-muted-foreground font-medium">重要度</label>
         <Select value={importance} onValueChange={(v) => { setImportance(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="重要度" valueLabel={importance === "ALL" ? "全部重要度" : IMPORTANCE_LABELS[importance] || "未知"} placeholder="重要度" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="重要度" valueLabel={importance === "ALL" ? "全部重要度" : IMPORTANCE_LABELS[importance] || "未知"} placeholder="重要度" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部重要度</SelectItem>
             {CRM_IMPORTANCE.map((i) => (
@@ -132,9 +138,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">人员分类</label>
+        <label className="text-xs text-muted-foreground font-medium">人员分类</label>
         <Select value={personCategory} onValueChange={(v) => { setPersonCategory(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="分类" valueLabel={personCategory === "ALL" ? "全部分类" : PERSON_CATEGORY_LABELS[personCategory] || "未知"} placeholder="全部分类" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="分类" valueLabel={personCategory === "ALL" ? "全部分类" : PERSON_CATEGORY_LABELS[personCategory] || "未知"} placeholder="全部分类" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部分类</SelectItem>
             {CRM_PERSON_CATEGORIES.map((pc) => (
@@ -144,9 +150,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">毕业状态</label>
+        <label className="text-xs text-muted-foreground font-medium">毕业状态</label>
         <Select value={graduationStatus} onValueChange={(v) => { setGraduationStatus(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="毕业" valueLabel={graduationStatus === "ALL" ? "全部状态" : GRADUATION_STATUS_LABELS[graduationStatus] || "未知"} placeholder="全部状态" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="毕业" valueLabel={graduationStatus === "ALL" ? "全部状态" : GRADUATION_STATUS_LABELS[graduationStatus] || "未知"} placeholder="全部状态" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部状态</SelectItem>
             {CRM_GRADUATION_STATUSES.map((gs) => (
@@ -156,9 +162,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">院区/学院/大楼</label>
+        <label className="text-xs text-muted-foreground font-medium">院区/学院/大楼</label>
         <Select value={siteType} onValueChange={(v) => { setSiteType(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="类型" valueLabel={siteType === "ALL" ? "全部类型" : SITE_TYPE_LABELS[siteType] || "未知"} placeholder="全部类型" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="类型" valueLabel={siteType === "ALL" ? "全部类型" : SITE_TYPE_LABELS[siteType] || "未知"} placeholder="全部类型" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部类型</SelectItem>
             {CRM_SITE_TYPES.map((st) => (
@@ -168,9 +174,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">负责人</label>
+        <label className="text-xs text-muted-foreground font-medium">负责人</label>
         <Select value={assignee} onValueChange={(v) => { setAssignee(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="负责人" valueLabel={assignee === "ALL" ? "全部" : assignee === "UNASSIGNED" ? "未指派" : (assigneesData?.assignees || []).find((a) => a.userId === assignee)?.name || assignee} placeholder="全部" /></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><SelectDisplay label="负责人" valueLabel={assignee === "ALL" ? "全部" : assignee === "UNASSIGNED" ? "未指派" : (assigneesData?.assignees || []).find((a) => a.userId === assignee)?.name || assignee} placeholder="全部" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">全部</SelectItem>
             <SelectItem value="UNASSIGNED">未指派</SelectItem>
@@ -181,9 +187,9 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">排序</label>
+        <label className="text-xs text-muted-foreground font-medium">排序</label>
         <Select value={sort} onValueChange={(v) => { setSort(v || "updatedAt"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "nextFollowUpAt" ? "下次跟进" : sort === "stage" ? "阶段" : "默认"}</span></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "nextFollowUpAt" ? "下次跟进" : sort === "stage" ? "阶段" : "默认"}</span></SelectTrigger>
           <SelectContent>
             <SelectItem value="updatedAt">最近更新</SelectItem>
             <SelectItem value="createdAt">创建时间</SelectItem>
@@ -194,11 +200,11 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </Select>
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => setOrder(order === "asc" ? "desc" : "asc")}>
+        <Button variant="outline" size="sm" onClick={() => setOrder(order === "asc" ? "desc" : "asc")} className="h-7 text-xs">
           {order === "asc" ? "↑ 升序" : "↓ 降序"}
         </Button>
         {activeFilterCount > 0 && (
-          <Button variant="ghost" size="sm" onClick={clearAllFilters}><X className="h-4 w-4 mr-1" />清空全部</Button>
+          <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-7 text-xs"><X className="h-3 w-3 mr-1" />清空</Button>
         )}
       </div>
     </div>
@@ -214,7 +220,8 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 items-center">
+      {/* Search bar */}
+      <div className="flex gap-2 items-center">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -224,7 +231,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
             className="pl-9"
           />
         </div>
-        {isMobile ? (
+        {isMobile && (
           <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
             <SheetTrigger render={<Button variant="outline" size="sm"><Filter className="h-4 w-4 mr-1" />筛选{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Button>} />
             <SheetContent side="bottom" className="max-h-[85dvh] overflow-y-auto px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
@@ -232,48 +239,20 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
               <div className="mt-4 max-w-full overflow-x-hidden">{FilterControls}</div>
             </SheetContent>
           </Sheet>
-        ) : (
-          <div className="flex gap-2 flex-wrap items-center">
-            <Select value={stage} onValueChange={(v) => { setStage(v || "ALL"); setPage(1); }}>
-              <SelectTrigger className="w-[110px] h-9 text-xs"><SelectDisplay label="阶段" valueLabel={stage === "ALL" ? "全部阶段" : STAGE_LABELS[stage] || "未知"} placeholder="阶段" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部阶段</SelectItem>
-                {CRM_STAGES.map((s) => (<SelectItem key={s} value={s}>{STAGE_LABELS[s]}</SelectItem>))}
-              </SelectContent>
-            </Select>
-            <Select value={importance} onValueChange={(v) => { setImportance(v || "ALL"); setPage(1); }}>
-              <SelectTrigger className="w-[110px] h-9 text-xs"><SelectDisplay label="重要度" valueLabel={importance === "ALL" ? "全部" : IMPORTANCE_LABELS[importance] || "未知"} placeholder="重要度" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部</SelectItem>
-                {CRM_IMPORTANCE.map((i) => (<SelectItem key={i} value={i}>{IMPORTANCE_LABELS[i]}</SelectItem>))}
-              </SelectContent>
-            </Select>
-            <Select value={personCategory} onValueChange={(v) => { setPersonCategory(v || "ALL"); setPage(1); }}>
-              <SelectTrigger className="w-[110px] h-9 text-xs"><SelectDisplay label="分类" valueLabel={personCategory === "ALL" ? "全部分类" : PERSON_CATEGORY_LABELS[personCategory] || "未知"} placeholder="分类" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部分类</SelectItem>
-                {CRM_PERSON_CATEGORIES.map((pc) => (<SelectItem key={pc} value={pc}>{PERSON_CATEGORY_LABELS[pc]}</SelectItem>))}
-              </SelectContent>
-            </Select>
-            <Select value={graduationStatus} onValueChange={(v) => { setGraduationStatus(v || "ALL"); setPage(1); }}>
-              <SelectTrigger className="w-[110px] h-9 text-xs"><SelectDisplay label="毕业" valueLabel={graduationStatus === "ALL" ? "全部" : GRADUATION_STATUS_LABELS[graduationStatus] || "未知"} placeholder="毕业" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部</SelectItem>
-                {CRM_GRADUATION_STATUSES.map((gs) => (<SelectItem key={gs} value={gs}>{GRADUATION_STATUS_LABELS[gs]}</SelectItem>))}
-              </SelectContent>
-            </Select>
+        )}
+        {!isMobile && (
+          <div className="flex gap-1.5 items-center">
             <Select value={sort} onValueChange={(v) => { setSort(v || "updatedAt"); setPage(1); }}>
-              <SelectTrigger className="w-[100px] h-9 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : "排序"}</span></SelectTrigger>
+              <SelectTrigger className="w-[100px] h-8 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "stage" ? "阶段" : "排序"}</span></SelectTrigger>
               <SelectContent>
                 <SelectItem value="updatedAt">最近更新</SelectItem>
                 <SelectItem value="createdAt">创建时间</SelectItem>
                 <SelectItem value="lastFollowUpAt">最近跟进</SelectItem>
+                <SelectItem value="nextFollowUpAt">下次跟进</SelectItem>
+                <SelectItem value="stage">阶段</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="ghost" size="sm" onClick={() => setOrder(order === "asc" ? "desc" : "asc")} className="h-9 text-xs">{order === "asc" ? "↑" : "↓"}</Button>
-            {activeFilterCount > 0 && (
-              <Button variant="ghost" size="sm" onClick={clearAllFilters}><X className="h-4 w-4" /></Button>
-            )}
+            <Button variant="ghost" size="sm" onClick={() => setOrder(order === "asc" ? "desc" : "asc")} className="h-8 text-xs">{order === "asc" ? "↑" : "↓"}</Button>
           </div>
         )}
       </div>
@@ -287,14 +266,34 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
           {siteType !== "ALL" && <Badge variant="secondary" className="text-xs">院区: {SITE_TYPE_LABELS[siteType]}</Badge>}
           {assignee !== "ALL" && <Badge variant="secondary" className="text-xs">负责人: {assignee === "UNASSIGNED" ? "未指派" : (assigneesData?.assignees || []).find((a) => a.userId === assignee)?.name || assignee}</Badge>}
           {jobTitle && <Badge variant="secondary" className="text-xs">职务: {jobTitle}</Badge>}
+          {organizationId && (
+            <Badge variant="secondary" className="text-xs gap-1">
+              机构: {organizationName || organizationId}
+              <button type="button" className="hover:text-red-500" onClick={() => { setOrganizationId(""); setOrganizationName(""); setPage(1); }}>
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          )}
         </div>
       )}
 
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">加载中...</div>
-      ) : profiles.length === 0 ? (
-        <div className="text-sm text-muted-foreground py-8 text-center">暂无 CRM 客户档案</div>
-      ) : isMobile ? (
+      <div className="flex gap-5">
+        {/* Desktop sidebar */}
+        {!isMobile && (
+          <div className="w-52 shrink-0 hidden md:block">
+            <div className="sticky top-4 space-y-4">
+              {FilterControls}
+            </div>
+          </div>
+        )}
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          {isLoading ? (
+            <div className="text-sm text-muted-foreground">加载中...</div>
+          ) : profiles.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-8 text-center">暂无 CRM 客户档案</div>
+          ) : isMobile ? (
         <div className="space-y-3">
           {profiles.map((p) => (
             <Card
@@ -329,6 +328,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
                   ) : (
                     <span>暂无跟进计划</span>
                   )}
+                  <span className="ml-auto">{p._count?.interactions ?? 0} 沟通 · {p._count?.visitCheckins ?? 0} 签到</span>
                 </div>
                 {!isRep && (
                   <div className="flex gap-2 mt-3" onClick={(e) => e.stopPropagation()}>
@@ -340,40 +340,50 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
           ))}
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
+        <div className="border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="text-left p-3 font-medium">客户</th>
-                <th className="text-left p-3 font-medium hidden md:table-cell">单位/课题组</th>
-                <th className="text-left p-3 font-medium">阶段</th>
-                <th className="text-left p-3 font-medium hidden sm:table-cell">重要度</th>
-                <th className="text-left p-3 font-medium hidden lg:table-cell">分类</th>
-                <th className="text-left p-3 font-medium hidden md:table-cell">分配状态</th>
-                <th className="text-left p-3 font-medium hidden lg:table-cell">负责人</th>
-                {!isRep && <th className="text-left p-3 font-medium">操作</th>}
+                <th className="text-left p-2 font-medium">客户</th>
+                <th className="text-left p-2 font-medium hidden md:table-cell">单位/课题组</th>
+                <th className="text-left p-2 font-medium">阶段</th>
+                <th className="text-left p-2 font-medium hidden sm:table-cell">重要度</th>
+                <th className="text-center p-2 font-medium hidden lg:table-cell">沟通</th>
+                <th className="text-center p-2 font-medium hidden lg:table-cell">签到</th>
+                <th className="text-left p-2 font-medium hidden xl:table-cell">最近跟进</th>
+                <th className="text-left p-2 font-medium hidden xl:table-cell">下次跟进</th>
+                <th className="text-left p-2 font-medium hidden md:table-cell">负责人</th>
+                {!isRep && <th className="text-left p-2 font-medium w-14">操作</th>}
               </tr>
             </thead>
             <tbody>
               {profiles.map((p) => (
                 <tr key={p.id} className="border-t hover:bg-muted/30">
-                  <td className="p-3">
-                    <Link href={`/crm/customers/${p.sourceCustomerId}`} className="text-primary hover:underline font-medium">
+                  <td className="p-2">
+                    <Link href={`/crm/customers/${p.sourceCustomerId}`} className="text-primary hover:underline font-medium text-sm">
                       {p.sourceCustomer.name}
                     </Link>
-                    <div className="text-xs text-muted-foreground">{p.sourceCustomer.customerCode}</div>
+                    <div className="text-[11px] text-muted-foreground">{p.sourceCustomer.customerCode}</div>
                   </td>
-                  <td className="p-3 hidden md:table-cell text-muted-foreground">
-                    <div>{p.sourceCustomer.organization || "-"}</div>
+                  <td className="p-2 hidden md:table-cell text-muted-foreground">
+                    <div className="text-sm">{p.sourceCustomer.organization || "-"}</div>
                     {p.sourceCustomer.labOrGroup && <div className="text-xs">{p.sourceCustomer.labOrGroup}</div>}
                   </td>
-                  <td className="p-3"><StageBadge stage={p.stage} /></td>
-                  <td className="p-3 hidden sm:table-cell"><ImportanceBadge importance={p.importance} /></td>
-                  <td className="p-3 hidden lg:table-cell"><PersonCategoryBadge category={p.personCategory} /></td>
-                  <td className="p-3 hidden md:table-cell"><AssignmentStatusBadge status={p.assignmentStatus} /></td>
-                  <td className="p-3 hidden lg:table-cell">{p.assignmentStatus === "ASSIGNED" ? p.ownerUser.name : <span className="text-muted-foreground">—</span>}</td>
+                  <td className="p-2"><StageBadge stage={p.stage} /></td>
+                  <td className="p-2 hidden sm:table-cell"><ImportanceBadge importance={p.importance} /></td>
+                  <td className="p-2 text-center text-sm hidden lg:table-cell">{p._count?.interactions ?? 0}</td>
+                  <td className="p-2 text-center text-sm hidden lg:table-cell">{p._count?.visitCheckins ?? 0}</td>
+                  <td className="p-2 text-sm text-muted-foreground hidden xl:table-cell">{p.lastFollowUpAt ? new Date(p.lastFollowUpAt).toLocaleDateString("zh-CN") : "—"}</td>
+                  <td className="p-2 text-sm hidden xl:table-cell">{p.nextFollowUpAt ? <span className={new Date(p.nextFollowUpAt) < new Date() ? "text-red-500" : ""}>{new Date(p.nextFollowUpAt).toLocaleDateString("zh-CN")}</span> : "—"}</td>
+                  <td className="p-2 hidden md:table-cell">
+                    {p.assignmentStatus === "ASSIGNED" ? (
+                      <span className="text-sm">{p.ownerUser.name}</span>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">—</span>
+                    )}
+                  </td>
                   {!isRep && (
-                    <td className="p-3">
+                    <td className="p-2">
                       <AssignButton profileId={p.id} currentOwner={p.ownerUser.name} />
                     </td>
                   )}
@@ -384,13 +394,15 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
         </div>
       )}
 
-      {data?.totalPages && data.totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button>
-          <span className="text-sm text-muted-foreground">{page} / {data.totalPages}</span>
-          <Button size="sm" variant="outline" disabled={page >= data.totalPages} onClick={() => setPage(page + 1)}>下一页</Button>
+          {data?.totalPages && data.totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2">
+              <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button>
+              <span className="text-sm text-muted-foreground">{page} / {data.totalPages}</span>
+              <Button size="sm" variant="outline" disabled={page >= data.totalPages} onClick={() => setPage(page + 1)}>下一页</Button>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

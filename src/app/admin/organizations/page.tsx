@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, Archive, ArchiveRestore, Trash2, Merge,
-  Building2, Tag, MapPin, X,
+  Building2, Tag, MapPin, X, Users, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import {
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
 import { TaxIdLookupInput } from "@/components/tax-id-lookup-input";
 import { CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
+import Link from "next/link";
 import { toast } from "sonner";
 
 interface OrgAlias {
@@ -246,6 +247,8 @@ export default function OrganizationsPage() {
                     <span className="text-xs text-muted-foreground font-mono">{o.orgCode}</span>
                     {o.archived && <Badge variant="outline" className="text-xs"><Archive className="h-3 w-3 mr-1" />已归档</Badge>}
                     <Badge variant="secondary" className="text-xs">{o._count.customers} 客户</Badge>
+                    <Link href={`/crm/customers?organizationId=${o.id}&organizationName=${encodeURIComponent(o.canonicalName)}`} className="inline-flex items-center gap-1 h-6 px-2 text-xs hover:bg-muted rounded-md"><Users className="h-3 w-3" />客户管理</Link>
+                    <Link href={`/admin/organizations/${o.id}/analytics`} className="inline-flex items-center gap-1 h-6 px-2 text-xs hover:bg-muted rounded-md"><BarChart3 className="h-3 w-3" />分析</Link>
                   </div>
                   {o.address && <div className="text-sm text-muted-foreground mt-1"><MapPin className="h-3 w-3 inline mr-1" />{o.address}</div>}
                   {o.aliases.length > 0 && (

@@ -13,23 +13,9 @@ import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog"
 import { CheckinFlow } from "@/components/crm/checkin-flow";
 import type { CrmDashboardStats } from "@/lib/crm/types";
 import {
-  Users,
-  ClipboardList,
-  AlertTriangle,
-  MapPin,
-  ClipboardCheck,
-  CalendarClock,
-  Network,
-  Share2,
-  ArrowRight,
-  BarChart3,
-  UserCog,
-  Layers,
-  Handshake,
-  MessageSquare,
-  Building2,
-  Contact,
-  FileCheck,
+  Users, ClipboardList, AlertTriangle, MapPin,
+  CalendarClock, Network, BarChart3, UserCog,
+  MessageSquare, ClipboardCheck, Building2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -51,7 +37,6 @@ function CrmDashboard() {
   const role = session?.user?.role;
   const isRep = role === "REPRESENTATIVE";
   const isAdmin = role === "ADMIN";
-  const isInternalStaff = role === "ADMIN" || role === "USER";
   const [quickAction, setQuickAction] = useState<"interaction" | "checkin" | null>(null);
   const [quickProfileId, setQuickProfileId] = useState("");
   const [quickCustomerId, setQuickCustomerId] = useState("");
@@ -61,6 +46,7 @@ function CrmDashboard() {
     setQuickProfileId("");
     setQuickCustomerId("");
   }
+
   const { data, isLoading } = useQuery<{ stats: CrmDashboardStats }>({
     queryKey: ["crm-dashboard"],
     queryFn: () => fetch("/api/crm/dashboard").then((r) => r.json()),
@@ -80,51 +66,85 @@ function CrmDashboard() {
   if (!stats) return <div className="p-6">暂无数据</div>;
 
   return (
-    <div className="p-6 space-y-6 pb-20">
-      <h1 className="text-2xl font-bold">CRM 总览</h1>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={<Users className="h-5 w-5" />} label="客户总数" value={stats.totalProfiles} />
-        <StatCard icon={<ClipboardList className="h-5 w-5" />} label="待跟进" value={stats.pendingFollowUps} />
-        <StatCard icon={<AlertTriangle className="h-5 w-5 text-red-500" />} label="已逾期" value={stats.overdueFollowUps} color="text-red-600" />
-        <StatCard icon={<MapPin className="h-5 w-5" />} label="本周签到" value={stats.thisWeekCheckins} />
+    <div className="p-4 sm:p-6 space-y-5 pb-20 max-w-full overflow-x-hidden">
+      {/* Header + Quick actions toolbar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-xl font-bold">CRM 工作台</h1>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <CustomerProfilePicker
+            title="添加沟通"
+            actionLabel="开始记录沟通"
+            trigger={
+              <Button variant="outline" size="sm">
+                <MessageSquare className="h-3.5 w-3.5 mr-1" />添加沟通
+              </Button>
+            }
+            onPick={(profileId, sourceCustomerId) => {
+              setQuickProfileId(profileId);
+              setQuickCustomerId(sourceCustomerId);
+              setQuickAction("interaction");
+            }}
+          />
+          <CustomerProfilePicker
+            title="现场签到"
+            actionLabel="开始签到"
+            trigger={
+              <Button variant="outline" size="sm">
+                <MapPin className="h-3.5 w-3.5 mr-1" />现场签到
+              </Button>
+            }
+            onPick={(profileId, sourceCustomerId) => {
+              setQuickProfileId(profileId);
+              setQuickCustomerId(sourceCustomerId);
+              setQuickAction("checkin");
+            }}
+          />
+        </div>
       </div>
 
+      {/* Key metrics */}
+      <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+        <MetricCard icon={<Users className="h-4 w-4" />} label="客户总数" value={stats.totalProfiles} />
+        <MetricCard icon={<ClipboardList className="h-4 w-4" />} label="待跟进" value={stats.pendingFollowUps} />
+        <MetricCard icon={<AlertTriangle className="h-4 w-4 text-red-500" />} label="已逾期" value={stats.overdueFollowUps} color="text-red-600" />
+        <MetricCard icon={<MapPin className="h-4 w-4" />} label="本周签到" value={stats.thisWeekCheckins} />
+        {!isRep && <MetricCard icon={<Users className="h-4 w-4" />} label="我的客户" value={stats.myProfiles} />}
+        {isAdmin && analyticsData && (
+          <>
+            <MetricCard icon={<MessageSquare className="h-4 w-4" />} label="7天沟通" value={analyticsData.global.interactionCount7d} />
+          </>
+        )}
+      </div>
+
+      {/* Admin analytics section */}
       {isAdmin && analyticsData && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">运营概览（管理员）</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <div className="text-center p-2 bg-muted/50 rounded">
-                <div className="text-lg font-bold">{analyticsData.global.interactionCount7d}</div>
-                <div className="text-xs text-muted-foreground">7天沟通</div>
-              </div>
-              <div className="text-center p-2 bg-muted/50 rounded">
-                <div className="text-lg font-bold">{analyticsData.global.interactionCount30d}</div>
-                <div className="text-xs text-muted-foreground">30天沟通</div>
-              </div>
-              <div className="text-center p-2 bg-muted/50 rounded">
-                <div className="text-lg font-bold">{analyticsData.global.checkinCount7d}</div>
-                <div className="text-xs text-muted-foreground">7天签到</div>
-              </div>
-              <div className="text-center p-2 bg-muted/50 rounded">
-                <div className="text-lg font-bold">{analyticsData.global.checkinCount30d}</div>
-                <div className="text-xs text-muted-foreground">30天签到</div>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm">运营概览</CardTitle>
+              <div className="flex gap-2 text-xs text-muted-foreground">
+                <span>7天沟通 {analyticsData.global.interactionCount7d}</span>
+                <span>·</span>
+                <span>30天沟通 {analyticsData.global.interactionCount30d}</span>
+                <span>·</span>
+                <span>7天签到 {analyticsData.global.checkinCount7d}</span>
+                <span>·</span>
+                <span>30天签到 {analyticsData.global.checkinCount30d}</span>
               </div>
             </div>
+          </CardHeader>
+          <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-1 pr-2 font-medium">代表</th>
-                    <th className="py-1 pr-2 font-medium text-right">客户</th>
-                    <th className="py-1 pr-2 font-medium text-right">30天签到</th>
-                    <th className="py-1 pr-2 font-medium text-right">30天沟通</th>
-                    <th className="py-1 pr-2 font-medium text-right">逾期</th>
-                    <th className="py-1 pr-2 font-medium text-right">拜访密度</th>
-                    <th className="py-1 font-medium">最近签到</th>
+                    <th className="py-1.5 pr-2 font-medium">代表</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">客户</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">30天签到</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">30天沟通</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">逾期</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">拜访密度</th>
+                    <th className="py-1.5 font-medium">最近签到</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -153,84 +173,12 @@ function CrmDashboard() {
         </Card>
       )}
 
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">快捷操作</h2>
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          <CustomerProfilePicker
-            title="添加沟通"
-            actionLabel="开始记录沟通"
-            trigger={
-              <Button variant="outline" size="sm" className="h-auto py-3 flex-col gap-1 w-full">
-                <MessageSquare className="h-4 w-4" />
-                <span className="text-xs">添加沟通</span>
-              </Button>
-            }
-            onPick={(profileId, sourceCustomerId) => {
-              setQuickProfileId(profileId);
-              setQuickCustomerId(sourceCustomerId);
-              setQuickAction("interaction");
-            }}
-          />
-          <CustomerProfilePicker
-            title="现场签到"
-            actionLabel="开始签到"
-            trigger={
-              <Button variant="outline" size="sm" className="h-auto py-3 flex-col gap-1 w-full">
-                <MapPin className="h-4 w-4" />
-                <span className="text-xs">现场签到</span>
-              </Button>
-            }
-            onPick={(profileId, sourceCustomerId) => {
-              setQuickProfileId(profileId);
-              setQuickCustomerId(sourceCustomerId);
-              setQuickAction("checkin");
-            }}
-          />
-          <Link
-            href="/crm/relations"
-            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
-          >
-            <Network className="h-4 w-4" />
-            <span className="text-xs">客户关系</span>
-          </Link>
-          <Link
-            href="/crm/customers"
-            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
-          >
-            <Users className="h-4 w-4" />
-            <span className="text-xs">客户池</span>
-          </Link>
-          <Link
-            href="/crm/follow-ups"
-            className="inline-flex flex-col items-center gap-1 py-3 px-2 rounded-md border border-input bg-background text-xs font-medium hover:bg-accent hover:text-accent-foreground"
-          >
-            <CalendarClock className="h-4 w-4" />
-            <span className="text-xs">跟进任务</span>
-          </Link>
-        </div>
-      </div>
-
-      {quickAction === "interaction" && quickProfileId && (
-        <InteractionFormDialog
-          profileId={quickProfileId}
-          sourceCustomerId={quickCustomerId}
-          startOpen
-          onClose={clearQuickAction}
-        />
-      )}
-      {quickAction === "checkin" && quickProfileId && (
-        <CheckinFlow
-          profileId={quickProfileId}
-          sourceCustomerId={quickCustomerId}
-          autoStart
-          onDone={clearQuickAction}
-        />
-      )}
-
-      <div className="grid md:grid-cols-2 gap-6">
+      {/* Main content grid */}
+      <div className="grid md:grid-cols-2 gap-5">
+        {/* Stage distribution */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">阶段分布</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">阶段分布</CardTitle>
           </CardHeader>
           <CardContent>
             {stats.stageDistribution.length === 0 ? (
@@ -248,16 +196,17 @@ function CrmDashboard() {
           </CardContent>
         </Card>
 
+        {/* Recent interactions */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">最近沟通</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">最近沟通</CardTitle>
           </CardHeader>
           <CardContent>
             {stats.recentInteractions.length === 0 ? (
               <p className="text-sm text-muted-foreground">暂无记录</p>
             ) : (
-              <div className="space-y-3">
-                {stats.recentInteractions.slice(0, 5).map((i) => (
+              <div className="space-y-2.5">
+                {stats.recentInteractions.slice(0, 8).map((i) => (
                   <div key={i.id} className="text-sm">
                     <span className="text-muted-foreground">{INTERACTION_TYPE_LABELS[i.type] || i.type}</span>
                     <span className="mx-1">·</span>
@@ -272,257 +221,58 @@ function CrmDashboard() {
         </Card>
       </div>
 
-      {isInternalStaff && (
-        <div className="space-y-4">
-          <h2 className="text-sm font-medium text-muted-foreground">客户与单位主数据</h2>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Link href="/customers">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Contact className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">客户管理</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">客户主数据维护</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-            <Link href="/crm/customers">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Users className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">CRM 客户池</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">销售跟进档案管理</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-            {isAdmin && (
-              <>
-                <Link href="/admin/organizations">
-                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                    <CardContent className="pt-5 pb-5">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <Building2 className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">单位主数据</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">机构/单位标准化管理</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-                <Link href="/admin/organization-reviews">
-                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                    <CardContent className="pt-5 pb-5">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <FileCheck className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">单位复核</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">AI/人工单位治理任务</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-4">
-        <h2 className="text-sm font-medium text-muted-foreground">CRM 工作台</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <Link href="/crm/customers">
-            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-              <CardContent className="pt-5 pb-5">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <Users className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">客户池</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">管理客户档案和销售阶段</p>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/crm/customer-applications">
-            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-              <CardContent className="pt-5 pb-5">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <ClipboardCheck className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{isRep ? "申请新增客户" : "客户申请审核"}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{isRep ? "提交或查看客户准入进度" : "处理代表提交的新客户申请"}</p>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/crm/follow-ups">
-            <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-              <CardContent className="pt-5 pb-5">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <CalendarClock className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">跟进工作台</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">查看和完成待办跟进任务</p>
-                  </div>
-                  <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
-        {!isRep && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Link href="/crm/representatives">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <BarChart3 className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">代表运营</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">查看代表客户、拜访和跟进数据</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-            <Link href="/crm/customer-pool">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Layers className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">客户流转池</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">管理客户分配、收回和待收回客户</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-            {isAdmin && (
-              <>
-                <Link href="/crm/region-managers">
-                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                    <CardContent className="pt-5 pb-5">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <UserCog className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">地区经理设置</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">配置地区经理和负责的代表</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-                <Link href="/admin/representatives">
-                  <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                    <CardContent className="pt-5 pb-5">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <Handshake className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">代表账号管理</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">创建代表、重发登录链接和归档</p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              </>
-            )}
-          </div>
-        )}
-        <div className="space-y-3">
-          <h3 className="text-sm font-medium text-muted-foreground">分析工具</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <Link href="/crm/relations">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Network className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">关系网络</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">查看和管理客户关系</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-            <Link href="/crm/graph">
-              <Card className="group cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 h-full">
-                <CardContent className="pt-5 pb-5">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                      <Share2 className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">关系图谱</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">可视化客户关系网络</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
+      {/* Quick navigation - compact row */}
+      <div className="space-y-2">
+        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">快捷导航</h2>
+        <div className="flex flex-wrap gap-1.5">
+          <Link href="/crm/customers" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Users className="h-3.5 w-3.5" />客户池</Link>
+          <Link href="/crm/follow-ups" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><CalendarClock className="h-3.5 w-3.5" />跟进任务</Link>
+          <Link href="/crm/customer-applications" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><ClipboardCheck className="h-3.5 w-3.5" />{isRep ? "客户申请" : "申请审核"}</Link>
+          <Link href="/crm/relations" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Network className="h-3.5 w-3.5" />关系网络</Link>
+          <Link href="/crm/graph" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Network className="h-3.5 w-3.5" />关系图谱</Link>
+          {isAdmin && (
+            <>
+              <Link href="/admin/organizations/analytics" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Building2 className="h-3.5 w-3.5" />机构分析</Link>
+              <Link href="/crm/representatives" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><BarChart3 className="h-3.5 w-3.5" />代表运营</Link>
+              <Link href="/crm/region-managers" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><UserCog className="h-3.5 w-3.5" />地区经理</Link>
+            </>
+          )}
+          {!isRep && !isAdmin && (
+            <Link href="/crm/customer-pool" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md">客户流转池</Link>
+          )}
         </div>
       </div>
+
+      {/* Quick action dialogs */}
+      {quickAction === "interaction" && quickProfileId && (
+        <InteractionFormDialog
+          profileId={quickProfileId}
+          sourceCustomerId={quickCustomerId}
+          startOpen
+          onClose={clearQuickAction}
+        />
+      )}
+      {quickAction === "checkin" && quickProfileId && (
+        <CheckinFlow
+          profileId={quickProfileId}
+          sourceCustomerId={quickCustomerId}
+          autoStart
+          onDone={clearQuickAction}
+        />
+      )}
     </div>
   );
 }
 
-function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color?: string }) {
+function MetricCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color?: string }) {
   return (
     <Card>
-      <CardContent className="pt-4">
-        <div className="flex items-center gap-2 mb-1">
+      <CardContent className="pt-3 pb-2 px-3">
+        <div className="flex items-center gap-1.5 mb-0.5">
           {icon}
-          <span className="text-sm text-muted-foreground">{label}</span>
+          <span className="text-[11px] text-muted-foreground">{label}</span>
         </div>
-        <p className={`text-2xl font-bold ${color || ""}`}>{value}</p>
+        <p className={`text-xl font-bold ${color || ""}`}>{value}</p>
       </CardContent>
     </Card>
   );

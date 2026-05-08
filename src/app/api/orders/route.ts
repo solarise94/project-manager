@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
+import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
     title, description, category, status, orderedAt,
     customerId, representativeId, lines, totalAmount,
     projectAction, projectId, financeTreatment, financeNote,
+    buyerNameSnapshot, buyerPhoneSnapshot, buyerWechatSnapshot, buyerOrgNameSnapshot, buyerAddressSnapshot,
   } = body as Record<string, unknown>;
 
   if (!title || typeof title !== "string" || !title.trim()) {
@@ -133,6 +135,18 @@ export async function POST(req: NextRequest) {
     ? lineItems.reduce((s: number, l: Record<string, unknown>) => s + (Number(l.amount) || 0), 0)
     : (Number(totalAmount) || 0);
 
+  // When customerId is present, always derive representative from CRM owner.
+  // Manual representative is only allowed when there is no customer.
+  let finalRepresentativeId: string | null = null;
+  let finalRepresentativeName: string | null = null;
+  if (customerId) {
+    const resolved = await resolveCustomerRepresentative(customerId as string);
+    finalRepresentativeId = resolved.representativeId;
+    finalRepresentativeName = resolved.representativeName;
+  } else {
+    finalRepresentativeId = (representativeId as string) || null;
+  }
+
   const order = await prisma.order.create({
     data: {
       orderNo,
@@ -144,10 +158,15 @@ export async function POST(req: NextRequest) {
       orderedAt: orderedAt ? new Date(orderedAt as string) : new Date(),
       confirmedAt: orderStatus === "CONFIRMED" ? new Date() : null,
       customerId: (customerId as string) || null,
-      representativeId: (representativeId as string) || null,
+      representativeId: finalRepresentativeId,
       totalAmount: computedAmount,
       financeTreatment: (financeTreatment as string) || "AUTO",
       financeNote: (financeNote as string)?.trim() || null,
+      buyerNameSnapshot: (buyerNameSnapshot as string)?.trim() || null,
+      buyerPhoneSnapshot: (buyerPhoneSnapshot as string)?.trim() || null,
+      buyerWechatSnapshot: (buyerWechatSnapshot as string)?.trim() || null,
+      buyerOrgNameSnapshot: (buyerOrgNameSnapshot as string)?.trim() || null,
+      buyerAddressSnapshot: (buyerAddressSnapshot as string)?.trim() || null,
       createdById: session.user.id,
       lines: lineItems.length > 0 ? {
         create: lineItems.map((l: Record<string, unknown>, i: number) => ({
@@ -174,7 +193,8 @@ export async function POST(req: NextRequest) {
       data: {
         name: title.trim(),
         customerId: customerId as string,
-        representativeId: (representativeId as string) || null,
+        representativeId: finalRepresentativeId,
+        representative: finalRepresentativeName,
         budgetAmount: computedAmount,
         status: "NOT_STARTED",
       },

@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getReadableProjectIds, isRepresentative } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
+import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
@@ -127,16 +128,25 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representative, representativeId, customerId, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, orderNumber, organization, client, representativeId, customerId, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
-    // Derive representative text from DB when representativeId is provided
-    let repName: string | null = null;
-    if (representativeId) {
+    // Derive representative from customer CRM owner when customerId is present.
+    // Customer-bound projects always follow the CRM owner; manual representative is only
+    // allowed when there is no customer.
+    let resolvedRepId: string | null = null;
+    let resolvedRepName: string | null = null;
+    if (customerId) {
+      const resolved = await resolveCustomerRepresentative(customerId);
+      resolvedRepId = resolved.representativeId;
+      resolvedRepName = resolved.representativeName;
+    } else if (representativeId) {
+      // No customer — allow manual representative
       const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
       if (!rep) {
         return NextResponse.json({ error: "指定的代表不存在" }, { status: 400 });
       }
-      repName = rep.name;
+      resolvedRepId = rep.id;
+      resolvedRepName = rep.name;
     }
 
     // Derive client/organization from customer when customerId is provided
@@ -167,8 +177,8 @@ export async function POST(req: NextRequest) {
           orderNumber,
           organization: (customerId && custOrg) ? custOrg : (organization || null),
           client: custClient || client || null,
-          representative: repName !== null ? repName : representative || null,
-          representativeId: representativeId || null,
+          representative: resolvedRepName,
+          representativeId: resolvedRepId,
           customerId: customerId || null,
           status: status || "NOT_STARTED",
           progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,

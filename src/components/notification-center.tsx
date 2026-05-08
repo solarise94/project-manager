@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   REMINDER: Clock,
+  CRM_FOLLOW_UP_REMINDER: Clock,
   TICKET: Ticket,
   COMMENT: MessageSquare,
   STATUS: Activity,
@@ -23,6 +24,7 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
 
 const TYPE_COLORS: Record<string, string> = {
   REMINDER: "text-amber-500",
+  CRM_FOLLOW_UP_REMINDER: "text-amber-500",
   TICKET: "text-blue-500",
   COMMENT: "text-green-500",
   STATUS: "text-purple-500",

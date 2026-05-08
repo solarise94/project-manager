@@ -339,6 +339,7 @@ model Notification {
   link        String?
   emailStatus String? // null=no email, "pending", "sent", "failed"
   emailError  String?
+  dedupeKey   String?   @unique
   createdAt   DateTime @default(now())
 }
 

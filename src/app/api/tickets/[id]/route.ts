@@ -34,12 +34,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (priority !== undefined) updateData.priority = priority;
     if (assigneeId !== undefined) updateData.assigneeId = assigneeId;
     if (reminderDate !== undefined) {
-      updateData.reminderDate = reminderDate ? new Date(reminderDate) : null;
-      updateData.reminderSent = false;
-      updateData.reminderStatus = "PENDING";
-      updateData.reminderLockedAt = null;
-      updateData.reminderSentAt = null;
-      updateData.reminderError = null;
+      if (reminderDate) {
+        updateData.reminderDate = new Date(reminderDate);
+        updateData.reminderSent = false;
+        updateData.reminderStatus = "PENDING";
+        updateData.reminderLockedAt = null;
+        updateData.reminderSentAt = null;
+        updateData.reminderError = null;
+      } else {
+        // Clearing the reminder — null out all reminder state
+        updateData.reminderDate = null;
+        updateData.reminderSent = false;
+        updateData.reminderStatus = null;
+        updateData.reminderLockedAt = null;
+        updateData.reminderSentAt = null;
+        updateData.reminderError = null;
+      }
     }
 
     const updated = await prisma.ticket.update({
