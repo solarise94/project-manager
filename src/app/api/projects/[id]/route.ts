@@ -35,6 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
               deliveryStatus: true, totalAmount: true, financeAmountOverride: true,
               financeTreatment: true, source: true, externalOrderNo: true,
               customer: { select: { id: true, name: true } },
+              _count: { select: { projectLinks: true } },
             },
           },
         },
@@ -217,6 +218,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             },
           });
         }
+      }
+
+      // Sync budgetCost into FinanceCost for unified cost tracking (inside transaction)
+      if (budgetCost !== undefined) {
+        const bc = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
+        const { syncProjectBudgetCost: syncCost } = await import("@/lib/finance/ledger");
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await syncCost(id, bc, session.user.id, tx as any);
       }
     });
 

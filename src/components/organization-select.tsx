@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Plus, Building2 } from "lucide-react";
@@ -80,7 +80,26 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
   const orgs = data?.organizations || [];
   const selected = orgs.find((o) => o.id === value);
 
-  if (isRep) return null;
+  // Rep-only: uncontrolled input, resolution triggered on blur to avoid calling resolve on every keystroke
+  const repInputRef = useRef<HTMLInputElement>(null);
+
+  if (isRep) {
+    return (
+      <Input
+        ref={repInputRef}
+        key={displayValue || "__rep_empty__"}
+        placeholder="输入单位名称"
+        defaultValue={displayValue || ""}
+        onBlur={() => {
+          const v = repInputRef.current?.value?.trim() || "";
+          if (v !== (displayValue || "")) {
+            onChange(null, v);
+          }
+        }}
+        disabled={disabled}
+      />
+    );
+  }
 
   if (disabled) {
     return (

@@ -55,7 +55,8 @@ async function getRegionalManagerUserIds(managerUserId: string): Promise<string[
  */
 export async function getCrmProfileScopeWhere(
   userId: string,
-  role: string
+  role: string,
+  opts?: { includeUnassigned?: boolean },
 ): Promise<Record<string, unknown>> {
   if (role === "ADMIN" || role === "USER") {
     return {};
@@ -64,19 +65,23 @@ export async function getCrmProfileScopeWhere(
   if (role === "REGIONAL_MANAGER") {
     const repUserIds = await getRegionalManagerUserIds(userId);
     const ids = repUserIds && repUserIds.length > 0 ? [userId, ...repUserIds] : [userId];
-    return { ownerUserId: { in: ids }, assignmentStatus: "ASSIGNED" };
+    const base: Record<string, unknown> = { ownerUserId: { in: ids } };
+    if (!opts?.includeUnassigned) base.assignmentStatus = "ASSIGNED";
+    return base;
   }
 
   if (role === "REPRESENTATIVE") {
-    return { ownerUserId: userId, assignmentStatus: "ASSIGNED" };
+    const base: Record<string, unknown> = { ownerUserId: userId };
+    if (!opts?.includeUnassigned) base.assignmentStatus = "ASSIGNED";
+    return base;
   }
 
   return { ownerUserId: "__NO_MATCH__" };
 }
 
 /** @deprecated Use getCrmProfileScopeWhere instead. */
-export async function buildCrmWhereForRole(userId: string, role: string) {
-  return getCrmProfileScopeWhere(userId, role);
+export async function buildCrmWhereForRole(userId: string, role: string, opts?: { includeUnassigned?: boolean }) {
+  return getCrmProfileScopeWhere(userId, role, opts);
 }
 
 export async function assertCrmProfileAccess(

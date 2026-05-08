@@ -53,6 +53,7 @@ import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { DraftInputPanel } from "@/components/draft-input-panel";
 import { ProjectInvoiceSection } from "@/components/project-invoice-section";
+import { PushToFollowUpButton } from "@/components/crm/push-to-follow-up-button";
 import { projectToFeishuRow } from "@/lib/feishu-export";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -357,6 +358,41 @@ export default function ProjectDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["ticket-replies", vars.ticketId] });
       queryClient.invalidateQueries({ queryKey: ["timeline", projectId] });
     },
+  });
+
+  // ── Order amount sync ──────────────────────────────────────────────
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncMode, setSyncMode] = useState("FINANCE_OVERRIDE");
+  const [syncTarget, setSyncTarget] = useState<{
+    orderId: string;
+    orderNo: string;
+    orderTotal: number;
+    financeOverride: number | null;
+    allocatedAmount: number | null;
+    source: string;
+    projectCount: number;
+    hasFinancial: boolean;
+  } | null>(null);
+
+  const syncAmountMutation = useMutation({
+    mutationFn: async (payload: { orderId: string; mode: string }) => {
+      const res = await fetch(`/api/projects/${projectId}/sync-order-amount`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "同步失败");
+      return data;
+    },
+    onSuccess: (data: { message: string }) => {
+      toast.success(data.message);
+      setSyncDialogOpen(false);
+      setSyncTarget(null);
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   // When server progress catches up to the locally-dragged value, clear the override
@@ -1130,6 +1166,14 @@ export default function ProjectDetailPage() {
                           <span className="text-xs text-muted-foreground">
                             {formatDistanceToNow(new Date(item.createdAt), { addSuffix: true, locale: zhCN })}
                           </span>
+                          {isComment && isInternal && (
+                            <PushToFollowUpButton
+                              sourceType="PROJECT_COMMENT"
+                              sourceId={item.id}
+                              disabled={!project.representativeId}
+                              disabledReason={!project.representativeId ? "请先在项目设置中绑定代表" : undefined}
+                            />
+                          )}
                         </div>
                       </div>
                     );
@@ -1363,14 +1407,24 @@ export default function ProjectDetailPage() {
                           )}
                         </div>
 
-                        {!project.deleted && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="mt-2 text-xs"
-                            onClick={() => setExpandedTicket(isExpanded ? null : ticket.id)}
-                          >
-                            {isExpanded ? "收起回复" : "查看回复"}
+                        <div className="flex items-center gap-2 mt-2">
+                          {!project.deleted && isInternal && (
+                            <PushToFollowUpButton
+                              sourceType="PROJECT_TICKET"
+                              sourceId={ticket.id}
+                              disabled={!project.representativeId}
+                              disabledReason={!project.representativeId ? "请先在项目设置中绑定代表" : undefined}
+                            />
+                          )}
+
+                          {!project.deleted && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs"
+                              onClick={() => setExpandedTicket(isExpanded ? null : ticket.id)}
+                            >
+                              {isExpanded ? "收起回复" : "查看回复"}
                           </Button>
                         )}
 
@@ -1383,6 +1437,7 @@ export default function ProjectDetailPage() {
                             readOnly={!permissions?.canContribute}
                           />
                         )}
+                      </div>
                       </CardContent>
                     </Card>
                   );
@@ -1477,6 +1532,32 @@ export default function ProjectDetailPage() {
                     <span className="font-medium">¥{(link.order.financeAmountOverride ?? link.order.totalAmount).toLocaleString()}</span>
                     {link.allocatedAmount != null && <span>分摊: ¥{link.allocatedAmount.toLocaleString()}</span>}
                   </div>
+                  {isAdmin && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2"
+                      disabled={!project.budgetAmount || project.budgetAmount <= 0}
+                      title={!project.budgetAmount || project.budgetAmount <= 0 ? "请先在财务信息中填写项目金额" : undefined}
+                      onClick={() => {
+                        const orderProjectCount = link.order._count?.projectLinks ?? 1;
+                        setSyncTarget({
+                          orderId: link.order.id,
+                          orderNo: link.order.orderNo,
+                          orderTotal: link.order.totalAmount,
+                          financeOverride: link.order.financeAmountOverride,
+                          allocatedAmount: link.allocatedAmount,
+                          source: link.order.source,
+                          projectCount: orderProjectCount,
+                          hasFinancial: false,
+                        });
+                        setSyncMode(orderProjectCount <= 1 ? "FINANCE_OVERRIDE" : "ALLOCATED_AMOUNT");
+                        setSyncDialogOpen(true);
+                      }}
+                    >
+                      同步金额到订单
+                    </Button>
+                  )}
                 </Card>
               ))
             ) : (
@@ -1504,6 +1585,79 @@ export default function ProjectDetailPage() {
             <ProjectInvoiceSection projectId={projectId} />
           </TabsContent>
       </Tabs>
+
+      {/* Sync Order Amount Dialog */}
+      <Dialog open={syncDialogOpen} onOpenChange={(v) => { if (!v) { setSyncDialogOpen(false); setSyncTarget(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>同步金额到订单</DialogTitle>
+          </DialogHeader>
+          {syncTarget && (
+              <div className="space-y-4">
+                <div className="rounded-lg border p-3 text-sm space-y-1">
+                  <div>项目金额: <span className="font-medium">¥{((project.budgetAmount ?? 0)).toLocaleString()}</span></div>
+                  <div>订单 {syncTarget.orderNo}</div>
+                  <div>订单原始金额: ¥{syncTarget.orderTotal.toLocaleString()}</div>
+                  {syncTarget.financeOverride != null && (
+                    <div>当前财务覆盖: ¥{syncTarget.financeOverride.toLocaleString()}</div>
+                  )}
+                  {syncTarget.allocatedAmount != null && (
+                    <div>当前分摊金额: ¥{syncTarget.allocatedAmount.toLocaleString()}</div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">同步方式</label>
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input type="radio" name="syncMode" value="FINANCE_OVERRIDE"
+                        checked={syncMode === "FINANCE_OVERRIDE"}
+                        onChange={() => setSyncMode("FINANCE_OVERRIDE")} />
+                      <div className="text-sm">
+                        <span className="font-medium">财务覆盖</span>
+                        <span className="text-xs text-muted-foreground ml-1">{syncTarget.projectCount <= 1 ? "（推荐）" : ""}</span>
+                        <p className="text-xs text-muted-foreground">更新订单财务有效金额为项目金额，不改原始订单数据</p>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input type="radio" name="syncMode" value="ALLOCATED_AMOUNT"
+                        checked={syncMode === "ALLOCATED_AMOUNT"}
+                        onChange={() => setSyncMode("ALLOCATED_AMOUNT")} />
+                      <div className="text-sm">
+                        <span className="font-medium">分摊金额</span>
+                        <span className="text-xs text-muted-foreground ml-1">{syncTarget.projectCount > 1 ? "（推荐）" : ""}</span>
+                        <p className="text-xs text-muted-foreground">更新当前项目在该订单中的分摊金额</p>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input type="radio" name="syncMode" value="ORDER_TOTAL"
+                        checked={syncMode === "ORDER_TOTAL"}
+                        onChange={() => setSyncMode("ORDER_TOTAL")} />
+                      <div className="text-sm">
+                        <span className="font-medium">原始金额</span>
+                        <span className="text-xs text-red-500 ml-1">高风险</span>
+                        <p className="text-xs text-muted-foreground">
+                          直接修改订单原始金额{syncTarget.source === "MANUAL" ? "" : "（仅手动订单可用）"}。
+                          有发票、收款或成本的订单不可用此模式。
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <Button
+                  className="w-full"
+                  disabled={syncAmountMutation.isPending}
+                  onClick={() => {
+                    syncAmountMutation.mutate({ orderId: syncTarget.orderId, mode: syncMode });
+                  }}
+                >
+                  {syncAmountMutation.isPending ? "同步中..." : `确认同步 (¥${(project.budgetAmount ?? 0).toLocaleString()})`}
+                </Button>
+              </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Image Preview Dialog */}
       <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>

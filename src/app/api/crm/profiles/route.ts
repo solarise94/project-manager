@@ -68,6 +68,7 @@ export async function GET(req: NextRequest) {
   const stage = searchParams.get("stage") || "";
   const importance = searchParams.get("importance") || "";
   const ownerUserId = searchParams.get("ownerUserId") || "";
+  const assignee = searchParams.get("assignee") || "";
   const sourceCustomerId = searchParams.get("sourceCustomerId") || "";
   const organizationId = searchParams.get("organizationId") || "";
   const siteType = searchParams.get("siteType") || "";
@@ -82,14 +83,25 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
   const pageSize = Math.min(100, Math.max(10, parseInt(searchParams.get("pageSize") || "50") || 50));
 
-  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role);
+  const hasAssigneeFilter = assignee !== "";
+  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role, { includeUnassigned: hasAssigneeFilter });
   const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
   const where: Record<string, unknown> = { ...roleWhere, archived: false };
   if (sourceCustomerId) where.sourceCustomerId = sourceCustomerId;
   if (stage) where.stage = stage;
   if (importance) where.importance = importance;
-  if (ownerUserId) {
+  if (assignee === "UNASSIGNED") {
+    where.assignmentStatus = { in: ["UNASSIGNED", "RECALLED"] };
+  } else if (assignee) {
+    if (isScoped) {
+      const scopedIds = extractScopedUserIds(roleWhere);
+      if (scopedIds && !scopedIds.includes(assignee)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+    where.ownerUserId = assignee;
+  } else if (ownerUserId) {
     if (isScoped) {
       const scopedIds = extractScopedUserIds(roleWhere);
       if (scopedIds && !scopedIds.includes(ownerUserId)) {

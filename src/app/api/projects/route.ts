@@ -155,44 +155,56 @@ export async function POST(req: NextRequest) {
       custOrg = getCustomerOrganizationName(cust);
     }
 
-    const project = await prisma.project.create({
-      data: {
-        name,
-        description,
-        orderNumber,
-        organization: (customerId && custOrg) ? custOrg : (organization || null),
-        client: custClient || client || null,
-        representative: repName !== null ? repName : representative || null,
-        representativeId: representativeId || null,
-        customerId: customerId || null,
-        status: status || "NOT_STARTED",
-        progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        projectType: projectType || null,
-        projectContent: projectContent || null,
-        quantity: quantity != null && quantity !== "" ? Number(quantity) : null,
-        procurementSource: procurementSource || null,
-        brand: brand || null,
-        techSupport: techSupport || null,
-        budgetAmount: budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null,
-        budgetCost: budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null,
-        members: {
-          create: {
-            userId: session.user.id,
-            role: "OWNER",
+    const bc = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
+
+    // Transaction: project + budget cost sync + activity log — all-or-nothing
+    const { syncProjectBudgetCost } = await import("@/lib/finance/ledger");
+    const project = await prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
+        data: {
+          name,
+          description,
+          orderNumber,
+          organization: (customerId && custOrg) ? custOrg : (organization || null),
+          client: custClient || client || null,
+          representative: repName !== null ? repName : representative || null,
+          representativeId: representativeId || null,
+          customerId: customerId || null,
+          status: status || "NOT_STARTED",
+          progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,
+          startDate: startDate ? new Date(startDate) : null,
+          endDate: endDate ? new Date(endDate) : null,
+          projectType: projectType || null,
+          projectContent: projectContent || null,
+          quantity: quantity != null && quantity !== "" ? Number(quantity) : null,
+          procurementSource: procurementSource || null,
+          brand: brand || null,
+          techSupport: techSupport || null,
+          budgetAmount: budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null,
+          budgetCost: bc,
+          members: {
+            create: {
+              userId: session.user.id,
+              role: "OWNER",
+            },
           },
         },
-      },
-    });
+      });
 
-    await prisma.activityLog.create({
-      data: {
-        type: "PROJECT_CREATED",
-        content: `创建了项目 "${name}"`,
-        projectId: project.id,
-        userId: session.user.id,
-      },
+      if (bc) {
+        await syncProjectBudgetCost(created.id, bc, session.user.id, tx);
+      }
+
+      await tx.activityLog.create({
+        data: {
+          type: "PROJECT_CREATED",
+          content: `创建了项目 "${name}"`,
+          projectId: created.id,
+          userId: session.user.id,
+        },
+      });
+
+      return created;
     });
 
     // Notify new representative if assigned

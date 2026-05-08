@@ -66,6 +66,15 @@ function CrmDashboard() {
     queryFn: () => fetch("/api/crm/dashboard").then((r) => r.json()),
   });
 
+  const { data: analyticsData } = useQuery<{
+    global: { interactionCount7d: number; interactionCount30d: number; checkinCount7d: number; checkinCount30d: number };
+    representatives: Array<{ representativeId: string; name: string; email: string; hasUser: boolean; profileCount: number; checkinCount30d: number; lastCheckinAt: string | null; overdueFollowUps: number; interactionCount30d: number; visitDensity: number; interactionDensity: number }>;
+  }>({
+    queryKey: ["crm-admin-analytics"],
+    queryFn: () => fetch("/api/crm/admin-analytics").then((r) => r.json()),
+    enabled: isAdmin,
+  });
+
   if (isLoading) return <div className="p-6">加载中...</div>;
   const stats = data?.stats;
   if (!stats) return <div className="p-6">暂无数据</div>;
@@ -80,6 +89,69 @@ function CrmDashboard() {
         <StatCard icon={<AlertTriangle className="h-5 w-5 text-red-500" />} label="已逾期" value={stats.overdueFollowUps} color="text-red-600" />
         <StatCard icon={<MapPin className="h-5 w-5" />} label="本周签到" value={stats.thisWeekCheckins} />
       </div>
+
+      {isAdmin && analyticsData && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">运营概览（管理员）</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <div className="text-center p-2 bg-muted/50 rounded">
+                <div className="text-lg font-bold">{analyticsData.global.interactionCount7d}</div>
+                <div className="text-xs text-muted-foreground">7天沟通</div>
+              </div>
+              <div className="text-center p-2 bg-muted/50 rounded">
+                <div className="text-lg font-bold">{analyticsData.global.interactionCount30d}</div>
+                <div className="text-xs text-muted-foreground">30天沟通</div>
+              </div>
+              <div className="text-center p-2 bg-muted/50 rounded">
+                <div className="text-lg font-bold">{analyticsData.global.checkinCount7d}</div>
+                <div className="text-xs text-muted-foreground">7天签到</div>
+              </div>
+              <div className="text-center p-2 bg-muted/50 rounded">
+                <div className="text-lg font-bold">{analyticsData.global.checkinCount30d}</div>
+                <div className="text-xs text-muted-foreground">30天签到</div>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-1 pr-2 font-medium">代表</th>
+                    <th className="py-1 pr-2 font-medium text-right">客户</th>
+                    <th className="py-1 pr-2 font-medium text-right">30天签到</th>
+                    <th className="py-1 pr-2 font-medium text-right">30天沟通</th>
+                    <th className="py-1 pr-2 font-medium text-right">逾期</th>
+                    <th className="py-1 pr-2 font-medium text-right">拜访密度</th>
+                    <th className="py-1 font-medium">最近签到</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analyticsData.representatives.map((r) => (
+                    <tr key={r.representativeId} className="border-b last:border-0">
+                      <td className="py-1.5 pr-2">
+                        <Link href={`/crm/representatives/${r.representativeId}`} className="text-primary hover:underline">
+                          {r.name}
+                        </Link>
+                        {!r.hasUser && <span className="text-amber-500 ml-1" title="未登录">⚠</span>}
+                      </td>
+                      <td className="py-1.5 pr-2 text-right">{r.profileCount}</td>
+                      <td className="py-1.5 pr-2 text-right">{r.checkinCount30d}</td>
+                      <td className="py-1.5 pr-2 text-right">{r.interactionCount30d}</td>
+                      <td className="py-1.5 pr-2 text-right">{r.overdueFollowUps > 0 ? <span className="text-red-500">{r.overdueFollowUps}</span> : 0}</td>
+                      <td className="py-1.5 pr-2 text-right font-mono">{r.visitDensity.toFixed(1)}</td>
+                      <td className="py-1.5 text-muted-foreground">
+                        {r.lastCheckinAt ? new Date(r.lastCheckinAt).toLocaleDateString("zh-CN") : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">快捷操作</h2>

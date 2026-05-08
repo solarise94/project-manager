@@ -6,7 +6,6 @@ import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
-  Plus,
   Pencil,
   Archive,
   ArchiveRestore,
@@ -36,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/organization-select";
+import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 import type { CustomerItem } from "@/lib/types";
 
 const emptyForm = {
@@ -54,13 +54,11 @@ export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [showArchived, setShowArchived] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerItem | null>(null);
   const [mergeSource, setMergeSource] = useState<CustomerItem | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState("");
-  const [form, setForm] = useState({ ...emptyForm });
   const [editForm, setEditForm] = useState({ ...emptyForm });
 
   const isReadOnly = session?.user?.role === "REPRESENTATIVE";
@@ -78,26 +76,6 @@ export default function CustomersPage() {
       return res.json();
     },
     enabled: status === "authenticated",
-  });
-
-  const createMutation = useMutation({
-    mutationFn: async (payload: typeof emptyForm & { principal?: string; email?: string; wechat?: string; address?: string }) => {
-      const res = await fetch("/api/customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "创建失败");
-      return data;
-    },
-    onSuccess: () => {
-      toast.success("客户创建成功");
-      setCreateOpen(false);
-      setForm({ ...emptyForm });
-      queryClient.invalidateQueries({ queryKey: ["customers"] });
-    },
-    onError: (err: Error) => toast.error(err.message),
   });
 
   const updateMutation = useMutation({
@@ -215,12 +193,7 @@ export default function CustomersPage() {
             </SelectContent>
           </Select>
         )}
-        {!isReadOnly && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            新增客户
-          </Button>
-        )}
+        <CustomerApplicationFormDialog />
       </div>
 
       {isLoading ? (
@@ -458,43 +431,6 @@ export default function CustomersPage() {
           </div>
         </>
       )}
-
-      {/* Create Dialog — simplified: name + org + miniProgramId only */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>新增客户</DialogTitle></DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; createMutation.mutate(form); }} className="space-y-4">
-            <div className="space-y-2">
-              <Label>客户姓名 *</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-            </div>
-            <div className="space-y-2">
-              <Label>客户单位</Label>
-              <OrganizationSelect
-                value={form.organizationId}
-                displayValue={form.organization || undefined}
-                onChange={(id, name) => {
-                  setForm({
-                    ...form,
-                    organization: name,
-                    organizationId: id || "",
-                    organizationSiteId: "",
-                    organizationRawInput: name,
-                  });
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>小程序 ID</Label>
-              <Input value={form.miniProgramId} onChange={(e) => setForm({ ...form, miniProgramId: e.target.value })} />
-            </div>
-            <p className="text-xs text-muted-foreground">联系信息（邮箱、微信、地址、课题组负责人）请通过 CRM 管理。</p>
-            <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "创建中..." : "创建客户"}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Dialog — simplified: name + org + miniProgramId only */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>

@@ -1,18 +1,33 @@
 import { prisma } from "@/lib/prisma";
 import { generateCustomerCode } from "@/lib/customer-code";
+import { resolveOrganization } from "@/lib/organization-resolver";
 
 interface OrgValidation {
   error?: string;
   organizationId: string | null;
   organizationSiteId: string | null;
   canonicalName: string | null;
+  resolvedFromText?: boolean;
 }
 
 export async function validateOrg(
   organizationId: string | null | undefined,
-  organizationSiteId: string | null | undefined
+  organizationSiteId: string | null | undefined,
+  rawOrgText?: string | null,
 ): Promise<OrgValidation> {
+  // If no organizationId, try to resolve from raw text
   if (!organizationId) {
+    if (rawOrgText?.trim()) {
+      const resolved = await resolveOrganization(rawOrgText.trim());
+      if (resolved.status === "exact" && resolved.organizationId) {
+        return {
+          organizationId: resolved.organizationId,
+          organizationSiteId: resolved.organizationSiteId,
+          canonicalName: resolved.canonicalName,
+          resolvedFromText: true,
+        };
+      }
+    }
     return { organizationId: null, organizationSiteId: null, canonicalName: null };
   }
 
@@ -49,10 +64,11 @@ export function buildCustomerData(
   application: {
     name: string; principal: string | null; email: string | null; wechat: string | null;
     organization: string | null; address: string | null; miniProgramId: string | null;
-    organizationId: string | null;
+    organizationId: string | null; organizationRawInput?: string | null;
   },
   orgValidation: OrgValidation
 ) {
+  const rawInput = application.organizationRawInput?.trim() || application.organization?.trim() || null;
   return {
     name: application.name.trim(),
     principal: application.principal?.trim() || null,
@@ -63,7 +79,7 @@ export function buildCustomerData(
     miniProgramId: application.miniProgramId?.trim() || null,
     organizationId: orgValidation.organizationId || null,
     organizationSiteId: orgValidation.organizationSiteId,
-    organizationRawInput: application.organization || null,
+    organizationRawInput: rawInput,
   };
 }
 
@@ -80,7 +96,8 @@ export async function createCustomerWithRetry(
   applicationId: string,
   ownerUserId: string,
   reviewerUserId: string,
-  reviewNote: string | null
+  reviewNote: string | null,
+  location?: { lat: number; lng: number; address: string } | null,
 ): Promise<{ error?: string; status?: number; application?: unknown }> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -110,6 +127,20 @@ export async function createCustomerWithRetry(
             lastFollowUpAt: new Date(),
           },
         });
+
+        // Create CrmCustomerAddress from location data if available
+        if (location?.address?.trim()) {
+          await tx.crmCustomerAddress.create({
+            data: {
+              profileId: profile.id,
+              sourceType: "CUSTOMER_APPLICATION",
+              addressText: location.address.trim(),
+              lat: location.lat,
+              lng: location.lng,
+              isPrimary: true,
+            },
+          });
+        }
 
         const updated = await tx.crmCustomerApplication.update({
           where: { id: applicationId },

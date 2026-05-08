@@ -801,6 +801,8 @@ model FinanceCost {
   costType    String
   occurredAt  DateTime  @default(now())
   remark      String?
+  sourceType  String    @default("MANUAL")
+  sourceKey   String?    @unique
   createdById String
   createdBy   User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
@@ -921,6 +923,14 @@ model CrmFollowUpTask {
   reminderLockedAt       DateTime?
   reminderSentAt         DateTime?
   reminderError          String?
+  sourceType             String?            // PROJECT_TICKET | TICKET_REPLY | PROJECT_COMMENT
+  sourceId               String?
+  sourceProjectId        String?
+  sourceTicketId         String?
+  sourceCommentId        String?
+  sourceTitle            String?
+  sourceUrl              String?
+  sourceOpenKey          String?            @unique
   createdByUserId        String
   createdByUser          User               @relation("CrmFollowUpCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
   createdAt              DateTime           @default(now())
@@ -929,6 +939,7 @@ model CrmFollowUpTask {
   @@index([profileId])
   @@index([ownerUserId, status])
   @@index([dueAt, reminderSent])
+  @@index([sourceType, sourceId])
 }
 
 model CrmVisitCheckin {
@@ -981,9 +992,13 @@ model CrmCustomerApplication {
   organization        String?
   organizationId      String?
   organizationSiteId  String?
+  organizationRawInput String?
   address             String?
   miniProgramId       String?
   notes               String?
+  locationLat         Float?
+  locationLng         Float?
+  locationAddress     String?
   status              String              @default("PENDING") // PENDING, APPROVED, REJECTED
   submittedByUserId   String
   submittedByUser     User                @relation("CrmApplicationsSubmitted", fields: [submittedByUserId], references: [id])

@@ -124,7 +124,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 async function handleApprove(
   session: { user: { id: string; role: string } },
-  application: { id: string; submittedByUserId: string; name: string; principal: string | null; email: string | null; wechat: string | null; organization: string | null; organizationId: string | null; organizationSiteId: string | null; address: string | null; miniProgramId: string | null },
+  application: { id: string; submittedByUserId: string; name: string; principal: string | null; email: string | null; wechat: string | null; organization: string | null; organizationId: string | null; organizationSiteId: string | null; organizationRawInput: string | null; address: string | null; miniProgramId: string | null; locationLat: number | null; locationLng: number | null; locationAddress: string | null },
   body: { ownerUserId?: string; reviewNote?: string }
 ) {
   const finalOwnerUserId = body.ownerUserId || application.submittedByUserId;
@@ -137,13 +137,23 @@ async function handleApprove(
     }
   }
 
-  const orgValidation = await validateOrg(application.organizationId, application.organizationSiteId);
+  // Resolve org: prefer organizationId, fall back to raw input text
+  const rawOrgText = application.organizationRawInput || application.organization;
+  const orgValidation = await validateOrg(
+    application.organizationId,
+    application.organizationSiteId,
+    rawOrgText,
+  );
   if (orgValidation.error) {
     return NextResponse.json({ error: orgValidation.error }, { status: 400 });
   }
 
+  const location = (application.locationLat != null && application.locationLng != null)
+    ? { lat: application.locationLat, lng: application.locationLng, address: application.locationAddress || application.address || "" }
+    : null;
+
   const customerData = buildCustomerData(application, orgValidation);
-  const result = await createCustomerWithRetry(prisma, customerData, application.id, finalOwnerUserId, session.user.id, reviewNote);
+  const result = await createCustomerWithRetry(prisma, customerData, application.id, finalOwnerUserId, session.user.id, reviewNote, location);
   if (result.error) {
     return NextResponse.json({ error: result.error }, { status: result.status || 500 });
   }

@@ -15,5 +15,6 @@ export const customerCreateSchema: FormSchema = {
     { key: "email", label: "邮箱", type: "string" },
     { key: "wechat", label: "微信", type: "string" },
     { key: "address", label: "通讯地址", type: "string" },
+    { key: "miniProgramId", label: "小程序 ID", type: "string" },
   ],
 };

@@ -56,8 +56,12 @@ export async function POST(req: NextRequest) {
           organization: true,
           organizationId: true,
           organizationSiteId: true,
+          organizationRawInput: true,
           address: true,
           miniProgramId: true,
+          locationLat: true,
+          locationLng: true,
+          locationAddress: true,
         },
       });
 
@@ -86,15 +90,22 @@ export async function POST(req: NextRequest) {
 
       // action === "approve"
       const finalOwnerUserId = ownerUserId || application.submittedByUserId;
-      const orgValidation = await validateOrg(application.organizationId, application.organizationSiteId);
+      const orgValidation = await validateOrg(
+        application.organizationId, application.organizationSiteId,
+        application.organizationRawInput || application.organization,
+      );
       if (orgValidation.error) {
         errors.push({ id, error: orgValidation.error });
         continue;
       }
 
+      const location = (application.locationLat != null && application.locationLng != null)
+        ? { lat: application.locationLat, lng: application.locationLng, address: application.locationAddress || application.address || "" }
+        : null;
+
       const customerData = buildCustomerData(application, orgValidation);
       const result = await createCustomerWithRetry(
-        prisma, customerData, application.id, finalOwnerUserId, session.user.id, trimmedNote
+        prisma, customerData, application.id, finalOwnerUserId, session.user.id, trimmedNote, location,
       );
 
       if (result.error) {

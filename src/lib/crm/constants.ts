@@ -70,13 +70,14 @@ export const FOLLOW_UP_STATUS_COLORS: Record<string, string> = {
 
 export const CRM_CHECKIN_STATUS = ["DRAFT", "COMPLETED"] as const;
 
-export const ADDRESS_SOURCE_TYPES = ["MANUAL", "PROJECT_IMPORT", "EXTERNAL_ORDER_IMPORT", "VISIT_CHECKIN"] as const;
+export const ADDRESS_SOURCE_TYPES = ["MANUAL", "PROJECT_IMPORT", "EXTERNAL_ORDER_IMPORT", "VISIT_CHECKIN", "CUSTOMER_APPLICATION"] as const;
 
 export const ADDRESS_SOURCE_LABELS: Record<string, string> = {
   MANUAL: "手动录入",
   PROJECT_IMPORT: "项目导入",
   EXTERNAL_ORDER_IMPORT: "外部订单导入",
   VISIT_CHECKIN: "拜访签到",
+  CUSTOMER_APPLICATION: "客户申请",
 };
 
 export const CRM_RELATION_TYPES = ["REFERRED", "COLLABORATES_WITH", "REPORTS_TO", "SAME_GROUP", "SAME_LAB", "OTHER"] as const;

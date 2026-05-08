@@ -80,6 +80,7 @@ export interface ProjectItem {
       source: string;
       externalOrderNo: string | null;
       customer?: { id: string; name: string } | null;
+      _count?: { projectLinks: number } | null;
     };
   }>;
 }

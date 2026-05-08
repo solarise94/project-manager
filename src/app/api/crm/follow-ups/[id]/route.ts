@@ -20,13 +20,18 @@ export async function PATCH(
   if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
 
   if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
-    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-    const ids = extractScopedUserIds(scope);
-    if (!ids?.includes(task.profile.ownerUserId)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (task.profile.assignmentStatus !== "ASSIGNED") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Allow if task is directly assigned to this user (e.g. pushed from projects)
+    if (task.ownerUserId === session.user.id) {
+      // pass
+    } else {
+      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+      const ids = extractScopedUserIds(scope);
+      if (!ids?.includes(task.profile.ownerUserId)) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      if (task.profile.assignmentStatus !== "ASSIGNED") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
   }
 
@@ -46,9 +51,11 @@ export async function PATCH(
   if (body.status === "DONE") {
     data.status = "DONE";
     data.completedAt = new Date();
+    data.sourceOpenKey = null;
     if (body.completedInteractionId) data.completedInteractionId = body.completedInteractionId;
   } else if (body.status === "CANCELLED") {
     data.status = "CANCELLED";
+    data.sourceOpenKey = null;
   }
 
   const needsRecalc = body.status === "DONE" || body.status === "CANCELLED" || body.dueAt !== undefined;

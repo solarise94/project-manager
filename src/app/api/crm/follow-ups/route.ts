@@ -13,13 +13,22 @@ export async function GET(req: NextRequest) {
   const ownerUserId = searchParams.get("ownerUserId") || "";
 
   const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role);
-  const profileWhere = Object.keys(roleWhere).length > 0 ? { profile: roleWhere } : {};
+  const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
-  const where: Record<string, unknown> = { status, ...profileWhere };
+  // For scoped roles: show tasks where the profile is in scope,
+  // OR tasks directly assigned to this user (e.g. pushed from projects)
+  const where: Record<string, unknown> = { status };
   if (ownerUserId) where.ownerUserId = ownerUserId;
-  // For REPRESENTATIVE, restrict to own follow-ups.
-  // For REGIONAL_MANAGER, the profile-level scope (profileWhere) is sufficient.
-  if (isRepresentativeRole(session.user.role)) where.ownerUserId = session.user.id;
+
+  if (isScoped) {
+    const profileScope = Object.keys(roleWhere).length > 0 ? { profile: roleWhere } : null;
+    where.OR = [
+      ...(profileScope ? [profileScope] : []),
+      { ownerUserId: session.user.id },
+    ];
+  } else if (Object.keys(roleWhere).length > 0) {
+    where.profile = roleWhere;
+  }
 
   const tasks = await prisma.crmFollowUpTask.findMany({
     where,

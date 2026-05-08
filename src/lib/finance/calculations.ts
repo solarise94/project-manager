@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { computeProjectReceivable } from "./types";
 import { computeOrderFinanceAmount, getOrderEffectiveTreatment, computeAllProgressReceivables } from "./progress";
+import { computeBatchProjectRevenue } from "./ledger";
 import type { Prisma } from "@prisma/client";
 
 /** Build a mapping of orderId → hasProjectLinks for efficient treatment derivation. */
@@ -164,7 +165,8 @@ export async function getFinanceSummary(
   ]);
 
   const projectBudgetTotal = projectAgg._sum.budgetAmount || 0;
-  const effectiveBusinessAmount = projectBudgetTotal + standaloneOrderAmount;
+  const projectRevenue = await computeBatchProjectRevenue(allProjectsForProgress);
+  const effectiveBusinessAmount = projectRevenue + standaloneOrderAmount;
 
   const progressStandaloneOrders = allOrders
     .filter((o) => getOrderEffectiveTreatment(o.financeTreatment, linkMap.has(o.id)) === "STANDALONE")
@@ -301,7 +303,8 @@ export async function getCustomerFinanceList(
 
       const projectReceivable = cust.projects.reduce((sum, p) => sum + computeProjectReceivable(p), 0);
       const receivableAmount = projectReceivable + standaloneOrderAmount;
-      const effectiveBusinessAmount = projectBudgetTotal + standaloneOrderAmount;
+      const projectRevenue = await computeBatchProjectRevenue(cust.projects);
+      const effectiveBusinessAmount = projectRevenue + standaloneOrderAmount;
 
       return {
         id: cust.id, name: cust.name, customerCode: cust.customerCode, organization: cust.organization,
@@ -397,7 +400,8 @@ export async function getCustomerFinanceDetail(
 
   const projectReceivable = customer.projects.reduce((sum, p) => sum + computeProjectReceivable(p), 0);
   const receivableAmount = projectReceivable + standaloneOrderAmount;
-  const effectiveBusinessAmount = projectBudgetTotal + standaloneOrderAmount;
+  const projectRevenue = await computeBatchProjectRevenue(customer.projects);
+  const effectiveBusinessAmount = projectRevenue + standaloneOrderAmount;
 
   return {
     customer: {

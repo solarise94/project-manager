@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     name, principal, email, wechat, organization,
-    organizationId, organizationSiteId, address, miniProgramId, notes,
+    organizationId, organizationSiteId, organizationRawInput, address, miniProgramId, notes,
+    locationLat, locationLng, locationAddress,
   } = body;
 
   if (!name?.trim()) {
@@ -57,9 +58,13 @@ export async function POST(req: NextRequest) {
       organization: organization?.trim() || null,
       organizationId: organizationId || null,
       organizationSiteId: organizationSiteId || null,
+      organizationRawInput: organizationRawInput?.trim() || null,
       address: address?.trim() || null,
       miniProgramId: miniProgramId?.trim() || null,
       notes: notes?.trim() || null,
+      locationLat: typeof locationLat === "number" ? locationLat : null,
+      locationLng: typeof locationLng === "number" ? locationLng : null,
+      locationAddress: locationAddress?.trim() || null,
       status: "PENDING",
       submittedByUserId: session.user.id,
     },

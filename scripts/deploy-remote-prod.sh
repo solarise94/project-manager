@@ -281,7 +281,11 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
 
   # Record checksum of the snapshot we are about to migrate.
   # Include WAL/shm/journal in the checksum to detect any post-checkpoint drift.
-  SNAPSHOT_CHECKSUM="$(cat "${TMP_DIR}/dev.db" "${TMP_DIR}/dev.db-wal" "${TMP_DIR}/dev.db-shm" "${TMP_DIR}/dev.db-journal" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+  SNAPSHOT_CHECKSUM="$(
+    for f in "${TMP_DIR}/dev.db" "${TMP_DIR}/dev.db-wal" "${TMP_DIR}/dev.db-shm" "${TMP_DIR}/dev.db-journal"; do
+      if [[ -f "${f}" ]]; then cat "${f}"; fi
+    done | sha256sum | cut -d' ' -f1
+  )"
 
   echo "  Pushing schema..."
   if ! DATABASE_URL="file:${TMP_DIR}/dev.db" npx prisma db push 2>&1; then
@@ -314,7 +318,11 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
   # Verify remote DB has not been modified since we pulled our snapshot.
   # If the checksum differs, someone wrote to the remote DB during migration — abort.
   # Covers dev.db + WAL/shm/journal to detect any post-checkpoint drift.
-  REMOTE_CURRENT_CHECKSUM="$(remote_ssh "cat ${REMOTE_DB_PATH} ${REMOTE_DB_PATH}-wal ${REMOTE_DB_PATH}-shm ${REMOTE_DB_PATH}-journal 2>/dev/null | sha256sum | cut -d' ' -f1" 2>/dev/null || echo "")"
+  REMOTE_CURRENT_CHECKSUM="$(remote_ssh "
+    for f in ${REMOTE_DB_PATH} ${REMOTE_DB_PATH}-wal ${REMOTE_DB_PATH}-shm ${REMOTE_DB_PATH}-journal; do
+      if [ -f \${f} ]; then cat \${f}; fi
+    done | sha256sum | cut -d' ' -f1
+  " 2>/dev/null || echo "")"
   if [[ -n "${REMOTE_CURRENT_CHECKSUM}" && "${REMOTE_CURRENT_CHECKSUM}" != "${SNAPSHOT_CHECKSUM}" ]]; then
     echo ""
     echo "ERROR: Remote database was modified during migration (checksum mismatch)." >&2

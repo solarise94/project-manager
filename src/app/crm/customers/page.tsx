@@ -56,6 +56,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   const [order, setOrder] = useState("desc");
   const [page, setPage] = useState(1);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [assignee, setAssignee] = useState("ALL");
 
   const params = new URLSearchParams();
   if (search) params.set("search", search);
@@ -65,21 +66,27 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
   if (graduationStatus !== "ALL") params.set("graduationStatus", graduationStatus);
   if (siteType !== "ALL") params.set("siteType", siteType);
   if (jobTitle) params.set("jobTitle", jobTitle);
+  if (assignee !== "ALL") params.set("assignee", assignee);
   params.set("sort", sort);
   params.set("order", order);
   params.set("page", String(page));
   params.set("pageSize", "20");
 
   const { data, isLoading } = useQuery<{ profiles: CrmCustomerProfileItem[]; total: number; page: number; pageSize: number; totalPages: number }>({
-    queryKey: ["crm-profiles", search, stage, importance, personCategory, graduationStatus, siteType, jobTitle, sort, order, page],
+    queryKey: ["crm-profiles", search, stage, importance, personCategory, graduationStatus, siteType, jobTitle, assignee, sort, order, page],
     queryFn: () => fetch(`/api/crm/profiles?${params}`).then((r) => r.json()),
+  });
+
+  const { data: assigneesData } = useQuery<{ assignees: AssigneeOption[] }>({
+    queryKey: ["crm-assignees"],
+    queryFn: () => fetch("/api/crm/assignees").then((r) => r.json()),
   });
 
   const profiles = data?.profiles || [];
   const isRep = session?.user?.role === "REPRESENTATIVE";
   const isMobile = useMediaQuery("(max-width: 767px)");
 
-  const activeFilterCount = [stage, importance, personCategory, graduationStatus, siteType].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0);
+  const activeFilterCount = [stage, importance, personCategory, graduationStatus, siteType, assignee].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0);
 
   function clearAllFilters() {
     setStage("ALL");
@@ -88,6 +95,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
     setGraduationStatus("ALL");
     setSiteType("ALL");
     setJobTitle("");
+    setAssignee("ALL");
     setSort("updatedAt");
     setOrder("desc");
   }
@@ -155,6 +163,19 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
             <SelectItem value="ALL">全部类型</SelectItem>
             {CRM_SITE_TYPES.map((st) => (
               <SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm text-muted-foreground">负责人</label>
+        <Select value={assignee} onValueChange={(v) => { setAssignee(v || "ALL"); setPage(1); }}>
+          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="负责人" valueLabel={assignee === "ALL" ? "全部" : assignee === "UNASSIGNED" ? "未指派" : (assigneesData?.assignees || []).find((a) => a.userId === assignee)?.name || assignee} placeholder="全部" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="UNASSIGNED">未指派</SelectItem>
+            {(assigneesData?.assignees || []).map((a) => (
+              <SelectItem key={a.userId} value={a.userId}>{a.name}{a.kind === "representative" ? " (代表)" : ""}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -264,6 +285,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
           {personCategory !== "ALL" && <Badge variant="secondary" className="text-xs">分类: {PERSON_CATEGORY_LABELS[personCategory]}</Badge>}
           {graduationStatus !== "ALL" && <Badge variant="secondary" className="text-xs">毕业: {GRADUATION_STATUS_LABELS[graduationStatus]}</Badge>}
           {siteType !== "ALL" && <Badge variant="secondary" className="text-xs">院区: {SITE_TYPE_LABELS[siteType]}</Badge>}
+          {assignee !== "ALL" && <Badge variant="secondary" className="text-xs">负责人: {assignee === "UNASSIGNED" ? "未指派" : (assigneesData?.assignees || []).find((a) => a.userId === assignee)?.name || assignee}</Badge>}
           {jobTitle && <Badge variant="secondary" className="text-xs">职务: {jobTitle}</Badge>}
         </div>
       )}
@@ -299,7 +321,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
                   <PersonCategoryBadge category={p.personCategory} />
                   <GraduationStatusBadge status={p.graduationStatus || null} />
                   <AssignmentStatusBadge status={p.assignmentStatus} />
-                  <span className="text-xs text-muted-foreground">{p.ownerUser.name}</span>
+                  <span className="text-xs text-muted-foreground">{p.assignmentStatus === "ASSIGNED" ? p.ownerUser.name : "未指派"}</span>
                 </div>
                 <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
                   {p.nextFollowUpAt ? (
@@ -349,7 +371,7 @@ function CustomerPool({ initialSearch }: { initialSearch: string }) {
                   <td className="p-3 hidden sm:table-cell"><ImportanceBadge importance={p.importance} /></td>
                   <td className="p-3 hidden lg:table-cell"><PersonCategoryBadge category={p.personCategory} /></td>
                   <td className="p-3 hidden md:table-cell"><AssignmentStatusBadge status={p.assignmentStatus} /></td>
-                  <td className="p-3 hidden lg:table-cell">{p.ownerUser.name}</td>
+                  <td className="p-3 hidden lg:table-cell">{p.assignmentStatus === "ASSIGNED" ? p.ownerUser.name : <span className="text-muted-foreground">—</span>}</td>
                   {!isRep && (
                     <td className="p-3">
                       <AssignButton profileId={p.id} currentOwner={p.ownerUser.name} />
