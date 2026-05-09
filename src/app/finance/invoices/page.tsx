@@ -4,7 +4,7 @@ import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, FileText, ShoppingBag, X } from "lucide-react";
+import { Loader2, FileText, ShoppingBag, X, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -123,7 +123,18 @@ function InvoicesSearchSection({ search, setSearch, tab, setTab, orderId }: { se
       {isLoading ? (
         <div className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin mx-auto" /></div>
       ) : invoices.length === 0 ? (
-        <div className="text-center py-8 text-sm text-muted-foreground">暂无发票记录</div>
+        <div className="text-center py-8 text-sm text-muted-foreground space-y-3">
+          {orderId ? (
+            <>
+              <p>该订单暂无发票</p>
+              <Link href={`/orders/${orderId}?tab=finance&action=invoice`}>
+                <Button size="sm"><Plus className="h-3 w-3 mr-1" />返回订单财务页新建</Button>
+              </Link>
+            </>
+          ) : (
+            <p>暂无发票记录</p>
+          )}
+        </div>
       ) : (
         <div className="space-y-2">
           {invoices.map((inv: Record<string, unknown>) => (

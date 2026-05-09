@@ -28,6 +28,7 @@ import {
   Sparkles,
   ClipboardCopy,
   Receipt,
+  Banknote,
   Package,
   X,
 } from "lucide-react";
@@ -52,8 +53,8 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { DraftInputPanel } from "@/components/draft-input-panel";
-import { ProjectInvoiceSection } from "@/components/project-invoice-section";
 import { PushToFollowUpButton } from "@/components/crm/push-to-follow-up-button";
+import { SourceBrandSelect } from "@/components/source-brand-select";
 import { projectToFeishuRow } from "@/lib/feishu-export";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -62,6 +63,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
   COMPLETED: { label: "已完成", color: "text-green-600", bg: "bg-green-100" },
   ON_HOLD: { label: "暂停", color: "text-amber-600", bg: "bg-amber-100" },
 };
+
+const TREATMENT_LABELS: Record<string, string> = { AUTO: "自动", STANDALONE: "独立计入", PROJECT_INCLUDED: "并入项目", EXCLUDED: "排除" };
 
 const ACTIVITY_ICONS: Record<string, React.ElementType> = {
   PROJECT_CREATED: Activity,
@@ -591,6 +594,7 @@ export default function ProjectDetailPage() {
                   const payload: Partial<ProjectItem & { startDate?: string | null; endDate?: string | null }> = {
                     name: editForm.name,
                     description: editForm.description,
+                    projectNo: editForm.projectNo,
                     orderNumber: editForm.orderNumber,
                     organization: editForm.organization,
                     client: editForm.client,
@@ -605,8 +609,6 @@ export default function ProjectDetailPage() {
                     procurementSource: editForm.procurementSource,
                     brand: editForm.brand,
                     techSupport: editForm.techSupport,
-                    budgetAmount: editForm.budgetAmount,
-                    budgetCost: editForm.budgetCost,
                   };
                   if (repTouched) {
                     payload.representative = editForm.representative;
@@ -711,6 +713,10 @@ export default function ProjectDetailPage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">项目号</label>
+                    <Input value={editForm.projectNo || ""} onChange={(e) => setEditForm({ ...editForm, projectNo: e.target.value })} placeholder="PRJ-YYYYMMDD-0001" />
+                  </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">订单号</label>
                     <Input value={editForm.orderNumber || ""} onChange={(e) => setEditForm({ ...editForm, orderNumber: e.target.value })} />
@@ -835,7 +841,7 @@ export default function ProjectDetailPage() {
                   </div>
                 </div>
                 <details className="border rounded-lg p-3 space-y-3">
-                  <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">财务 / 商品信息</summary>
+                  <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">商品信息</summary>
                   <div className="grid grid-cols-2 gap-4 pt-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">项目类型</label>
@@ -876,7 +882,7 @@ export default function ProjectDetailPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">品牌</label>
-                      <Input value={editForm.brand || ""} onChange={(e) => setEditForm({ ...editForm, brand: e.target.value })} />
+                      <SourceBrandSelect value={editForm.brand || ""} onChange={(name) => setEditForm({ ...editForm, brand: name })} />
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">技术支持</label>
@@ -886,11 +892,13 @@ export default function ProjectDetailPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">项目金额（元）</label>
-                      <Input type="number" step="0.01" value={editForm.budgetAmount ?? ""} onChange={(e) => setEditForm({ ...editForm, budgetAmount: e.target.value ? Number(e.target.value) : null })} />
+                      <Input type="number" step="0.01" value={editForm.budgetAmount ?? ""} disabled className="text-muted-foreground" placeholder="暂无关联订单金额" />
+                      <p className="text-xs text-muted-foreground">由关联订单同步，请在订单中修改</p>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-medium">项目成本（元）</label>
-                      <Input type="number" step="0.01" value={editForm.budgetCost ?? ""} onChange={(e) => setEditForm({ ...editForm, budgetCost: e.target.value ? Number(e.target.value) : null })} />
+                      <Input type="number" step="0.01" value={editForm.budgetCost ?? ""} disabled className="text-muted-foreground" placeholder="暂无订单成本" />
+                      <p className="text-xs text-muted-foreground">由订单生成时写入，请在订单中管理成本</p>
                     </div>
                   </div>
                 </details>
@@ -987,6 +995,7 @@ export default function ProjectDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+          <span className="bg-muted px-2 py-0.5 rounded text-xs font-medium">项目号: {project.projectNo || "未生成"}</span>
           {project.orderNumber && (
             <span className="bg-muted px-2 py-0.5 rounded text-xs font-medium">订单: {project.orderNumber}</span>
           )}
@@ -1021,7 +1030,7 @@ export default function ProjectDetailPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+        <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:inline-flex" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <TabsTrigger value="timeline">
             <Activity className="mr-2 h-4 w-4" />
             时间流
@@ -1037,10 +1046,6 @@ export default function ProjectDetailPage() {
           <TabsTrigger value="orders">
             <Package className="mr-2 h-4 w-4" />
             关联订单
-          </TabsTrigger>
-          <TabsTrigger value="invoices">
-            <FileText className="mr-2 h-4 w-4" />
-            开票
           </TabsTrigger>
         </TabsList>
 
@@ -1514,23 +1519,42 @@ export default function ProjectDetailPage() {
         {/* Orders Tab */}
           <TabsContent value="orders" className="space-y-4">
             {project.orderLinks && project.orderLinks.length > 0 ? (
-              project.orderLinks.map((link) => (
+              project.orderLinks.map((link) => {
+                const o = link.order;
+                const invoiceCount = (o._count?.invoiceRequests || 0) as number;
+                const costCount = (o._count?.financeCosts || 0) as number;
+                const effectiveAmount = (o.financeAmountOverride ?? o.totalAmount) as number;
+                return (
                 <Card key={link.id} className="p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <Link href={`/orders/${link.order.id}`} className="font-medium text-primary hover:underline">
-                        {link.order.orderNo}
+                      <Link href={`/orders/${o.id}`} className="font-medium text-primary hover:underline">
+                        {o.orderNo}
                       </Link>
-                      <div className="text-sm text-muted-foreground">{link.order.title}</div>
+                      <div className="text-sm text-muted-foreground">{o.title}</div>
                     </div>
                     <Badge variant="outline">{link.treatment}</Badge>
                   </div>
                   <div className="flex gap-2 mt-2 text-xs text-muted-foreground flex-wrap">
-                    <span>来源: {link.order.source}</span>
-                    <span>分类: {link.order.category}</span>
-                    <span>状态: {link.order.status} / {link.order.deliveryStatus}</span>
-                    <span className="font-medium">¥{(link.order.financeAmountOverride ?? link.order.totalAmount).toLocaleString()}</span>
+                    <span>来源: {o.source}</span>
+                    <span>分类: {o.category}</span>
+                    <span>状态: {o.status} / {o.deliveryStatus}</span>
+                    <span>口径: {TREATMENT_LABELS[o.financeTreatment as string] || (o.financeTreatment as string)}</span>
+                    <span className="font-medium">¥{effectiveAmount.toLocaleString()}</span>
                     {link.allocatedAmount != null && <span>分摊: ¥{link.allocatedAmount.toLocaleString()}</span>}
+                    <span>发票: {invoiceCount}</span>
+                    <span>成本: {costCount}</span>
+                  </div>
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    <Link href={`/orders/${o.id}`}>
+                      <Button variant="outline" size="sm">打开订单</Button>
+                    </Link>
+                    <Link href={`/orders/${o.id}?tab=finance&action=invoice`}>
+                      <Button variant="outline" size="sm"><Receipt className="h-3 w-3 mr-1" />订单开票</Button>
+                    </Link>
+                    <Link href={`/orders/${o.id}?tab=finance&action=cost`}>
+                      <Button variant="outline" size="sm"><Banknote className="h-3 w-3 mr-1" />新增成本</Button>
+                    </Link>
                   </div>
                   {isAdmin && (
                     <Button
@@ -1538,16 +1562,16 @@ export default function ProjectDetailPage() {
                       size="sm"
                       className="mt-2"
                       disabled={!project.budgetAmount || project.budgetAmount <= 0}
-                      title={!project.budgetAmount || project.budgetAmount <= 0 ? "请先在财务信息中填写项目金额" : undefined}
+                      title={!project.budgetAmount || project.budgetAmount <= 0 ? "项目金额来自关联订单，请先通过订单同步金额" : undefined}
                       onClick={() => {
-                        const orderProjectCount = link.order._count?.projectLinks ?? 1;
+                        const orderProjectCount = o._count?.projectLinks ?? 1;
                         setSyncTarget({
-                          orderId: link.order.id,
-                          orderNo: link.order.orderNo,
-                          orderTotal: link.order.totalAmount,
-                          financeOverride: link.order.financeAmountOverride,
+                          orderId: o.id,
+                          orderNo: o.orderNo,
+                          orderTotal: o.totalAmount,
+                          financeOverride: o.financeAmountOverride,
                           allocatedAmount: link.allocatedAmount,
-                          source: link.order.source,
+                          source: o.source,
                           projectCount: orderProjectCount,
                           hasFinancial: false,
                         });
@@ -1559,7 +1583,8 @@ export default function ProjectDetailPage() {
                     </Button>
                   )}
                 </Card>
-              ))
+              );
+              })
             ) : (
               <div className="text-sm text-muted-foreground py-8 text-center space-y-3">
                 <p>暂无关联订单</p>
@@ -1578,11 +1603,6 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             )}
-          </TabsContent>
-
-        {/* Invoices Tab */}
-          <TabsContent value="invoices" className="space-y-4">
-            <ProjectInvoiceSection projectId={projectId} />
           </TabsContent>
       </Tabs>
 

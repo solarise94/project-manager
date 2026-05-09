@@ -25,9 +25,11 @@ interface ProjectItem {
   id: string;
   name: string;
   cust?: { id: string; name: string; organizationId?: string | null; organization?: string | null } | null;
+  projectNo?: string | null;
   orderNumber?: string | null;
   organizationId?: string | null;
   organization?: string | null;
+  projectContent?: string | null;
 }
 
 interface InvoiceWithProject extends InvoiceRecord {
@@ -143,7 +145,7 @@ function ProjectInvoicesContent() {
   });
 
   const invoiceDefaults = defaultProject ? {
-    projectCode: defaultProject.orderNumber || "",
+    projectCode: defaultProject.projectNo || defaultProject.orderNumber || "",
     buyerOrgId: defaultProject.cust?.organizationId || defaultProject.organizationId || "",
     buyerOrgName: defaultProject.cust?.organization || defaultProject.organization || "",
   } : undefined;
@@ -280,6 +282,8 @@ function ProjectInvoicesContent() {
           defaultValues={editingInvoice ? undefined : invoiceDefaults}
           showProjectCode={true}
           aiDraftUrl={`/api/projects/${createProjectId}/invoice-draft`}
+          projectName={defaultProject?.name}
+          projectContent={defaultProject?.projectContent || undefined}
         />
       )}
     </div>

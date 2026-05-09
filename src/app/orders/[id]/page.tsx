@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { CustomerMatchDialog } from "@/components/finance/customer-match-dialog";
-import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2 } from "lucide-react";
+import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
+import { CostFormDialog } from "@/components/finance/cost-form-dialog";
+import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus } from "lucide-react";
 import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
+import { getCustomerOrganizationName } from "@/lib/customer-organization";
 
 const SOURCE_LABELS: Record<string, string> = { MANUAL: "手动", PINGOODMICE: "拼好鼠", OTHER_IMPORT: "其他导入" };
 const STATUS_LABELS: Record<string, string> = { DRAFT: "草稿", CONFIRMED: "已确认", CANCELLED: "已取消", CLOSED: "已关闭" };
@@ -31,9 +34,15 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const searchParams = useSearchParams();
+  const urlTab = searchParams.get("tab") || "";
+  const urlAction = searchParams.get("action") || "";
+
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [customerMatchOpen, setCustomerMatchOpen] = useState(false);
+  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(urlAction === "invoice");
+  const [costDialogOpen, setCostDialogOpen] = useState(urlAction === "cost");
 
   const fetchOrder = useCallback(async () => {
     if (!id) return;
@@ -72,6 +81,7 @@ export default function OrderDetailPage() {
   };
 
   const cust = order.customer as Record<string, unknown> | null;
+  const custOrgName = cust ? getCustomerOrganizationName({ organization: cust.organization as string | null, org: cust.org as { canonicalName: string } | null | undefined }) : null;
   const rep = order.representative as Record<string, unknown> | null;
   const lines = (order.lines || []) as Array<Record<string, unknown>>;
   const projectLinks = (order.projectLinks || []) as Array<Record<string, unknown>>;
@@ -121,12 +131,16 @@ export default function OrderDetailPage() {
         ) : (
           isAdmin && <Button size="sm" variant="outline" onClick={() => setProjectDialogOpen(true)}><FolderTree className="h-3 w-3 mr-1" />关联项目</Button>
         )}
-        <Link href={`/finance/invoices?orderId=${id}`}>
-          <Button size="sm" variant="outline"><Receipt className="h-3 w-3 mr-1" />发票</Button>
-        </Link>
-        <Link href={`/finance/costs?orderId=${id}&customerId=${cust?.id || ""}`}>
-          <Button size="sm" variant="outline"><Banknote className="h-3 w-3 mr-1" />成本</Button>
-        </Link>
+        {isAdmin && (
+          <Button size="sm" variant="outline" onClick={() => setInvoiceDialogOpen(true)}>
+            <Receipt className="h-3 w-3 mr-1" />新建发票
+          </Button>
+        )}
+        {isAdmin && (
+          <Button size="sm" variant="outline" onClick={() => setCostDialogOpen(true)}>
+            <Banknote className="h-3 w-3 mr-1" />新增成本
+          </Button>
+        )}
         {crmHref ? (
           <Link href={crmHref}><Button size="sm" variant="outline"><UserRound className="h-3 w-3 mr-1" />CRM 档案</Button></Link>
         ) : (
@@ -139,7 +153,7 @@ export default function OrderDetailPage() {
         )}
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs defaultValue={urlTab || "overview"}>
         <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="lines">明细 ({lines.length})</TabsTrigger>
@@ -264,6 +278,7 @@ export default function OrderDetailPage() {
         </TabsContent>
 
         <TabsContent value="finance" className="space-y-3 mt-3">
+          {/* Financial settings */}
           <Card className="p-4 text-sm space-y-3">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground w-24 shrink-0">分类:</span>
@@ -308,29 +323,116 @@ export default function OrderDetailPage() {
             {(order.financeNote as string) && <div><span className="text-muted-foreground">备注: </span>{order.financeNote as string}</div>}
           </Card>
 
-          {/* Financial action cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <Link href={`/finance/invoices?orderId=${id}`}>
+          {/* Invoices section */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">发票</h3>
+              {isAdmin && (
+                <Button size="sm" variant="outline" onClick={() => setInvoiceDialogOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" />新建订单发票
+                </Button>
+              )}
+            </div>
+            {(() => {
+              const invReqs = (order.invoiceRequests as Array<Record<string, unknown>>) || [];
+              const invCoverage = (order.invoiceCoverage as Array<Record<string, unknown>>) || [];
+              // Deduplicate: direct invoices take priority; coverage only shown if not already direct
+              const directIds = new Set(invReqs.map(r => r.id as string));
+              const coverageItems: Array<Record<string, unknown>> = [];
+              for (const c of invCoverage) {
+                const ir = (c.invoiceRequest as Record<string, unknown> | null) || {};
+                if (!directIds.has(ir.id as string)) {
+                  coverageItems.push({ ...ir, _source: "coverage" });
+                }
+              }
+              const allInvoices: Array<Record<string, unknown>> = [
+                ...invReqs.map(r => ({ ...r, _source: "direct" })),
+                ...coverageItems,
+              ];
+              if (allInvoices.length === 0) {
+                return (
+                  <div className="text-sm text-muted-foreground py-6 text-center space-y-2">
+                    <p>暂无发票申请</p>
+                    {isAdmin && (
+                      <Button size="sm" onClick={() => setInvoiceDialogOpen(true)}>
+                        <Plus className="h-3 w-3 mr-1" />新建订单发票
+                      </Button>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {allInvoices.map((inv: Record<string, unknown>, i: number) => (
+                    <div key={i} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
+                      <div>
+                        <span className="font-medium">{(inv.invoiceType as string) === "SPECIAL" ? "专票" : "普票"}</span>
+                        <span className="text-muted-foreground ml-2">{(inv.contentSummary as string) || "—"}</span>
+                        {inv._source === "coverage" && <Badge variant="outline" className="ml-2 text-xs">合并</Badge>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">¥{(inv.totalAmount as number || 0).toLocaleString()}</span>
+                        <Badge variant="outline" className="text-xs">{(inv.status as string) || "—"}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </Card>
+
+          {/* Costs section */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">成本</h3>
+              {isAdmin && (
+                <Button size="sm" variant="outline" onClick={() => setCostDialogOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" />新增成本
+                </Button>
+              )}
+            </div>
+            {(() => {
+              const costs = (order.financeCosts as Array<Record<string, unknown>>) || [];
+              if (costs.length === 0) {
+                return (
+                  <div className="text-sm text-muted-foreground py-6 text-center space-y-2">
+                    <p>暂无成本记录</p>
+                    {isAdmin && (
+                      <Button size="sm" onClick={() => setCostDialogOpen(true)}>
+                        <Plus className="h-3 w-3 mr-1" />新增订单成本
+                      </Button>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  {costs.map((c: Record<string, unknown>, i: number) => (
+                    <div key={i} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
+                      <div>
+                        <Badge variant="outline" className="text-xs mr-2">{(c.costType as string) || "其他"}</Badge>
+                        <span className="text-muted-foreground">{(c.remark as string) || "—"}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="font-medium">¥{(c.amount as number || 0).toLocaleString()}</span>
+                        <span>{(c.createdAt as string)?.slice(0, 10) || ""}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </Card>
+
+          {/* Customer finance link */}
+          {!!cust?.id && (
+            <Link href={`/finance/customers/${cust!.id}`}>
               <Card className="p-3 hover:bg-muted/50 transition-colors cursor-pointer text-sm">
-                <div className="flex items-center gap-2"><Receipt className="h-4 w-4 text-primary" /><span className="font-medium">发票</span></div>
-                <div className="text-xs text-muted-foreground mt-1">{(order.invoiceRequests as Array<Record<string, unknown>>)?.length || 0} 直接, {(order.invoiceCoverage as Array<Record<string, unknown>>)?.length || 0} 合并</div>
+                <div className="flex items-center gap-2"><UserRound className="h-4 w-4 text-primary" /><span className="font-medium">客户财务总览</span></div>
+                <div className="text-xs text-muted-foreground mt-1">{cust!.name as string}</div>
               </Card>
             </Link>
-            <Link href={`/finance/costs?orderId=${id}&customerId=${cust?.id || ""}`}>
-              <Card className="p-3 hover:bg-muted/50 transition-colors cursor-pointer text-sm">
-                <div className="flex items-center gap-2"><Banknote className="h-4 w-4 text-primary" /><span className="font-medium">成本</span></div>
-                <div className="text-xs text-muted-foreground mt-1">{(order.financeCosts as Array<Record<string, unknown>>)?.length || 0} 条记录</div>
-              </Card>
-            </Link>
-            {!!cust?.id && (
-              <Link href={`/finance/customers/${cust!.id}`}>
-                <Card className="p-3 hover:bg-muted/50 transition-colors cursor-pointer text-sm">
-                  <div className="flex items-center gap-2"><UserRound className="h-4 w-4 text-primary" /><span className="font-medium">客户财务</span></div>
-                  <div className="text-xs text-muted-foreground mt-1">{cust!.name as string}</div>
-                </Card>
-              </Link>
-            )}
-          </div>
+          )}
         </TabsContent>
 
         <TabsContent value="source" className="space-y-2 mt-3">
@@ -387,6 +489,46 @@ export default function OrderDetailPage() {
           onBound={() => fetchOrder()}
         />
       )}
+
+      {/* Invoice dialog */}
+      <InvoiceFormDialog
+        open={invoiceDialogOpen}
+        onOpenChange={setInvoiceDialogOpen}
+        editingInvoice={null}
+        createUrl="/api/finance/order-invoices"
+        patchUrlPrefix="/api/finance/order-invoices"
+        extraPayload={{ orderId: id, coveredOrderIds: [] }}
+        showProjectCode={false}
+        aiDraftUrl={null}
+        defaultValues={{
+          contactName: ((order.buyerNameSnapshot || cust?.name) as string) || undefined,
+          buyerOrgName: ((order.buyerOrgNameSnapshot || custOrgName) as string) || undefined,
+          buyerOrgId: (cust?.organizationId as string) || undefined,
+          contentSummary: (order.title as string) || undefined,
+          invoiceType: "NORMAL",
+          items: (lines as Array<Record<string, unknown>>).length > 0
+            ? (lines as Array<Record<string, unknown>>).map((l) => ({
+                itemName: String(l.itemName || ""),
+                spec: String(l.spec || ""),
+                unit: String(l.unit || ""),
+                quantity: String(l.quantity || ""),
+                amount: String(l.amount || ""),
+              }))
+            : [{ itemName: (order.title as string) || "订单服务", spec: "", unit: "项", quantity: "1", amount: String(order.totalAmount || 0) }],
+        }}
+        onSuccess={() => fetchOrder()}
+      />
+
+      {/* Cost dialog */}
+      <CostFormDialog
+        open={costDialogOpen}
+        onOpenChange={setCostDialogOpen}
+        defaultOrderId={id}
+        defaultCustomerId={(cust?.id as string) || undefined}
+        defaultProjectId={projectLinks.length === 1 ? ((projectLinks[0].project as Record<string, unknown>)?.id as string) : undefined}
+        defaultAmount={(order.financeAmountOverride ?? order.totalAmount) as number | undefined}
+        onCreated={() => fetchOrder()}
+      />
     </div>
   );
 }

@@ -81,6 +81,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
   const [form, setForm] = useState({
     name: "",
     description: "",
+    projectNo: "",
     orderNumber: "",
     organization: "",
     client: "",
@@ -89,16 +90,8 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     customerId: "",
     status: "NOT_STARTED",
     progress: 0,
-    startDate: "",
+    startDate: new Date().toISOString().slice(0, 10),
     endDate: "",
-    projectType: "",
-    projectContent: "",
-    quantity: "",
-    procurementSource: "",
-    brand: "",
-    techSupport: "",
-    budgetAmount: "",
-    budgetCost: "",
   });
 
   const { data, isLoading } = useQuery<{ projects: ProjectItem[] }>({
@@ -128,19 +121,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     enabled: status === "authenticated",
   });
 
-  const { data: channelsData } = useQuery<{ channels: { id: string; name: string; isDefault: boolean }[] }>({
-    queryKey: ["procurement-channels"],
-    queryFn: async () => {
-      const res = await fetch("/api/procurement-channels");
-      if (!res.ok) throw new Error("Failed to load channels");
-      return res.json();
-    },
-    enabled: status === "authenticated",
-  });
-  const channels = channelsData?.channels || [];
-
-  // Derive default procurement source from channels
-  const defaultProcurementSource = channels.find((c) => c.isDefault)?.name || "";
 
   const repOptions = filterOptions?.representatives || [];
   const custOptions = filterOptions?.customers || [];
@@ -160,7 +140,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     onSuccess: () => {
       toast.success("项目创建成功");
       setOpen(false);
-      setForm({ name: "", description: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", progress: 0, startDate: "", endDate: "", projectType: "", projectContent: "", quantity: "", procurementSource: "", brand: "", techSupport: "", budgetAmount: "", budgetCost: "" });
+      setForm({ name: "", description: "", projectNo: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", progress: 0, startDate: new Date().toISOString().slice(0, 10), endDate: "" });
       setSelectedOrgId("");
       setCustomerOrgId(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -251,12 +231,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
           <p className="text-muted-foreground">管理您的科研项目</p>
         </div>
         {!isRepresentative && (
-          <Dialog open={open} onOpenChange={(v) => {
-            if (v && defaultProcurementSource && !form.procurementSource) {
-              setForm((prev) => ({ ...prev, procurementSource: defaultProcurementSource }));
-            }
-            setOpen(v);
-          }}>
+          <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger render={<Button />}>
               <Plus className="mr-2 h-4 w-4" />
               新建项目
@@ -272,12 +247,23 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   name: "项目名称", description: "项目描述", orderNumber: "订单号",
                   organization: "单位", client: "客户", representative: "代表",
                   status: "状态", startDate: "开始日期", endDate: "结束日期",
-                  progress: "项目进度", projectType: "项目类型", projectContent: "项目内容",
-                  quantity: "数量", procurementSource: "采购渠道", brand: "品牌",
-                  techSupport: "技术支持", budgetAmount: "项目金额", budgetCost: "项目成本",
+                  progress: "项目进度",
                 }}
                 fallbackPlugin="project.smart-fill"
                 onApply={async (fields) => {
+                  // Whitelist: only base fields allowed for new project creation.
+                  // Product/financial fields are managed through orders.
+                  const ALLOWED_KEYS = new Set([
+                    "name", "description", "projectNo", "orderNumber",
+                    "organization", "client", "customerId", "representativeId", "representative",
+                    "status", "progress", "startDate", "endDate",
+                  ]);
+                  const filtered: Record<string, unknown> = {};
+                  for (const [k, v] of Object.entries(fields)) {
+                    if (ALLOWED_KEYS.has(k)) filtered[k] = v;
+                  }
+                  fields = filtered;
+
                   type EntityField = { id?: string; name: string; matched: boolean; shouldCreate?: boolean; address?: string; organization?: string; organizationId?: string };
                   const updates: Record<string, unknown> = {};
                   let newCustomerId = "";
@@ -300,7 +286,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   }
 
                   // Normalize numeric fields to avoid number/string confusion
-                  const numFields = ["progress", "quantity", "budgetAmount", "budgetCost"] as const;
+                  const numFields = ["progress"] as const;
                   for (const k of numFields) {
                     const v = updates[k];
                     if (v === undefined || v === null || v === "") continue;
@@ -314,13 +300,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                       // Unparseable — delete to avoid corrupting the form
                       delete updates[k];
                     }
-                  }
-
-                  // Normalize projectType to match Select options
-                  if (typeof updates.projectType === "string") {
-                    const pt = updates.projectType;
-                    if (/商品|货物|产品/.test(pt)) updates.projectType = "商品";
-                    else if (/服务|技术|实验/.test(pt)) updates.projectType = "服务";
                   }
 
                   // --- Phase 2: Decide whether org creation should be skipped ---
@@ -427,6 +406,14 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
+                  <Label>项目号</Label>
+                  <Input
+                    value={form.projectNo}
+                    onChange={(e) => setForm({ ...form, projectNo: e.target.value })}
+                    placeholder="PRJ-YYYYMMDD-0001（留空自动生成）"
+                  />
+                </div>
+                <div className="space-y-2">
                   <Label>订单号</Label>
                   <Input
                     value={form.orderNumber}
@@ -461,27 +448,39 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   <CustomerSelect
                     value={form.customerId}
                     displayValue={form.client}
-                    onChange={(id, name, org, orgId) => {
+                    onChange={(id, name, org, orgId, customer) => {
                       setForm((prev) => ({
                         ...prev,
                         customerId: id || "",
-                        client: name,
+                        client: name || "",
                         organization: orgId ? (org || "") : prev.organization,
                       }));
                       setCustomerOrgId(orgId || null);
-                      if (orgId) {
-                        setSelectedOrgId(orgId);
+                      if (orgId) setSelectedOrgId(orgId);
+                      if (id && customer) {
+                        setForm((prev) => ({
+                          ...prev,
+                          representativeId: customer.representativeId || "",
+                          representative: customer.representativeName || "",
+                        }));
                       }
                     }}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>代表</Label>
-                  <RepresentativeSelect
-                    value={form.representativeId}
-                    displayValue={form.representative}
-                    onChange={(id, name) => setForm({ ...form, representativeId: id || "", representative: name })}
-                  />
+                  {form.customerId ? (
+                    <Input
+                      value={form.representative || form.representativeId || "由客户 CRM 负责人同步"}
+                      disabled
+                    />
+                  ) : (
+                    <RepresentativeSelect
+                      value={form.representativeId}
+                      displayValue={form.representative}
+                      onChange={(id, name) => setForm({ ...form, representativeId: id || "", representative: name })}
+                    />
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -526,63 +525,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   onChange={(e) => setForm({ ...form, progress: Number(e.target.value) })}
                 />
               </div>
-              <details className="border rounded-lg p-3 space-y-3">
-                <summary className="text-sm font-medium cursor-pointer select-none text-muted-foreground">财务 / 商品信息</summary>
-                <div className="grid grid-cols-2 gap-4 pt-2">
-                  <div className="space-y-2">
-                    <Label>项目类型</Label>
-                    <Select value={form.projectType || ""} onValueChange={(v) => setForm({ ...form, projectType: v || "" })}>
-                      <SelectTrigger><span>{form.projectType || "选择类型"}</span></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="商品">商品</SelectItem>
-                        <SelectItem value="服务">服务</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>项目内容</Label>
-                    <Input value={form.projectContent} onChange={(e) => setForm({ ...form, projectContent: e.target.value })} placeholder="如 C57/雌/7周" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>数量</Label>
-                    <Input type="number" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="数量" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>采购渠道</Label>
-                    <Select value={form.procurementSource} onValueChange={(v) => setForm({ ...form, procurementSource: v || "" })}>
-                      <SelectTrigger><span>{form.procurementSource || "选择渠道"}</span></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">无</SelectItem>
-                        {channels.map((c) => (
-                          <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>品牌</Label>
-                    <Input value={form.brand} onChange={(e) => setForm({ ...form, brand: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>技术支持</Label>
-                    <Input value={form.techSupport} onChange={(e) => setForm({ ...form, techSupport: e.target.value })} placeholder="技术支持人员" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>项目金额（元）</Label>
-                    <Input type="number" step="0.01" value={form.budgetAmount} onChange={(e) => setForm({ ...form, budgetAmount: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>项目成本（元）</Label>
-                    <Input type="number" step="0.01" value={form.budgetCost} onChange={(e) => setForm({ ...form, budgetCost: e.target.value })} />
-                  </div>
-                </div>
-              </details>
               <Button type="submit" className="w-full" disabled={createMutation.isPending}>
                 {createMutation.isPending ? "创建中..." : "创建项目"}
               </Button>

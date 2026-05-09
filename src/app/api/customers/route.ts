@@ -6,6 +6,7 @@ import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { generateCustomerCode } from "@/lib/customer-code";
 import { appendCustomerRepresentativeInfo, resolveSingleCustomerOption } from "@/lib/customers/customer-select-options";
+import { ensureOrganizationFromInput } from "@/lib/organizations/ensure-organization";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -113,10 +114,25 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, principal, email, wechat, organization, address, miniProgramId, organizationId, organizationSiteId, organizationRawInput } = body;
+    const { name, principal, email, wechat, organization, address, miniProgramId, organizationId, organizationSiteId, organizationRawInput, autoCreateOrganization } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "客户姓名为必填项" }, { status: 400 });
+    }
+
+    let finalOrganizationId: string | null = organizationId || null;
+    let finalOrganizationName: string | null = organization?.trim() || null;
+
+    // Auto-create organization from raw input when no organizationId is provided
+    if (!finalOrganizationId && autoCreateOrganization && organizationRawInput?.trim()) {
+      try {
+        const ensured = await ensureOrganizationFromInput(organizationRawInput.trim());
+        finalOrganizationId = ensured.organizationId;
+        finalOrganizationName = ensured.canonicalName;
+      } catch (e) {
+        console.error("ensureOrganizationFromInput failed:", e);
+        return NextResponse.json({ error: `单位创建失败：${e instanceof Error ? e.message : "未知错误"}` }, { status: 400 });
+      }
     }
 
     const customerData = {
@@ -124,15 +140,15 @@ export async function POST(req: NextRequest) {
       principal: principal?.trim() || null,
       email: email?.trim() || null,
       wechat: wechat?.trim() || null,
-      organization: organization?.trim() || null,
+      organization: finalOrganizationName,
       address: address?.trim() || null,
       miniProgramId: miniProgramId?.trim() || null,
     };
 
     // Validate organizationId exists and is active
-    if (organizationId) {
+    if (finalOrganizationId) {
       const org = await prisma.organization.findUnique({
-        where: { id: organizationId },
+        where: { id: finalOrganizationId },
         select: { id: true, canonicalName: true, deleted: true, archived: true },
       });
       if (!org || org.deleted) {
@@ -143,6 +159,7 @@ export async function POST(req: NextRequest) {
       }
       // Server-side sync: always use canonical name as organization text
       customerData.organization = org.canonicalName;
+      finalOrganizationName = org.canonicalName;
     }
 
     // Validate organizationSiteId belongs to organizationId
@@ -163,9 +180,9 @@ export async function POST(req: NextRequest) {
           data: {
             customerCode,
             ...customerData,
-            organizationId: organizationId || null,
+            organizationId: finalOrganizationId,
             organizationSiteId: effectiveSiteId,
-            organizationRawInput: organizationRawInput || null,
+            organizationRawInput: organizationRawInput || finalOrganizationName,
           },
           select: {
             id: true, customerCode: true, name: true,

@@ -45,16 +45,16 @@ function readLabeledValue(lines: string[], labels: string[]): string | undefined
   return undefined;
 }
 
-function buildLine(itemName: string, spec: string, quantity: number, amount: number): OrderLineDraft {
-  const safeQuantity = quantity > 0 ? quantity : 1;
-  return {
-    itemName,
-    spec,
-    unit: "项",
-    quantity: safeQuantity,
-    unitPrice: amount > 0 ? amount / safeQuantity : 0,
-    amount: amount > 0 ? amount : 0,
-  };
+function parseQuantity(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/(\d+)/);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  return n > 0 ? n : undefined;
+}
+
+function buildLine(itemName: string, spec: string, unit: string, quantity: number, unitPrice: number, amount: number): OrderLineDraft {
+  return { itemName, spec, unit, quantity, unitPrice, amount };
 }
 
 const orderSmartFill: FormDraftPlugin = {
@@ -70,7 +70,7 @@ const orderSmartFill: FormDraftPlugin = {
     if (!text) throw new Error("请输入文本内容");
 
     const fields: Record<string, unknown> = {};
-    const lines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+    const inputLines = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
 
     try {
       const projectLike = parseSmartFill(text);
@@ -89,25 +89,46 @@ const orderSmartFill: FormDraftPlugin = {
       if (projectLike.projectType) fields.category = /商品|产品|货物/.test(projectLike.projectType) ? "PRODUCT" : "SERVICE";
       if (amount != null) fields.totalAmount = amount;
 
+      // Supplement project fields (non-derivable, user/AI to fill)
+      if (projectLike.projectType) fields.projectType = projectLike.projectType;
+      if (projectLike.procurementSource) fields.procurementSource = projectLike.procurementSource;
+      if (projectLike.brand) fields.brand = projectLike.brand;
+      if (projectLike.techSupport) fields.techSupport = projectLike.techSupport;
+      if (projectLike.budgetCost != null) fields.budgetCost = projectLike.budgetCost;
+
+      // Structured parse lines with quantity/unitPrice from columns
       const lineName = projectLike.projectContent || title || "订单服务";
+      const structuredSpec = projectLike.projectType || projectLike.brand || "";
       if (lineName) {
-        fields.lines = [buildLine(lineName, projectLike.projectType || projectLike.brand || "", quantity, amount ?? 0)];
+        const safeQty = quantity > 0 ? quantity : 1;
+        fields.lines = [buildLine(lineName, structuredSpec, "项", safeQty, amount ? amount / safeQty : 0, amount ?? 0)];
       }
     } catch {
       // Continue with loose label parsing below.
     }
 
+    // ── Loose label parsing ──────────────────────────────────────────
+    const SECTION_HEADERS = ["立项信息", "项目信息", "订单信息", "客户信息", "基本信息"];
     const title =
-      readLabeledValue(lines, ["订单标题", "订单名称", "项目内容", "服务内容", "内容", "名称"]) ||
-      lines[0];
-    const buyerName = readLabeledValue(lines, ["客户", "客户姓名", "收件人", "姓名", "购买人"]);
-    const buyerPhone = readLabeledValue(lines, ["电话", "手机号", "手机", "联系方式"]);
-    const buyerWechat = readLabeledValue(lines, ["微信", "下单用户"]);
-    const buyerOrg = readLabeledValue(lines, ["单位", "机构", "学校", "医院", "公司"]);
-    const buyerAddress = readLabeledValue(lines, ["地址", "收货地址"]);
-    const orderedAt = parseDate(readLabeledValue(lines, ["下单日期", "日期", "时间"]));
-    const amount = parseAmount(readLabeledValue(lines, ["总金额", "金额", "价格", "费用", "合计"]));
+      readLabeledValue(inputLines, ["订单标题", "订单名称", "项目名称", "服务内容", "内容"]) ||
+      (inputLines.length > 0 &&
+       !inputLines[0].includes("：") && !inputLines[0].includes(":") &&
+       !SECTION_HEADERS.includes(inputLines[0])
+        ? inputLines[0] : undefined);
+    const buyerName = readLabeledValue(inputLines, ["客户", "客户姓名", "收件人", "姓名", "购买人"]);
+    const buyerPhone = readLabeledValue(inputLines, ["电话", "手机号", "手机", "联系方式"]);
+    const buyerWechat = readLabeledValue(inputLines, ["微信", "下单用户"]);
+    const buyerOrg = readLabeledValue(inputLines, ["单位", "机构", "学校", "医院", "公司", "单位信息"]);
+    const buyerAddress = readLabeledValue(inputLines, ["地址", "收货地址"]);
+    const orderedAt = parseDate(readLabeledValue(inputLines, ["下单日期", "日期", "时间"]));
+    const totalAmount = parseAmount(readLabeledValue(inputLines, ["项目总额", "总金额", "金额", "价格", "费用", "合计"]));
+    const cost = parseAmount(readLabeledValue(inputLines, ["项目成本", "成本", "预算成本", "采购成本", "进货成本"]));
+    const unitPrice = parseAmount(readLabeledValue(inputLines, ["项目单价", "单价", "服务单价", "测序单价"]));
+    const parsedQuantity = parseQuantity(readLabeledValue(inputLines, ["送样例数", "样本数量", "样本数", "例数", "数量"]));
+    const sampleType = readLabeledValue(inputLines, ["样本类型", "样本"]);
+    const projectType = readLabeledValue(inputLines, ["项目类型", "服务类型"]);
 
+    // ── Fill top-level fields ────────────────────────────────────────
     if (!fields.title && title) fields.title = title;
     if (!fields.buyerNameSnapshot && buyerName) {
       fields.buyerNameSnapshot = buyerName;
@@ -118,15 +139,44 @@ const orderSmartFill: FormDraftPlugin = {
     if (!fields.buyerOrgNameSnapshot && buyerOrg) fields.buyerOrgNameSnapshot = buyerOrg;
     if (!fields.buyerAddressSnapshot && buyerAddress) fields.buyerAddressSnapshot = buyerAddress;
     if (!fields.orderedAt && orderedAt) fields.orderedAt = orderedAt;
-    if (amount != null) fields.totalAmount = amount;
+    if (totalAmount != null) fields.totalAmount = totalAmount;
     if (!fields.category) fields.category = "SERVICE";
+    if (!fields.projectType && projectType) fields.projectType = projectType;
+    if (sampleType) fields.sampleType = sampleType;
+    if (parsedQuantity != null) fields.quantity = parsedQuantity;
+    if (unitPrice != null) fields.unitPrice = unitPrice;
+    if (cost != null) fields.budgetCost = cost;
+
+    // ── Build order lines ────────────────────────────────────────────
     if (!fields.lines) {
-      const effectiveAmount = amount ?? (typeof fields.totalAmount === "number" ? fields.totalAmount : 0);
-      fields.lines = [buildLine(String(fields.title || title || "订单服务"), "", 1, effectiveAmount)];
+      const qty = parsedQuantity || 1;
+      const up = unitPrice ?? (totalAmount && qty ? totalAmount / qty : 0);
+      const amt = totalAmount ?? up * qty;
+      const quantityLabel = readLabeledValue(inputLines, ["送样例数", "样本数量", "样本数", "例数", "数量"]);
+      const unit = quantityLabel && /例/.test(quantityLabel) ? "例" : "项";
+      const itemName = String(fields.projectType || fields.title || title || "订单服务");
+      const spec = sampleType || "";
+      fields.lines = [buildLine(itemName, spec, unit, qty, up, amt)];
+    }
+
+    // ── Title fallback from parsed values ────────────────────────────
+    if (!fields.title) {
+      const lineItemName = (fields.lines as Array<Record<string, unknown>>)?.[0]?.itemName;
+      if (lineItemName && typeof lineItemName === "string" && lineItemName !== "订单服务") {
+        fields.title = lineItemName;
+      } else if (projectType) {
+        fields.title = projectType;
+      }
+    }
+
+    // Fill totalAmount from line sum if not already set
+    if (fields.totalAmount == null && fields.lines) {
+      const lineSum = (fields.lines as Array<Record<string, unknown>>).reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      if (lineSum > 0) fields.totalAmount = lineSum;
     }
 
     const warnings: string[] = [];
-    if (!title) warnings.push("未能解析出订单标题");
+    if (!fields.title) warnings.push("未能解析出订单标题");
     if (fields.totalAmount == null) warnings.push("未能解析出订单金额");
 
     return {

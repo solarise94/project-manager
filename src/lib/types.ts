@@ -31,6 +31,7 @@ export interface CustomerItem {
 export interface ProjectItem {
   id: string;
   name: string;
+  projectNo?: string | null;
   description?: string | null | undefined;
   orderNumber?: string | null | undefined;
   organization?: string | null | undefined;
@@ -80,7 +81,7 @@ export interface ProjectItem {
       source: string;
       externalOrderNo: string | null;
       customer?: { id: string; name: string } | null;
-      _count?: { projectLinks: number } | null;
+      _count?: { projectLinks: number; invoiceRequests?: number; financeCosts?: number } | null;
     };
   }>;
 }

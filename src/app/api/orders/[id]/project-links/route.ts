@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
+import { linkOrderToProject, OrderProjectCustomerConflictError } from "@/lib/orders/link-project";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -61,52 +62,38 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   if (existing) return NextResponse.json({ error: "Link already exists" }, { status: 409 });
 
-  // Customer consistency: conflict if both have different customers
-  if (order.customerId && project.customerId && order.customerId !== project.customerId) {
-    return NextResponse.json({
-      error: "订单客户与项目客户不一致",
-      orderCustomerId: order.customerId,
-      projectCustomerId: project.customerId,
-    }, { status: 409 });
-  }
-
-  // Do customer inheritance + link create in one transaction
-  const link = await prisma.$transaction(async (tx) => {
-    // Inherit customer: order has none, project has one
-    if (!order.customerId && project.customerId) {
-      await tx.order.update({
-        where: { id: orderId },
-        data: {
-          customerId: project.customerId,
-          customerMatchStatus: "MANUAL_MATCHED",
-          customerMatchReason: "inherited_from_project_link",
+  // Use shared helper for customer conflict check + CRM sync + link creation
+  let link: Awaited<ReturnType<typeof prisma.orderProjectLink.create>>;
+  try {
+    link = await prisma.$transaction(async (tx) => {
+      const linkResult = await linkOrderToProject(
+        tx, orderId, projectId as string, session.user.id,
+        {
+          treatment: (treatment as string) || undefined,
+          allocatedAmount: allocatedAmount != null ? Number(allocatedAmount) : undefined,
+          isPrimary: isPrimary === true ? true : undefined,
+          note: (note as string)?.trim() || undefined,
         },
-      });
-    }
-
-    // Inherit customer: project has none, order has one
-    if (order.customerId && !project.customerId) {
-      await tx.project.update({
-        where: { id: projectId as string },
-        data: { customerId: order.customerId },
-      });
-    }
-
-    return tx.orderProjectLink.create({
-      data: {
-        orderId,
-        projectId: projectId as string,
-        treatment: (treatment as string) || "PROJECT_INCLUDED",
-        allocatedAmount: allocatedAmount != null ? Number(allocatedAmount) : null,
-        isPrimary: isPrimary === true,
-        note: (note as string)?.trim() || null,
-        createdById: session.user.id,
-      },
-      include: {
-        project: { select: { id: true, name: true, status: true } },
-      },
+        order.customerId,
+      );
+      if (linkResult.orderUpdateData) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: linkResult.orderUpdateData,
+        });
+      }
+      return linkResult.link;
     });
-  });
+  } catch (e) {
+    if (e instanceof OrderProjectCustomerConflictError) {
+      return NextResponse.json({
+        error: "订单客户与项目客户不一致",
+        orderCustomerId: e.orderCustomerId,
+        projectCustomerId: e.projectCustomerId,
+      }, { status: 409 });
+    }
+    throw e;
+  }
 
   return NextResponse.json({ link }, { status: 201 });
 }

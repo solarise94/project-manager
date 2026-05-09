@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
               deliveryStatus: true, totalAmount: true, financeAmountOverride: true,
               financeTreatment: true, source: true, externalOrderNo: true,
               customer: { select: { id: true, name: true } },
-              _count: { select: { projectLinks: true } },
+              _count: { select: { projectLinks: true, invoiceRequests: true, financeCosts: true } },
             },
           },
         },
@@ -80,7 +80,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representativeId, customerId, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, orderNumber, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -88,6 +88,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
+    if (projectNo !== undefined) data.projectNo = (projectNo as string)?.trim() || null;
     if (orderNumber !== undefined) data.orderNumber = orderNumber;
     if (organization !== undefined) data.organization = organization;
     if (client !== undefined) data.client = client;
@@ -235,6 +236,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             },
           });
         }
+      }
+
+      // Log financial field overrides for audit trail (normalize before compare)
+      const nextBudgetAmount = budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null;
+      const prevBudgetAmount = existing.budgetAmount != null ? Number(existing.budgetAmount) : null;
+      if (budgetAmount !== undefined && nextBudgetAmount !== prevBudgetAmount) {
+        await tx.activityLog.create({
+          data: {
+            type: "PROJECT_UPDATED",
+            content: `项目金额从 ${prevBudgetAmount != null ? prevBudgetAmount : "空"} 更新为 ${nextBudgetAmount != null ? nextBudgetAmount : "空"}（admin_override_project_finance）`,
+            projectId: id,
+            userId: session.user.id,
+          },
+        });
+      }
+      const nextBudgetCost = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
+      const prevBudgetCost = existing.budgetCost != null ? Number(existing.budgetCost) : null;
+      if (budgetCost !== undefined && nextBudgetCost !== prevBudgetCost) {
+        await tx.activityLog.create({
+          data: {
+            type: "PROJECT_UPDATED",
+            content: `项目成本从 ${prevBudgetCost != null ? prevBudgetCost : "空"} 更新为 ${nextBudgetCost != null ? nextBudgetCost : "空"}（admin_override_project_finance）`,
+            projectId: id,
+            userId: session.user.id,
+          },
+        });
       }
 
       // Sync budgetCost into FinanceCost for unified cost tracking (inside transaction)
@@ -401,6 +428,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ project: updatedProject });
   } catch (error) {
     console.error(error);
+    if (typeof error === "object" && error !== null && "code" in error && (error as { code: string }).code === "P2002") {
+      return NextResponse.json({ error: "项目号已被使用" }, { status: 409 });
+    }
     return NextResponse.json({ error: "Failed to update project" }, { status: 500 });
   }
 }

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,9 @@ import { Card } from "@/components/ui/card";
 import { DraftInputPanel } from "@/components/draft-input-panel";
 import { CustomerSelect } from "@/components/customer-select";
 import { OrganizationSelect } from "@/components/organization-select";
+import { SourceBrandSelect } from "@/components/source-brand-select";
 import { RepresentativeSelect } from "@/components/representative-select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { isAdmin } from "@/lib/role-guards";
 import { toast } from "sonner";
 
@@ -19,7 +21,11 @@ const ORDER_FIELD_LABELS: Record<string, string> = {
   title: "订单标题", description: "描述", category: "分类",
   customer: "客户", buyerNameSnapshot: "收件人", buyerPhoneSnapshot: "电话",
   buyerWechatSnapshot: "微信", buyerOrgNameSnapshot: "单位", buyerAddressSnapshot: "地址",
-  orderedAt: "下单日期", lines: "明细项", totalAmount: "总金额", financeTreatment: "计入口径",
+  orderedAt: "下单日期", lines: "明细项", quantity: "数量/例数",
+  unitPrice: "单价", sampleType: "样本类型", totalAmount: "总金额",
+  projectType: "项目类型", procurementSource: "采购渠道", brand: "品牌",
+  techSupport: "技术支持", budgetCost: "项目成本",
+  initialCost: "订单成本", initialCostType: "成本类型", initialCostRemark: "成本备注",
 };
 
 function NewOrderForm() {
@@ -37,9 +43,23 @@ function NewOrderForm() {
   const [representativeName, setRepresentativeName] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [orderedAt, setOrderedAt] = useState(new Date().toISOString().slice(0, 10));
-  const [projectAction, setProjectAction] = useState("NONE"); // NONE, GENERATE, LINK
+  const [projectAction, setProjectAction] = useState("GENERATE"); // GENERATE, NONE, LINK
   const [projectId, setProjectId] = useState("");
-  const [financeTreatment, setFinanceTreatment] = useState("AUTO");
+  const [manualProjectOverride, setManualProjectOverride] = useState(false);
+  // Project draft fields (for GENERATE)
+  const [pProjectType, setPProjectType] = useState("");
+  const [pProjectContent, setPProjectContent] = useState("");
+  const [pQuantity, setPQuantity] = useState("");
+  const [pProcurementSource, setPProcurementSource] = useState("");
+  const [pBrand, setPBrand] = useState("");
+  const [pTechSupport, setPTechSupport] = useState("");
+  const [pStartDate, setPStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [pBudgetCost, setPBudgetCost] = useState("");
+  // Order-level cost (for non-GENERATE)
+  const [initialCost, setInitialCost] = useState("");
+  const [initialCostType, setInitialCostType] = useState("");
+  const [initialCostRemark, setInitialCostRemark] = useState("");
+  const [financeTreatment, setFinanceTreatment] = useState("PROJECT_INCLUDED");
   const [buyerName, setBuyerName] = useState("");
   const [buyerPhone, setBuyerPhone] = useState("");
   const [buyerWechat, setBuyerWechat] = useState("");
@@ -109,13 +129,38 @@ function NewOrderForm() {
     if (fields.customer && typeof fields.customer === "object") {
       const cust = fields.customer as Record<string, unknown>;
       if (cust.matched && cust.id) {
-        // Existing customer — fill directly
-        setCustomerId(String(cust.id));
-        setCustomerName(String(cust.name || ""));
-        setCustomerOrgName(String(cust.organization || ""));
-        if (cust.name) setBuyerName(String(cust.name));
-        if (cust.organization) setBuyerOrgName(String(cust.organization));
-        if (cust.organizationId) setBuyerOrgId(String(cust.organizationId));
+        // Existing customer — fetch full CRM info then apply
+        const applyCustomerOption = (c: Record<string, unknown>) => {
+          setCustomerId(String(c.id || cust.id));
+          setCustomerName(String(c.name || cust.name || ""));
+          setCustomerOrgName(String(c.organization || ""));
+          setBuyerName(String(c.name || cust.name || ""));
+          setBuyerPhone(String(c.principal || ""));
+          setBuyerWechat(String(c.wechat || ""));
+          setBuyerAddress(String(c.address || ""));
+          setBuyerOrgName(String(c.organization || ""));
+          setBuyerOrgId(String(c.organizationId || ""));
+          setRepresentativeId(String(c.representativeId || ""));
+          setRepresentativeName(String(c.representativeName || ""));
+        };
+        try {
+          const res = await fetch("/api/customers/list");
+          if (res.ok) {
+            const data = await res.json();
+            const customers = data?.customers as Array<Record<string, unknown>> | undefined;
+            const full = customers?.find((c: Record<string, unknown>) => String(c.id) === String(cust.id));
+            if (full) {
+              applyCustomerOption(full);
+            } else {
+              // Fallback: apply what we have from entity resolver
+              applyCustomerOption(cust);
+            }
+          } else {
+            applyCustomerOption(cust);
+          }
+        } catch {
+          applyCustomerOption(cust);
+        }
       } else if (cust.shouldCreate && cust.name) {
         // New customer — create via API then fill
         const createCustomerFromDraft = async () => {
@@ -136,6 +181,7 @@ function NewOrderForm() {
               organization: (cust.organization as string)?.trim() || orgName || undefined,
               organizationId: (cust.organizationId as string) || orgId || undefined,
               organizationRawInput: (cust.organization as string)?.trim() || orgName || undefined,
+              autoCreateOrganization: true,
             }),
           });
           return res;
@@ -207,32 +253,103 @@ function NewOrderForm() {
       const amt = Number(fields.totalAmount);
       if (!Number.isNaN(amt)) setTotalAmount(String(amt));
     }
-    if (fields.lines) {
+    // ── Unified line derivation ────────────────────────────────────
+    const deriveOrderLinesFromDraft = () => {
       const rawLines = fields.lines;
-      if (Array.isArray(rawLines) && rawLines.length > 0) {
-        setLines((rawLines as Array<Record<string, unknown>>).map((l) => ({
+      const totalAmt = fields.totalAmount ? Number(fields.totalAmount) : 0;
+      const qty = fields.quantity != null ? Number(fields.quantity) : undefined;
+      const up = fields.unitPrice != null ? Number(fields.unitPrice) : undefined;
+      const st = fields.sampleType ? String(fields.sampleType) : "";
+      const itemName = String(fields.title || "订单服务");
+
+      // Normalize a single line: amount = max(rawAmount, quantity × unitPrice)
+      const normalizeLine = (l: Record<string, unknown>) => {
+        const q = Number(l.quantity) || 1;
+        const up = Number(l.unitPrice) || 0;
+        const rawAmt = Number(l.amount);
+        const amt = rawAmt > 0 ? rawAmt : q * up;
+        return {
           itemName: String(l.itemName || l.name || ""),
-          spec: String(l.spec || ""),
+          spec: String(l.spec || st),
           unit: String(l.unit || "项"),
-          quantity: Number(l.quantity) || 1,
-          unitPrice: Number(l.unitPrice) || 0,
-          amount: Number(l.amount) || 0,
-        })));
-      } else if (typeof rawLines === "string" && rawLines.trim()) {
-        const amt = fields.totalAmount ? Number(fields.totalAmount) : 0;
-        setLines([{ itemName: rawLines.trim(), spec: "", unit: "项", quantity: 1, unitPrice: Number.isNaN(amt) ? 0 : amt, amount: Number.isNaN(amt) ? 0 : amt }]);
+          quantity: q,
+          unitPrice: up,
+          amount: amt,
+        };
+      };
+
+      // Priority 1: structured lines array with valid data
+      if (Array.isArray(rawLines) && rawLines.length > 0) {
+        const first = rawLines[0] as Record<string, unknown>;
+        if ((first.quantity && Number(first.quantity) > 0) || (first.unitPrice && Number(first.unitPrice) > 0)) {
+          return (rawLines as Array<Record<string, unknown>>).map(normalizeLine);
+        }
       }
-    } else if (fields.totalAmount && !fields.lines) {
-      // AI extracted totalAmount but no structured lines — auto-generate one default line
-      const amt = Number(fields.totalAmount);
-      if (!Number.isNaN(amt) && amt > 0) {
-        const titleFromFields = fields.title ? String(fields.title) : "订单服务";
-        setLines([{ itemName: titleFromFields, spec: "", unit: "项", quantity: 1, unitPrice: amt, amount: amt }]);
+
+      // Priority 2: quantity + unitPrice → derive amount
+      if (qty && qty > 0 && up != null) {
+        const amt = totalAmt || qty * up;
+        return [{
+          itemName, spec: st,
+          unit: "例",
+          quantity: qty, unitPrice: up, amount: amt,
+        }];
+      }
+
+      // Priority 3: totalAmount only → single line (last resort)
+      if (totalAmt > 0) {
+        return [{
+          itemName, spec: st,
+          unit: "项", quantity: 1,
+          unitPrice: totalAmt, amount: totalAmt,
+        }];
+      }
+
+      // Priority 4: string lines
+      if (typeof rawLines === "string" && rawLines.trim()) {
+        const amt = totalAmt || 0;
+        return [{
+          itemName: rawLines.trim(), spec: st,
+          unit: "项", quantity: 1,
+          unitPrice: Number.isNaN(amt) ? 0 : amt,
+          amount: Number.isNaN(amt) ? 0 : amt,
+        }];
+      }
+
+      return null;
+    };
+    const derivedLines = deriveOrderLinesFromDraft();
+    if (derivedLines) {
+      setLines(derivedLines);
+      // Recompute totalAmount from lines if missing or zero
+      const lineSum = derivedLines.reduce((s, l) => s + l.amount, 0);
+      if (lineSum > 0 && (!fields.totalAmount || Number(fields.totalAmount) === 0)) {
+        setTotalAmount(String(lineSum));
       }
     }
-    if (fields.financeTreatment) setFinanceTreatment(String(fields.financeTreatment));
+    // Supplement project fields (non-derivable)
+    if (fields.projectType) setPProjectType(String(fields.projectType));
+    if (fields.procurementSource) setPProcurementSource(String(fields.procurementSource));
+    if (fields.brand) setPBrand(String(fields.brand));
+    if (fields.techSupport) setPTechSupport(String(fields.techSupport));
+    if (fields.budgetCost != null) setPBudgetCost(String(fields.budgetCost));
+    // Cost linkage: GENERATE → budgetCost, non-GENERATE → initialCost
+    if (fields.budgetCost != null && projectAction !== "GENERATE") {
+      setInitialCost(String(fields.budgetCost));
+    }
+    if (fields.initialCost != null && projectAction === "GENERATE") {
+      setPBudgetCost(String(fields.initialCost));
+    }
     toast.success("已从草稿填充订单信息，请核对后提交");
-  }, [queryClient]);
+  }, [queryClient, projectAction]);
+
+  const { data: procurementChannelsData } = useQuery<{ channels: Array<{ id: string; name: string }> }>({
+    queryKey: ["procurement-channels"],
+    queryFn: () => fetch("/api/procurement-channels").then(r => r.json()),
+    staleTime: 5 * 60 * 1000,
+    enabled: status === "authenticated" && isAdmin(session?.user?.role),
+  });
+  const procurementChannels = procurementChannelsData?.channels || [];
 
   if (status === "loading") return <div className="p-8 text-muted-foreground">加载中...</div>;
   if (status === "unauthenticated") { router.push("/login"); return null; }
@@ -250,11 +367,29 @@ function NewOrderForm() {
   const addLine = () => setLines([...lines, { itemName: "", spec: "", unit: "", quantity: 1, unitPrice: 0, amount: 0 }]);
   const removeLine = (i: number) => setLines(lines.filter((_, idx) => idx !== i));
 
+  const handleProjectActionChange = (next: string) => {
+    if (next === "GENERATE") {
+      setProjectAction("GENERATE");
+      setFinanceTreatment("PROJECT_INCLUDED");
+      if (!pProjectType) setPProjectType(category === "PRODUCT" ? "商品" : "服务");
+      if (!pBudgetCost && initialCost) setPBudgetCost(initialCost);
+    }
+    if (next === "NONE") {
+      setProjectAction("NONE");
+      setFinanceTreatment("STANDALONE");
+      if (!initialCost && pBudgetCost) setInitialCost(pBudgetCost);
+    }
+    if (next === "LINK") {
+      setProjectAction("LINK");
+      setFinanceTreatment("PROJECT_INCLUDED");
+    }
+  };
+
   const handleSubmit = async (draft: boolean) => {
     setSubmitting(true);
     setError("");
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         title,
         description: description || null,
         category,
@@ -273,6 +408,23 @@ function NewOrderForm() {
         lines: lines.filter(l => l.itemName.trim()),
         totalAmount: totalAmount ? Number(totalAmount) : undefined,
       };
+
+      if (projectAction === "GENERATE") {
+        body.projectDraft = {
+          projectType: pProjectType || null,
+          projectContent: manualProjectOverride ? (pProjectContent || null) : null,
+          quantity: manualProjectOverride ? (pQuantity || null) : null,
+          procurementSource: pProcurementSource || null,
+          brand: pBrand || null,
+          techSupport: pTechSupport || null,
+          startDate: pStartDate || null,
+          budgetCost: pBudgetCost || null,
+        };
+      } else {
+        body.initialCost = initialCost || null;
+        body.initialCostType = initialCostType || null;
+        body.initialCostRemark = initialCostRemark || null;
+      }
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -291,6 +443,15 @@ function NewOrderForm() {
   };
 
   const lineTotal = lines.reduce((s, l) => s + l.amount, 0);
+  const primaryLine = lines.find((l) => l.itemName.trim());
+  const derivedOrderAmount = lineTotal || Number(totalAmount) || 0;
+  const derivedProjectName = title.trim();
+  const derivedProjectContent = manualProjectOverride
+    ? pProjectContent
+    : primaryLine?.itemName || title.trim();
+  const derivedQuantity = manualProjectOverride
+    ? pQuantity
+    : String(primaryLine?.quantity || 1);
 
   return (
     <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
@@ -433,25 +594,111 @@ function NewOrderForm() {
       {/* Project options */}
       <Card className="p-4 space-y-3">
         <h3 className="font-medium">项目选项</h3>
-        <select className="w-full border rounded px-2 py-1.5 text-sm" value={projectAction} onChange={(e) => setProjectAction(e.target.value)}>
+        <select className="w-full border rounded px-2 py-1.5 text-sm" value={projectAction} onChange={(e) => handleProjectActionChange(e.target.value)}>
+          <option value="GENERATE">创建订单并自动生成项目</option>
           <option value="NONE">仅创建订单</option>
-          <option value="GENERATE">创建订单并生成项目</option>
-          <option value="LINK">创建订单并绑定已有项目</option>
+          <option value="LINK">绑定已有项目</option>
         </select>
         {projectAction === "LINK" && <Input value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="输入项目ID" />}
       </Card>
 
-      {/* Finance */}
-      <Card className="p-4 space-y-3">
-        <h3 className="font-medium">财务设置</h3>
-        <select className="w-full border rounded px-2 py-1.5 text-sm" value={financeTreatment} onChange={(e) => setFinanceTreatment(e.target.value)}>
-          <option value="AUTO">自动判断</option><option value="STANDALONE">独立计入</option><option value="PROJECT_INCLUDED">并入项目</option><option value="EXCLUDED">排除</option>
-        </select>
-      </Card>
+      {/* Project preview + advanced settings (GENERATE) */}
+      {projectAction === "GENERATE" && (
+        <Card className="p-4 space-y-3">
+          <h3 className="font-medium">项目预览</h3>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <div><span className="text-muted-foreground">项目名称：</span>{derivedProjectName || "未填写订单标题"}</div>
+            <div><span className="text-muted-foreground">项目金额：</span>¥{derivedOrderAmount.toLocaleString()}</div>
+            <div><span className="text-muted-foreground">项目内容：</span>{derivedProjectContent || "将从订单明细派生"}</div>
+            <div><span className="text-muted-foreground">数量：</span>{derivedQuantity}</div>
+            <div><span className="text-muted-foreground">客户：</span>{customerName || buyerName || "—"}</div>
+            <div><span className="text-muted-foreground">单位：</span>{customerOrgName || buyerOrgName || "—"}</div>
+            <div className="col-span-2"><span className="text-muted-foreground">代表：</span>{representativeName || "由客户 CRM 负责人同步"}</div>
+          </div>
 
+          <div className="flex items-center gap-2 pt-2 border-t">
+            <label className="text-sm flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={manualProjectOverride} onChange={(e) => setManualProjectOverride(e.target.checked)} className="rounded" />
+              手动覆盖项目内容和数量
+            </label>
+          </div>
+          {manualProjectOverride && (
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-sm font-medium">项目内容</label><Input value={pProjectContent} onChange={(e) => setPProjectContent(e.target.value)} placeholder="项目内容描述" /></div>
+              <div><label className="text-sm font-medium">数量</label><Input type="number" value={pQuantity} onChange={(e) => setPQuantity(e.target.value)} placeholder="0" /></div>
+            </div>
+          )}
+
+          <h3 className="font-medium pt-2 border-t">项目补充信息</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-sm font-medium">项目类型</label><Input value={pProjectType} onChange={(e) => setPProjectType(e.target.value)} placeholder="商品 / 服务" /></div>
+            <div>
+              <label className="text-sm font-medium">采购渠道</label>
+              <Select value={pProcurementSource} onValueChange={(v) => setPProcurementSource(v || "")}>
+                <SelectTrigger>
+                  <SelectDisplay
+                    label="选择渠道"
+                    valueLabel={
+                      pProcurementSource && !procurementChannels.find(c => c.name === pProcurementSource)
+                        ? `历史/AI：${pProcurementSource}`
+                        : (pProcurementSource || "选择渠道")
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">不选择</SelectItem>
+                  {pProcurementSource && !procurementChannels.find(c => c.name === pProcurementSource) && (
+                    <SelectItem value={pProcurementSource}>历史/AI：{pProcurementSource}</SelectItem>
+                  )}
+                  {procurementChannels.map((ch) => (
+                    <SelectItem key={ch.id} value={ch.name}>{ch.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><label className="text-sm font-medium">品牌</label><SourceBrandSelect value={pBrand} onChange={setPBrand} /></div>
+            <div><label className="text-sm font-medium">技术支持</label><Input value={pTechSupport} onChange={(e) => setPTechSupport(e.target.value)} placeholder="技术支持" /></div>
+            <div><label className="text-sm font-medium">开始日期</label><Input type="date" value={pStartDate} onChange={(e) => setPStartDate(e.target.value)} /></div>
+            <div><label className="text-sm font-medium">项目成本</label><Input type="number" value={pBudgetCost} onChange={(e) => setPBudgetCost(e.target.value)} placeholder="0" /></div>
+          </div>
+        </Card>
+      )}
+
+      {/* Order-level initial cost (non-GENERATE) */}
+      {projectAction !== "GENERATE" && (
+        <Card className="p-4 space-y-3">
+          <h3 className="font-medium">订单成本</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-sm font-medium">初始成本</label><Input type="number" value={initialCost} onChange={(e) => setInitialCost(e.target.value)} placeholder="0" /></div>
+            <div><label className="text-sm font-medium">成本类型</label><Input value={initialCostType} onChange={(e) => setInitialCostType(e.target.value)} placeholder="如：试剂、服务" /></div>
+          </div>
+          <div><label className="text-sm font-medium">成本备注</label><Input value={initialCostRemark} onChange={(e) => setInitialCostRemark(e.target.value)} placeholder="备注说明" /></div>
+        </Card>
+      )}
+
+      {/* Finance — hidden in GENERATE/LINK (locked to PROJECT_INCLUDED by backend) */}
+      {projectAction === "NONE" && (
+        <Card className="p-4 space-y-3">
+          <h3 className="font-medium">财务设置</h3>
+          <select className="w-full border rounded px-2 py-1.5 text-sm" value={financeTreatment} onChange={(e) => setFinanceTreatment(e.target.value)}>
+            <option value="AUTO">自动判断</option><option value="STANDALONE">独立计入</option><option value="PROJECT_INCLUDED">并入项目</option><option value="EXCLUDED">排除</option>
+          </select>
+        </Card>
+      )}
+
+      {projectAction === "GENERATE" && !customerId && (
+        <Card className="p-3 text-sm text-amber-700 bg-amber-50 border-amber-200">
+          生成项目需要先选择或新建客户。请在上方「客户」字段选择已有客户，或通过 AI 填单 / 快速添加创建新客户。
+        </Card>
+      )}
+      {projectAction === "LINK" && !projectId.trim() && (
+        <Card className="p-3 text-sm text-amber-700 bg-amber-50 border-amber-200">
+          绑定已有项目需要提供项目ID。请在项目选项中输入目标项目ID。
+        </Card>
+      )}
       <div className="flex gap-3 justify-end">
-        <Button variant="outline" onClick={() => handleSubmit(true)} disabled={submitting || !title.trim()}>保存草稿</Button>
-        <Button onClick={() => handleSubmit(false)} disabled={submitting || !title.trim()}>确认创建</Button>
+        <Button variant="outline" onClick={() => handleSubmit(true)} disabled={submitting || !title.trim() || (projectAction === "GENERATE" && !customerId) || (projectAction === "LINK" && !projectId.trim())}>保存草稿</Button>
+        <Button onClick={() => handleSubmit(false)} disabled={submitting || !title.trim() || (projectAction === "GENERATE" && !customerId) || (projectAction === "LINK" && !projectId.trim())}>确认创建</Button>
       </div>
     </div>
   );

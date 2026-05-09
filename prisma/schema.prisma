@@ -80,6 +80,16 @@ model ProcurementChannel {
   updatedAt   DateTime @updatedAt
 }
 
+model SourceBrand {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isDefault   Boolean  @default(false)
+  archived    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
 model Organization {
   id                           String                        @id @default(cuid())
   orgCode                      String                        @unique
@@ -202,6 +212,7 @@ model Project {
   id                String           @id @default(cuid())
   name              String
   description       String?
+  projectNo         String?          @unique
   orderNumber       String?
   organization      String?
   client            String?

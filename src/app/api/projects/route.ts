@@ -4,7 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getReadableProjectIds, isRepresentative } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
-import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { resolveCustomerBusinessContext } from "@/lib/business/customer-context";
+import { generateProjectNo } from "@/lib/project-number";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
@@ -128,19 +129,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representativeId, customerId, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, orderNumber, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
-    // Derive representative from customer CRM owner when customerId is present.
-    // Customer-bound projects always follow the CRM owner; manual representative is only
-    // allowed when there is no customer.
+    // Derive CRM context when customerId is present
     let resolvedRepId: string | null = null;
     let resolvedRepName: string | null = null;
+    let custClient: string | null = null;
+    let custOrg: string | null = null;
     if (customerId) {
-      const resolved = await resolveCustomerRepresentative(customerId);
-      resolvedRepId = resolved.representativeId;
-      resolvedRepName = resolved.representativeName;
+      const ctx = await resolveCustomerBusinessContext(customerId);
+      if (!ctx.clientName) {
+        return NextResponse.json({ error: "指定的客户不存在" }, { status: 400 });
+      }
+      custClient = ctx.clientName;
+      custOrg = ctx.organizationName;
+      resolvedRepId = ctx.representativeId;
+      resolvedRepName = ctx.representativeName;
     } else if (representativeId) {
-      // No customer — allow manual representative
       const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
       if (!rep) {
         return NextResponse.json({ error: "指定的代表不存在" }, { status: 400 });
@@ -149,29 +154,21 @@ export async function POST(req: NextRequest) {
       resolvedRepName = rep.name;
     }
 
-    // Derive client/organization from customer when customerId is provided
-    // Only override organization if customer has one; otherwise keep user-supplied value
-    let custClient: string | null = null;
-    let custOrg: string | null = null;
-    if (customerId) {
-      const cust = await prisma.customer.findUnique({
-        where: { id: customerId },
-        include: { org: { select: { canonicalName: true } } },
-      });
-      if (!cust) {
-        return NextResponse.json({ error: "指定的客户不存在" }, { status: 400 });
-      }
-      custClient = cust.name;
-      custOrg = getCustomerOrganizationName(cust);
-    }
-
     const bc = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
 
     // Transaction: project + budget cost sync + activity log — all-or-nothing
+    // Retry up to 3 times on auto-generated projectNo unique collision
     const { syncProjectBudgetCost } = await import("@/lib/finance/ledger");
-    const project = await prisma.$transaction(async (tx) => {
-      const created = await tx.project.create({
+    const autoProjectNo = !(projectNo as string)?.trim();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let project: any;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        project = await prisma.$transaction(async (tx) => {
+          const finalProjectNo = autoProjectNo ? await generateProjectNo(tx) : (projectNo as string)?.trim();
+          const created = await tx.project.create({
         data: {
+          projectNo: finalProjectNo,
           name,
           description,
           orderNumber,
@@ -182,7 +179,7 @@ export async function POST(req: NextRequest) {
           customerId: customerId || null,
           status: status || "NOT_STARTED",
           progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,
-          startDate: startDate ? new Date(startDate) : null,
+          startDate: startDate ? new Date(startDate) : new Date(),
           endDate: endDate ? new Date(endDate) : null,
           projectType: projectType || null,
           projectContent: projectContent || null,
@@ -216,6 +213,16 @@ export async function POST(req: NextRequest) {
 
       return created;
     });
+        break;
+      } catch (err) {
+        const isP2002 = typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002";
+        const target = Array.isArray(((err as { meta?: { target?: unknown } }).meta?.target)) ? ((err as { meta?: { target?: string[] } }).meta?.target || []) : [];
+        // Only retry auto-generated projectNo collisions; manual duplicates → immediate 409
+        if (isP2002 && autoProjectNo && target.includes("projectNo") && attempt < 2) continue;
+        if (isP2002 && target.includes("projectNo")) return NextResponse.json({ error: "项目号已被使用" }, { status: 409 });
+        throw err;
+      }
+    }
 
     // Notify new representative if assigned
     if (project.representativeId) {
@@ -243,6 +250,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {
     console.error(error);
+    if (typeof error === "object" && error !== null && "code" in error && (error as { code: string }).code === "P2002") {
+      return NextResponse.json({ error: "项目号已被使用，请重试" }, { status: 409 });
+    }
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });
   }
 }

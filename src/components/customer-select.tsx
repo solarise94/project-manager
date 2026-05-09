@@ -118,6 +118,7 @@ export function CustomerSelect({ value, displayValue, onChange, quickCreateDefau
       organizationId: (quickCreateDefaults?.organizationId || undefined) as string | undefined,
       address: (quickCreateDefaults?.address || undefined) as string | undefined,
       organizationRawInput: (quickCreateDefaults?.organization || undefined) as string | undefined,
+      autoCreateOrganization: true,
     });
   };
 

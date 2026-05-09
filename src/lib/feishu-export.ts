@@ -1,5 +1,5 @@
 const FEISHU_PROJECT_HEADERS = [
-  "项目编号", "高精立项编号", "对方单位", "客户", "代表", "技术支持",
+  "项目号", "订单号", "对方单位", "客户", "代表", "技术支持",
   "项目类型", "项目内容", "数量", "采购渠道", "品牌", "项目进度",
   "立项时间", "交付时间", "终止时间",
   "项目金额（元）", "立项进度款（30%/0%）", "交付进度款（70%/100%）",
@@ -48,6 +48,7 @@ function progressPayment(amount: number | null | undefined, projectType: string 
 }
 
 export interface ProjectExportData {
+  projectNo?: string | null;
   orderNumber?: string | null;
   organization?: string | null;
   client?: string | null;
@@ -82,8 +83,8 @@ export function getFeishuProjectHeader(): string {
 
 export function projectToFeishuRow(p: ProjectExportData): string {
   const cols = [
+    safe(p.projectNo),
     safe(p.orderNumber),
-    "",
     safe(p.organization),
     safe(p.client),
     safe(p.representative),

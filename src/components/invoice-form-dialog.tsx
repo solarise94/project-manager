@@ -146,8 +146,8 @@ export function buildPreviewText(form: {
 export function InvoiceFormDialog({
   open, onOpenChange, editingInvoice, createUrl, patchUrlPrefix,
   onSuccess, defaultValues, showProjectCode = true, aiDraftUrl,
-  extraPayload,
-}: InvoiceFormDialogProps) {
+  extraPayload, projectName, projectContent,
+}: InvoiceFormDialogProps & { projectName?: string; projectContent?: string }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && (
@@ -161,6 +161,8 @@ export function InvoiceFormDialog({
           showProjectCode={showProjectCode}
           aiDraftUrl={aiDraftUrl}
           extraPayload={extraPayload}
+          projectName={projectName}
+          projectContent={projectContent}
         />
       )}
     </Dialog>
@@ -182,8 +184,8 @@ interface ContentProps {
 function InvoiceFormContent({
   editingInvoice, createUrl, patchUrlPrefix,
   onSuccess, onClose, defaultValues, showProjectCode, aiDraftUrl,
-  extraPayload,
-}: ContentProps) {
+  extraPayload, projectName, projectContent,
+}: ContentProps & { projectName?: string; projectContent?: string }) {
   const inv = editingInvoice;
   const [contactName, setContactName] = useState(inv?.contactName || defaultValues?.contactName || "");
   const [formProjectCode, setFormProjectCode] = useState(inv?.projectCode || defaultValues?.projectCode || "");
@@ -196,7 +198,15 @@ function InvoiceFormContent({
   const [buyerOrgName, setBuyerOrgName] = useState(inv?.buyerOrganizationName || defaultValues?.buyerOrgName || "");
   const [buyerTaxId, setBuyerTaxId] = useState(inv?.buyerTaxId || defaultValues?.buyerTaxId || "");
   const [invoiceType, setInvoiceType] = useState(inv?.invoiceType || defaultValues?.invoiceType || "NORMAL");
-  const [contentSummary, setContentSummary] = useState(inv?.contentSummary || defaultValues?.contentSummary || "");
+  const initialContentSummary = inv?.contentSummary || defaultValues?.contentSummary || projectName || "";
+  const initialContentMode: "PROJECT_NAME" | "PROJECT_CONTENT" | "MANUAL" =
+    inv?.contentSummary || defaultValues?.contentSummary
+      ? "MANUAL"
+      : projectName
+        ? "PROJECT_NAME"
+        : "MANUAL";
+  const [contentSummary, setContentSummary] = useState(initialContentSummary);
+  const [contentMode, setContentMode] = useState<"PROJECT_NAME" | "PROJECT_CONTENT" | "MANUAL">(initialContentMode);
   const [remark, setRemark] = useState(inv?.remark || defaultValues?.remark || "");
   const [items, setItems] = useState<InvoiceItem[]>(
     inv && inv.items.length > 0
@@ -452,6 +462,8 @@ function InvoiceFormContent({
           taxIdMissing={taxIdMissing} setTaxIdFromLookup={setTaxIdFromLookup}
           invoiceType={invoiceType} setInvoiceType={setInvoiceType}
           contentSummary={contentSummary} setContentSummary={setContentSummary}
+          contentMode={contentMode} setContentMode={setContentMode}
+          projectName={projectName} projectContent={projectContent}
           remark={remark} setRemark={setRemark}
           items={items} updateItem={updateItem} addItem={addItem} removeItem={removeItem}
           totalAmount={totalAmount}
@@ -495,6 +507,8 @@ function FormBody({
   handleOrgChange, taxIdMissing, setTaxIdFromLookup,
   invoiceType, setInvoiceType,
   contentSummary, setContentSummary,
+  contentMode, setContentMode,
+  projectName, projectContent,
   remark, setRemark,
   items, updateItem, addItem, removeItem, totalAmount,
   previewText, formSheetData, copyText, exportPdf,
@@ -589,7 +603,25 @@ function FormBody({
 
       <div className="space-y-1">
         <label className="text-xs text-muted-foreground">开票内容</label>
-        <Input value={contentSummary} onChange={(e: any) => setContentSummary(e.target.value)} placeholder="如：小鼠售卖" className="h-8 text-sm" />
+        <div className="flex gap-2 mb-1">
+          {(["PROJECT_NAME", "PROJECT_CONTENT", "MANUAL"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`text-xs px-2 py-0.5 rounded border ${contentMode === mode ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input text-muted-foreground"}`}
+              onClick={() => {
+                if (mode === "PROJECT_NAME" && !projectName) { toast.error("没有项目名称"); return; }
+                if (mode === "PROJECT_CONTENT" && !projectContent) { toast.error("项目没有填写项目内容"); return; }
+                setContentMode(mode);
+                if (mode === "PROJECT_NAME") setContentSummary(projectName!);
+                else if (mode === "PROJECT_CONTENT") setContentSummary(projectContent!);
+              }}
+            >
+              {mode === "PROJECT_NAME" ? "项目名" : mode === "PROJECT_CONTENT" ? "项目内容" : "手写"}
+            </button>
+          ))}
+        </div>
+        <Input value={contentSummary} onChange={(e: any) => { setContentMode("MANUAL"); setContentSummary(e.target.value); }} placeholder="如：小鼠售卖" className="h-8 text-sm" disabled={contentMode !== "MANUAL"} />
       </div>
 
       <div className="space-y-2">
