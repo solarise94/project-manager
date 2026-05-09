@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { generateCustomerCode } from "@/lib/customer-code";
+import { appendCustomerRepresentativeInfo, resolveSingleCustomerOption } from "@/lib/customers/customer-select-options";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -39,15 +40,20 @@ export async function GET(req: NextRequest) {
         archived: false,
         ...(search ? { name: { contains: search } } : {}),
       },
-      include: { org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
+      include: {
+        org: { select: { canonicalName: true } },
+        crmProfile: { select: { id: true, sourceCustomerId: true, ownerUser: { select: { email: true, role: true } } } },
+      },
       orderBy: { createdAt: "desc" },
     });
 
-    const result = customers.map(({ org, ...c }) => ({
+    const withOrg = customers.map(({ org, ...c }) => ({
       ...c,
       organization: getCustomerOrganizationName({ organization: c.organization, org }),
       _count: { projects: countMap.get(c.id) ?? 0 },
     }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await appendCustomerRepresentativeInfo(withOrg as any);
 
     return NextResponse.json({ customers: result });
   }
@@ -73,7 +79,11 @@ export async function GET(req: NextRequest) {
   const [customers, total] = await Promise.all([
     prisma.customer.findMany({
       where,
-      include: { _count: { select: { projects: true } }, org: { select: { canonicalName: true } }, crmProfile: { select: { id: true, sourceCustomerId: true } } },
+      include: {
+        _count: { select: { projects: true } },
+        org: { select: { canonicalName: true } },
+        crmProfile: { select: { id: true, sourceCustomerId: true, ownerUser: { select: { email: true, role: true } } } },
+      },
       orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
       skip,
       take,
@@ -81,7 +91,9 @@ export async function GET(req: NextRequest) {
     prisma.customer.count({ where }),
   ]);
 
-  const mapped = customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) }));
+  const withOrg = customers.map(({ org, ...c }) => ({ ...c, organization: getCustomerOrganizationName({ organization: c.organization, org }) }));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapped = await appendCustomerRepresentativeInfo(withOrg as any);
   return NextResponse.json({
     customers: mapped,
     total,
@@ -155,9 +167,21 @@ export async function POST(req: NextRequest) {
             organizationSiteId: effectiveSiteId,
             organizationRawInput: organizationRawInput || null,
           },
+          select: {
+            id: true, customerCode: true, name: true,
+            organization: true, organizationId: true,
+            principal: true, wechat: true, address: true,
+            org: { select: { canonicalName: true } },
+            crmProfile: { select: { ownerUser: { select: { email: true, role: true } } } },
+          },
         });
 
-        return NextResponse.json({ customer }, { status: 201 });
+        const option = await resolveSingleCustomerOption({
+          ...customer,
+          organization: getCustomerOrganizationName({ organization: customer.organization, org: customer.org }),
+        });
+
+        return NextResponse.json({ customer: option }, { status: 201 });
       } catch (e: unknown) {
         const isPrismaUnique = typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "P2002";
         if (!isPrismaUnique || attempt === 2) throw e;

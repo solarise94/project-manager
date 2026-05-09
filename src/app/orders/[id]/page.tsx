@@ -11,7 +11,8 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
-import { FolderTree, Receipt, Banknote, UserRound, ChevronDown, ChevronRight, Pencil } from "lucide-react";
+import { CustomerMatchDialog } from "@/components/finance/customer-match-dialog";
+import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2 } from "lucide-react";
 import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
 
@@ -32,7 +33,7 @@ export default function OrderDetailPage() {
   const [saving, setSaving] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [showManualBind, setShowManualBind] = useState(false);
+  const [customerMatchOpen, setCustomerMatchOpen] = useState(false);
 
   const fetchOrder = useCallback(async () => {
     if (!id) return;
@@ -106,6 +107,11 @@ export default function OrderDetailPage() {
         {isAdmin && (
           <Button size="sm" variant="outline" onClick={() => setEditDialogOpen(true)}>
             <Pencil className="h-3 w-3 mr-1" />编辑订单
+          </Button>
+        )}
+        {isAdmin && (
+          <Button size="sm" variant="outline" onClick={() => setCustomerMatchOpen(true)}>
+            <Link2 className="h-3 w-3 mr-1" />{cust ? "重绑客户" : "绑定客户"}
           </Button>
         )}
         {projectLinks.length > 0 ? (
@@ -202,20 +208,9 @@ export default function OrderDetailPage() {
                   <div>单位快照: {order.buyerOrgNameSnapshot as string || "-"}</div>
                 </div>
                 {isAdmin && (
-                  <div className="pt-2 border-t">
-                    <Button variant="ghost" size="sm" className="text-xs" onClick={() => setShowManualBind(!showManualBind)}>
-                      {showManualBind ? <ChevronDown className="h-3 w-3 mr-1" /> : <ChevronRight className="h-3 w-3 mr-1" />}
-                      手动绑定 / 解除
-                    </Button>
-                    {showManualBind && (
-                      <div className="mt-2 space-y-2">
-                        <Button variant="outline" size="sm" onClick={() => saveField("customerId", null)} disabled={saving}>解除绑定</Button>
-                        <div className="flex gap-2 items-center mt-1">
-                          <Input placeholder="输入客户ID绑定..." className="max-w-[250px] text-xs" id="custId" />
-                          <Button size="sm" variant="outline" onClick={() => { const el = document.getElementById("custId") as HTMLInputElement; if (el?.value) saveField("customerId", el.value); }} disabled={saving}>绑定</Button>
-                        </div>
-                      </div>
-                    )}
+                  <div className="pt-2 border-t flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setCustomerMatchOpen(true)} disabled={saving}>重新绑定客户</Button>
+                    <Button variant="outline" size="sm" onClick={() => saveField("customerId", null)} disabled={saving}>解除绑定</Button>
                   </div>
                 )}
               </>
@@ -230,8 +225,9 @@ export default function OrderDetailPage() {
                 </div>
                 {isAdmin && (
                   <div className="flex gap-2 items-center">
-                    <Input placeholder="输入客户ID绑定..." className="max-w-[250px] text-xs" id="custIdNoCust" />
-                    <Button size="sm" onClick={() => { const el = document.getElementById("custIdNoCust") as HTMLInputElement; if (el?.value) saveField("customerId", el.value); }} disabled={saving}>绑定</Button>
+                    <Button size="sm" onClick={() => setCustomerMatchOpen(true)} disabled={saving}>
+                      <Link2 className="h-3 w-3 mr-1" />绑定 / 新增客户
+                    </Button>
                   </div>
                 )}
               </div>
@@ -375,6 +371,22 @@ export default function OrderDetailPage() {
         onOpenChange={setEditDialogOpen}
         onUpdated={() => fetchOrder()}
       />
+      {customerMatchOpen && (
+        <CustomerMatchDialog
+          open={customerMatchOpen}
+          onOpenChange={setCustomerMatchOpen}
+          orderId={id}
+          userId={session?.user?.id}
+          orderPrefill={{
+            receiverName: (order.buyerNameSnapshot as string) || null,
+            receiverPhone: (order.buyerPhoneSnapshot as string) || null,
+            orderUser: (order.buyerWechatSnapshot as string) || null,
+            receiverAddress: (order.buyerAddressSnapshot as string) || null,
+            storeName: (order.buyerOrgNameSnapshot as string) || null,
+          }}
+          onBound={() => fetchOrder()}
+        />
+      )}
     </div>
   );
 }

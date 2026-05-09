@@ -22,21 +22,40 @@ import {
 } from "@/components/ui/popover";
 import { toast } from "sonner";
 
-interface CustOption {
+export interface CustomerSelectOption {
   id: string;
   customerCode: string;
   name: string;
   organization: string | null;
   organizationId: string | null;
+  principal: string | null;
+  wechat: string | null;
+  address: string | null;
+  representativeId: string | null;
+  representativeName: string | null;
 }
 
 interface CustomerSelectProps {
   value: string;
   displayValue?: string;
-  onChange: (id: string | null, name: string, organization?: string | null, organizationId?: string | null) => void;
+  onChange: (
+    id: string | null,
+    name: string,
+    organization?: string | null,
+    organizationId?: string | null,
+    customer?: CustomerSelectOption | null,
+  ) => void;
+  quickCreateDefaults?: {
+    name?: string;
+    principal?: string;
+    wechat?: string;
+    organization?: string;
+    organizationId?: string;
+    address?: string;
+  };
 }
 
-export function CustomerSelect({ value, displayValue, onChange }: CustomerSelectProps) {
+export function CustomerSelect({ value, displayValue, onChange, quickCreateDefaults }: CustomerSelectProps) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -45,7 +64,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
 
   const isReadOnly = session?.user?.role === "REPRESENTATIVE";
 
-  const { data } = useQuery<{ customers: CustOption[] }>({
+  const { data } = useQuery<{ customers: CustomerSelectOption[] }>({
     queryKey: ["customers-list"],
     queryFn: async () => {
       const res = await fetch("/api/customers/list");
@@ -55,19 +74,19 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
   });
 
   const quickCreateMutation = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (payload: Record<string, unknown>) => {
       const res = await fetch("/api/customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "创建失败");
-      return data.customer as CustOption;
+      return data.customer as CustomerSelectOption;
     },
     onSuccess: (customer) => {
       toast.success(`客户 "${customer.name}" 已创建`);
-      onChange(customer.id, customer.name, customer.organization, customer.organizationId);
+      onChange(customer.id, customer.name, customer.organization, customer.organizationId, customer);
       setQuickName("");
       setShowQuickAdd(false);
       setOpen(false);
@@ -78,6 +97,29 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
 
   const custs = data?.customers || [];
   const selected = custs.find((c) => c.id === value);
+
+  const handleSelect = (cust: CustomerSelectOption | null) => {
+    if (cust) {
+      onChange(cust.id, cust.name, cust.organization, cust.organizationId, cust);
+    } else {
+      onChange(null, "");
+    }
+    setOpen(false);
+  };
+
+  const handleQuickCreate = () => {
+    const name = quickName.trim();
+    if (!name) return;
+    quickCreateMutation.mutate({
+      name,
+      principal: (quickCreateDefaults?.principal || undefined) as string | undefined,
+      wechat: (quickCreateDefaults?.wechat || undefined) as string | undefined,
+      organization: (quickCreateDefaults?.organization || undefined) as string | undefined,
+      organizationId: (quickCreateDefaults?.organizationId || undefined) as string | undefined,
+      address: (quickCreateDefaults?.address || undefined) as string | undefined,
+      organizationRawInput: (quickCreateDefaults?.organization || undefined) as string | undefined,
+    });
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -105,10 +147,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
             </CommandEmpty>
             <CommandGroup>
               <CommandItem
-                onSelect={() => {
-                  onChange(null, "");
-                  setOpen(false);
-                }}
+                onSelect={() => handleSelect(null)}
               >
                 <Check className={cn("mr-2 h-4 w-4", !value ? "opacity-100" : "opacity-0")} />
                 不选择客户
@@ -116,15 +155,20 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
               {custs.map((c) => (
                 <CommandItem
                   key={c.id}
-                  onSelect={() => {
-                    onChange(c.id, c.name, c.organization, c.organizationId);
-                    setOpen(false);
-                  }}
+                  onSelect={() => handleSelect(c)}
                 >
                   <Check className={cn("mr-2 h-4 w-4", value === c.id ? "opacity-100" : "opacity-0")} />
                   <div className="flex flex-col">
                     <span>{c.name} <span className="text-xs text-muted-foreground">({c.customerCode})</span></span>
                     {c.organization && <span className="text-xs text-muted-foreground">{c.organization}</span>}
+                    {(c.principal || c.wechat) && (
+                      <span className="text-xs text-muted-foreground">
+                        {[c.principal, c.wechat].filter(Boolean).join(" / ")}
+                      </span>
+                    )}
+                    {c.representativeName && (
+                      <span className="text-xs text-blue-600">代表: {c.representativeName}</span>
+                    )}
                   </div>
                 </CommandItem>
               ))}
@@ -140,7 +184,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && quickName.trim()) {
                           e.preventDefault();
-                          quickCreateMutation.mutate(quickName.trim());
+                          handleQuickCreate();
                         }
                         if (e.key === "Escape") setShowQuickAdd(false);
                       }}
@@ -151,7 +195,7 @@ export function CustomerSelect({ value, displayValue, onChange }: CustomerSelect
                       size="sm"
                       className="h-8 shrink-0"
                       disabled={!quickName.trim() || quickCreateMutation.isPending}
-                      onClick={() => quickName.trim() && quickCreateMutation.mutate(quickName.trim())}
+                      onClick={handleQuickCreate}
                     >
                       {quickCreateMutation.isPending ? "..." : "添加"}
                     </Button>

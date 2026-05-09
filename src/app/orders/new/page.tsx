@@ -3,11 +3,15 @@
 import { useState, useEffect, useRef, Suspense, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { DraftInputPanel } from "@/components/draft-input-panel";
+import { CustomerSelect } from "@/components/customer-select";
+import { OrganizationSelect } from "@/components/organization-select";
+import { RepresentativeSelect } from "@/components/representative-select";
 import { isAdmin } from "@/lib/role-guards";
 import { toast } from "sonner";
 
@@ -21,12 +25,16 @@ const ORDER_FIELD_LABELS: Record<string, string> = {
 function NewOrderForm() {
   const router = useRouter();
   const { status, data: session } = useSession();
+  const queryClient = useQueryClient();
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("SERVICE");
   const [customerId, setCustomerId] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerOrgName, setCustomerOrgName] = useState("");
   const [representativeId, setRepresentativeId] = useState("");
+  const [representativeName, setRepresentativeName] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [orderedAt, setOrderedAt] = useState(new Date().toISOString().slice(0, 10));
   const [projectAction, setProjectAction] = useState("NONE"); // NONE, GENERATE, LINK
@@ -36,6 +44,7 @@ function NewOrderForm() {
   const [buyerPhone, setBuyerPhone] = useState("");
   const [buyerWechat, setBuyerWechat] = useState("");
   const [buyerOrgName, setBuyerOrgName] = useState("");
+  const [buyerOrgId, setBuyerOrgId] = useState("");
   const [buyerAddress, setBuyerAddress] = useState("");
   const [lines, setLines] = useState<{ itemName: string; spec: string; unit: string; quantity: number; unitPrice: number; amount: number }[]>([
     { itemName: "", spec: "", unit: "", quantity: 1, unitPrice: 0, amount: 0 },
@@ -67,6 +76,11 @@ function NewOrderForm() {
         setTitle(project.name || "");
         setCategory("SERVICE");
         setCustomerId(project.customerId || project.cust?.id || "");
+        setCustomerName(project.client || project.cust?.name || "");
+        setCustomerOrgName(project.organization || project.cust?.organization || "");
+        setBuyerName(project.client || project.cust?.name || "");
+        setBuyerOrgName(project.organization || project.cust?.organization || "");
+        setBuyerOrgId(project.organizationId || project.cust?.organizationId || "");
         setRepresentativeId(project.representativeId || "");
         setProjectAction("LINK");
         setProjectId(project.id);
@@ -86,7 +100,7 @@ function NewOrderForm() {
     })();
   }, [fromProjectId]);
 
-  const handleDraftApply = useCallback((fields: Record<string, unknown>) => {
+  const handleDraftApply = useCallback(async (fields: Record<string, unknown>) => {
     if (fields.title) setTitle(String(fields.title));
     if (fields.description) setDescription(String(fields.description));
     if (fields.category && ["SERVICE", "PRODUCT", "MIXED"].includes(String(fields.category))) {
@@ -94,12 +108,96 @@ function NewOrderForm() {
     }
     if (fields.customer && typeof fields.customer === "object") {
       const cust = fields.customer as Record<string, unknown>;
-      if (cust.matched && cust.id) setCustomerId(String(cust.id));
+      if (cust.matched && cust.id) {
+        // Existing customer — fill directly
+        setCustomerId(String(cust.id));
+        setCustomerName(String(cust.name || ""));
+        setCustomerOrgName(String(cust.organization || ""));
+        if (cust.name) setBuyerName(String(cust.name));
+        if (cust.organization) setBuyerOrgName(String(cust.organization));
+        if (cust.organizationId) setBuyerOrgId(String(cust.organizationId));
+      } else if (cust.shouldCreate && cust.name) {
+        // New customer — create via API then fill
+        const createCustomerFromDraft = async () => {
+          const orgEntity = typeof fields.buyerOrgNameSnapshot === "object" && fields.buyerOrgNameSnapshot !== null
+            ? (fields.buyerOrgNameSnapshot as Record<string, unknown>)
+            : null;
+          const orgName = orgEntity ? String(orgEntity.name || "") : (typeof fields.buyerOrgNameSnapshot === "string" ? String(fields.buyerOrgNameSnapshot) : "");
+          const orgId = orgEntity ? String(orgEntity.id || "") : "";
+
+          const res = await fetch("/api/customers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: String(cust.name),
+              principal: (cust.principal as string)?.trim() || (fields.buyerPhoneSnapshot as string)?.trim() || undefined,
+              wechat: (cust.wechat as string)?.trim() || (fields.buyerWechatSnapshot as string)?.trim() || undefined,
+              address: (cust.address as string)?.trim() || (fields.buyerAddressSnapshot as string)?.trim() || undefined,
+              organization: (cust.organization as string)?.trim() || orgName || undefined,
+              organizationId: (cust.organizationId as string) || orgId || undefined,
+              organizationRawInput: (cust.organization as string)?.trim() || orgName || undefined,
+            }),
+          });
+          return res;
+        };
+
+        try {
+          const res = await createCustomerFromDraft();
+          if (res.ok) {
+            const data = await res.json();
+            const created = data.customer;
+            if (created?.id) {
+              setCustomerId(String(created.id));
+              setCustomerName(String(created.name || cust.name));
+              if (created.organization) setCustomerOrgName(String(created.organization));
+              if (created.organizationId) setBuyerOrgId(String(created.organizationId));
+              if (created.principal) setBuyerPhone(String(created.principal));
+              if (created.wechat) setBuyerWechat(String(created.wechat));
+              if (created.address) setBuyerAddress(String(created.address));
+              // Rep: use returned value or explicitly clear
+              setRepresentativeId(created.representativeId ? String(created.representativeId) : "");
+              setRepresentativeName(created.representativeName ? String(created.representativeName) : "");
+              setBuyerName(String(cust.name));
+              if (cust.organization) setBuyerOrgName(String(cust.organization as string));
+              // Invalidate customer list cache so pickers reflect new customer
+              queryClient.invalidateQueries({ queryKey: ["customers-list"] });
+              toast.success(`已创建客户 "${String(cust.name)}"`);
+            }
+          } else {
+            const err = await res.json().catch(() => ({}));
+            toast.error(err.error || "客户创建失败，请在表单中手动选择");
+            setCustomerId("");
+            setCustomerName("");
+            setRepresentativeId("");
+            setRepresentativeName("");
+            setBuyerName(String(cust.name));
+          }
+        } catch {
+          toast.error("客户创建失败，请在表单中手动选择");
+          setCustomerId("");
+          setCustomerName("");
+          setRepresentativeId("");
+          setRepresentativeName("");
+          setBuyerName(String(cust.name));
+        }
+      } else if (cust.name) {
+        // Unmatched, not marked for creation — just fill buyer name
+        setBuyerName(String(cust.name));
+      }
     }
     if (fields.buyerNameSnapshot) setBuyerName(String(fields.buyerNameSnapshot));
     if (fields.buyerPhoneSnapshot) setBuyerPhone(String(fields.buyerPhoneSnapshot));
     if (fields.buyerWechatSnapshot) setBuyerWechat(String(fields.buyerWechatSnapshot));
-    if (fields.buyerOrgNameSnapshot) setBuyerOrgName(String(fields.buyerOrgNameSnapshot));
+    if (fields.buyerOrgNameSnapshot) {
+      if (typeof fields.buyerOrgNameSnapshot === "object" && fields.buyerOrgNameSnapshot !== null) {
+        const org = fields.buyerOrgNameSnapshot as Record<string, unknown>;
+        setBuyerOrgName(String(org.name || ""));
+        setBuyerOrgId(String(org.id || ""));
+      } else {
+        setBuyerOrgName(String(fields.buyerOrgNameSnapshot));
+        setBuyerOrgId("");
+      }
+    }
     if (fields.buyerAddressSnapshot) setBuyerAddress(String(fields.buyerAddressSnapshot));
     if (fields.orderedAt) {
       const d = String(fields.orderedAt);
@@ -134,7 +232,7 @@ function NewOrderForm() {
     }
     if (fields.financeTreatment) setFinanceTreatment(String(fields.financeTreatment));
     toast.success("已从草稿填充订单信息，请核对后提交");
-  }, []);
+  }, [queryClient]);
 
   if (status === "loading") return <div className="p-8 text-muted-foreground">加载中...</div>;
   if (status === "unauthenticated") { router.push("/login"); return null; }
@@ -204,7 +302,7 @@ function NewOrderForm() {
         formKey="order.create"
         fieldLabels={ORDER_FIELD_LABELS}
         onApply={handleDraftApply}
-        fallbackPlugin="project.smart-fill"
+        fallbackPlugin="order.smart-fill"
       />
 
       {error && <Card className="p-3 text-sm text-red-600 bg-red-50 border-red-200">{error}</Card>}
@@ -228,9 +326,71 @@ function NewOrderForm() {
           <div><label className="text-sm font-medium">下单日期</label><Input type="date" value={orderedAt} onChange={(e) => setOrderedAt(e.target.value)} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className="text-sm font-medium">客户ID</label><Input value={customerId} onChange={(e) => setCustomerId(e.target.value)} placeholder="可选" /></div>
-          <div><label className="text-sm font-medium">代表ID</label><Input value={representativeId} onChange={(e) => setRepresentativeId(e.target.value)} placeholder="可选" /></div>
+          <div>
+            <label className="text-sm font-medium">客户</label>
+            <CustomerSelect
+              value={customerId}
+              displayValue={customerName}
+              onChange={(id, name, org, organizationId, customer) => {
+                setCustomerId(id || "");
+                setCustomerName(name || "");
+                setCustomerOrgName(org || "");
+
+                if (id && customer) {
+                  setBuyerName(customer.name || "");
+                  setBuyerPhone(customer.principal || "");
+                  setBuyerWechat(customer.wechat || "");
+                  setBuyerAddress(customer.address || "");
+                  setBuyerOrgName(customer.organization || "");
+                  setBuyerOrgId(customer.organizationId || "");
+                  setRepresentativeId(customer.representativeId || "");
+                  setRepresentativeName(customer.representativeName || "");
+                } else {
+                  // Customer cleared — clear representative, keep buyer snapshots
+                  setRepresentativeId("");
+                  setRepresentativeName("");
+                }
+              }}
+              quickCreateDefaults={{
+                name: buyerName,
+                principal: buyerPhone,
+                wechat: buyerWechat,
+                organization: buyerOrgName,
+                organizationId: buyerOrgId,
+                address: buyerAddress,
+              }}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">代表</label>
+            {customerId ? (
+              <>
+                <Input
+                  value={representativeName || representativeId || "由客户 CRM 负责人同步"}
+                  disabled
+                  className="text-muted-foreground"
+                />
+                {!representativeId && !representativeName && (
+                  <p className="text-xs text-muted-foreground mt-1">无匹配代表</p>
+                )}
+              </>
+            ) : (
+              <RepresentativeSelect
+                value={representativeId}
+                displayValue={representativeName}
+                onChange={(id, name) => {
+                  setRepresentativeId(id || "");
+                  setRepresentativeName(name || "");
+                }}
+              />
+            )}
+          </div>
         </div>
+        {(customerName || customerOrgName) && (
+          <div className="text-xs text-muted-foreground">
+            已选客户：{customerName || customerId}{customerOrgName ? ` / ${customerOrgName}` : ""}
+          </div>
+        )}
       </Card>
 
       {/* Buyer Snapshot */}
@@ -240,7 +400,17 @@ function NewOrderForm() {
           <div><label className="text-sm font-medium">收件人</label><Input value={buyerName} onChange={(e) => setBuyerName(e.target.value)} placeholder="收件人姓名" /></div>
           <div><label className="text-sm font-medium">电话</label><Input value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} placeholder="联系电话" /></div>
           <div><label className="text-sm font-medium">微信</label><Input value={buyerWechat} onChange={(e) => setBuyerWechat(e.target.value)} placeholder="微信号" /></div>
-          <div><label className="text-sm font-medium">单位</label><Input value={buyerOrgName} onChange={(e) => setBuyerOrgName(e.target.value)} placeholder="单位名称" /></div>
+          <div>
+            <label className="text-sm font-medium">单位</label>
+            <OrganizationSelect
+              value={buyerOrgId}
+              displayValue={buyerOrgName}
+              onChange={(id, name) => {
+                setBuyerOrgId(id || "");
+                setBuyerOrgName(name || "");
+              }}
+            />
+          </div>
         </div>
         <div><label className="text-sm font-medium">地址</label><Input value={buyerAddress} onChange={(e) => setBuyerAddress(e.target.value)} placeholder="收货地址" /></div>
       </Card>

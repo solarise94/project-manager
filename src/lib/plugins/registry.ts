@@ -16,6 +16,7 @@ async function ensureLoaded() {
   loadPromise = (async () => {
     await import("./builtin/project-digest");
     await import("./builtin/project-smart-fill");
+    await import("./builtin/order-smart-fill");
     await import("./builtin/project-auto-draft");
   })();
   return loadPromise;

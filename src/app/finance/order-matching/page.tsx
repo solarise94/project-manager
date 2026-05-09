@@ -635,6 +635,7 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
             receiverPhone: matchDialogOrder.receiverPhone,
             orderUser: matchDialogOrder.orderUser,
             receiverAddress: matchDialogOrder.receiverAddress,
+            storeName: matchDialogOrder.storeName,
           }}
           onBound={() => queryClient.invalidateQueries({ queryKey: ["orders"] })}
         />

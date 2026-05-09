@@ -27,7 +27,9 @@ export function buildPass1Prompt(schema: FormSchema, projectCtx?: ProjectPluginC
 - 客户: ${p.client || "未知"}`;
   }
 
-  return `你是科研项目信息提取助手。从用户提供的文本中提取项目字段。
+  const formLabel = schema.formKey.startsWith("order.") ? "订单" : schema.formKey.startsWith("customer.") ? "客户" : schema.formKey.startsWith("ticket.") ? "工单" : "项目";
+
+  return `你是科研${formLabel}信息提取助手。从用户提供的文本中提取${formLabel}字段。
 
 字段定义：
 ${fieldDefs.join("\n")}
@@ -52,8 +54,9 @@ ${fieldDefs.join("\n")}
 
 export function buildPass2Prompt(schema: FormSchema): string {
   const fieldKeys = schema.fields.map((f) => f.key).join(", ");
+  const formLabel = schema.formKey.startsWith("order.") ? "订单" : schema.formKey.startsWith("customer.") ? "客户" : schema.formKey.startsWith("ticket.") ? "工单" : "项目";
 
-  return `你是科研项目信息校验助手。根据搜索补充信息修正和完善字段值。
+  return `你是科研${formLabel}信息校验助手。根据搜索补充信息修正和完善字段值。
 
 可修正的字段: ${fieldKeys}
 

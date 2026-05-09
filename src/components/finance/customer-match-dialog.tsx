@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OrganizationSelect } from "@/components/organization-select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -19,6 +20,8 @@ interface Customer {
   organization: string | null;
   principal: string | null;
   wechat: string | null;
+  address: string | null;
+  representativeName?: string | null;
 }
 
 interface OrderPrefill {
@@ -26,6 +29,7 @@ interface OrderPrefill {
   receiverPhone: string | null;
   orderUser: string | null;
   receiverAddress: string | null;
+  storeName?: string | null;
 }
 
 interface CustomerMatchDialogProps {
@@ -62,6 +66,7 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
   const [custWechat, setCustWechat] = useState("");
   const [custAddress, setCustAddress] = useState("");
   const [custOrg, setCustOrg] = useState("");
+  const [custOrgId, setCustOrgId] = useState("");
   // Prefill/reset on open change
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -70,13 +75,15 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
         setCustPrincipal(orderPrefill.receiverPhone || "");
         setCustWechat(orderPrefill.orderUser || "");
         setCustAddress(orderPrefill.receiverAddress || "");
-        setCustOrg(extractOrgFromAddress(orderPrefill.receiverAddress));
+        setCustOrg(orderPrefill.storeName || extractOrgFromAddress(orderPrefill.receiverAddress));
+        setCustOrgId("");
       } else if (!open) {
         setCustName("");
         setCustPrincipal("");
         setCustWechat("");
         setCustAddress("");
         setCustOrg("");
+        setCustOrgId("");
       }
     });
     return () => cancelAnimationFrame(raf);
@@ -183,7 +190,8 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
         wechat: custWechat.trim() || undefined,
         address: custAddress.trim() || undefined,
         organization: custOrg.trim() || undefined,
-        organizationRawInput: custAddress.trim() || undefined,
+        organizationId: custOrgId || undefined,
+        organizationRawInput: custOrg.trim() || custAddress.trim() || undefined,
       } as unknown as Record<string, string>);
 
       const createdCustomer = newCust?.customer;
@@ -237,8 +245,14 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
                   <button key={cust.id} type="button"
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${selectedId === cust.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
                     onClick={() => setSelectedId(cust.id)}>
-                    <div className="font-medium">{cust.name}</div>
-                    <div className="text-xs opacity-70">{cust.customerCode}{cust.organization ? ` · ${cust.organization}` : ""}</div>
+                    <div className="font-medium">{cust.name} <span className="font-normal opacity-70">({cust.customerCode})</span></div>
+                    {cust.organization && <div className="text-xs opacity-70">单位: {cust.organization}</div>}
+                    {(cust.principal || cust.wechat) && (
+                      <div className="text-xs opacity-70">{[cust.principal && `☎ ${cust.principal}`, cust.wechat && `💬 ${cust.wechat}`].filter(Boolean).join(" / ")}</div>
+                    )}
+                    {cust.representativeName && (
+                      <div className="text-xs text-blue-600">代表: {cust.representativeName}</div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -267,7 +281,14 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
               </div>
               <div className="space-y-1.5">
                 <Label>单位</Label>
-                <Input value={custOrg} onChange={(e) => setCustOrg(e.target.value)} placeholder="从地址解析" />
+                <OrganizationSelect
+                  value={custOrgId}
+                  displayValue={custOrg}
+                  onChange={(id, name) => {
+                    setCustOrgId(id || "");
+                    setCustOrg(name || "");
+                  }}
+                />
               </div>
               <div className="col-span-2 space-y-1.5">
                 <Label>地址</Label>

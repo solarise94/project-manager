@@ -192,12 +192,13 @@ export function CustomerEditDialog({
                 />
               </div>
               <div className="space-y-2">
-                <Label>课题组负责人</Label>
+                <Label>电话/手机号</Label>
                 <Input
                   value={form.principal}
                   onChange={(e) =>
                     setForm({ ...form, principal: e.target.value })
                   }
+                  placeholder="订单自动代入使用客户主数据电话和微信"
                 />
               </div>
             </div>

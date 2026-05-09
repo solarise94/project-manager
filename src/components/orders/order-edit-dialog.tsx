@@ -291,12 +291,37 @@ export function OrderEditDialog({ orderId, open, onOpenChange, onUpdated }: Orde
                 <Label>客户</Label>
                 <CustomerSelect
                   value={(form.customerId as string) || ""}
-                  onChange={(id) => { updateForm("customerId", id || ""); }}
+                  onChange={(id, name, org, organizationId, customer) => {
+                    updateForm("customerId", id || "");
+                    if (id && customer) {
+                      updateForm("buyerNameSnapshot", customer.name || "");
+                      updateForm("buyerPhoneSnapshot", customer.principal || "");
+                      updateForm("buyerWechatSnapshot", customer.wechat || "");
+                      updateForm("buyerAddressSnapshot", customer.address || "");
+                      updateForm("buyerOrgNameSnapshot", customer.organization || "");
+                      updateForm("representativeId", customer.representativeId || "");
+                      updateForm("representativeName", customer.representativeName || "");
+                      updateForm("customerMatchStatus", "MANUAL_MATCHED");
+                    } else {
+                      // Customer cleared — clear rep and reset match status
+                      updateForm("representativeId", "");
+                      updateForm("representativeName", "");
+                      updateForm("customerMatchStatus", "UNMATCHED");
+                    }
+                  }}
                 />
               </div>
               <div className="space-y-2">
                 <Label>代表</Label>
-                <Input value={(form.representativeName as string) || (form.representativeId as string) || "（保存后自动同步）"} disabled />
+                <Input
+                  value={(form.customerId as string)
+                    ? ((form.representativeName as string) || (form.representativeId as string) || "由客户 CRM 负责人同步")
+                    : ((form.representativeName as string) || (form.representativeId as string) || "（保存后自动同步）")}
+                  disabled
+                />
+                {(form.customerId as string) && !(form.representativeId as string) && !(form.representativeName as string) && (
+                  <p className="text-xs text-muted-foreground mt-1">无匹配代表</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">

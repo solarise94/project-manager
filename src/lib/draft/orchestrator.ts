@@ -90,7 +90,8 @@ export async function runDraftOrchestrator(input: OrchestratorInput): Promise<Or
   let fieldMeta = (parsed.fieldMeta || {}) as FieldMetaMap;
 
   // 2.5. Entity resolution — match client/organization against DB (concurrent)
-  const orgHint = typeof fields.organization === "string" ? fields.organization : undefined;
+  const orgHintValue = fields.organization ?? fields.buyerOrgNameSnapshot;
+  const orgHint = typeof orgHintValue === "string" ? orgHintValue : undefined;
   const entityPromises: Array<{ key: string; type: "organization" | "customer"; promise: ReturnType<typeof resolveOrgEntity> | ReturnType<typeof resolveCustomerEntity> }> = [];
 
   for (const fieldSchema of schema.fields) {

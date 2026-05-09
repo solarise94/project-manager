@@ -107,10 +107,10 @@ export function DraftPreview({ open, onOpenChange, draft, summary, warnings, fie
       const merged = { ...fields };
       for (const [key, selectedId] of Object.entries(entitySelections)) {
         if (selectedId === "__create__") {
-          // User chose "新建" from candidate list
+          // User chose "新建" from candidate list — keep all entity fields, override matched/shouldCreate
           const val = merged[key];
           if (isEntityValue(val)) {
-            merged[key] = { name: val.name, matched: false, shouldCreate: true };
+            merged[key] = { ...val, matched: false, shouldCreate: true };
           }
         } else {
           const val = merged[key];
