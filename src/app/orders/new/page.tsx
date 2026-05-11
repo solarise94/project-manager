@@ -29,6 +29,14 @@ const ORDER_FIELD_LABELS: Record<string, string> = {
   initialCost: "订单成本", initialCostType: "成本类型", initialCostRemark: "成本备注",
 };
 
+const DERIVED_PROJECT_TYPES = new Set(["商品", "服务", "混合"]);
+
+function deriveProjectTypeFromCategory(category: string): string {
+  if (category === "PRODUCT") return "商品";
+  if (category === "MIXED") return "混合";
+  return "服务";
+}
+
 function NewOrderForm() {
   const router = useRouter();
   const { status, data: session } = useSession();
@@ -48,7 +56,7 @@ function NewOrderForm() {
   const [projectId, setProjectId] = useState("");
   const [manualProjectOverride, setManualProjectOverride] = useState(false);
   // Project draft fields (for GENERATE)
-  const [pProjectType, setPProjectType] = useState(category === "PRODUCT" ? "商品" : category === "MIXED" ? "混合" : "服务");
+  const [pProjectType, setPProjectType] = useState(deriveProjectTypeFromCategory(category));
   const pProjectTypeTouched = useRef(false);
   const [pProjectContent, setPProjectContent] = useState("");
   const [pQuantity, setPQuantity] = useState("");
@@ -127,11 +135,11 @@ function NewOrderForm() {
   // Only auto-sync when the current value is still a simple category-derived default
   // ("商品"/"服务"/"混合"). AI drafts often fill a richer projectType like "mRNA转录组测序"
   // — those should be preserved even though the user hasn't manually touched the input.
-  const DERIVED_TYPE_SET = new Set(["商品", "服务", "混合"]);
   useEffect(() => {
-    if (!pProjectTypeTouched.current && DERIVED_TYPE_SET.has(pProjectType)) {
-      setPProjectType(category === "PRODUCT" ? "商品" : category === "MIXED" ? "混合" : "服务");
-    }
+    if (pProjectTypeTouched.current) return;
+    setPProjectType((current) => (
+      DERIVED_PROJECT_TYPES.has(current) ? deriveProjectTypeFromCategory(category) : current
+    ));
   }, [category]);
 
   useEffect(() => {
@@ -391,7 +399,7 @@ function NewOrderForm() {
     if (next === "GENERATE") {
       setProjectAction("GENERATE");
       setFinanceTreatment("PROJECT_INCLUDED");
-      if (!pProjectType && !pProjectTypeTouched.current) setPProjectType(category === "PRODUCT" ? "商品" : "服务");
+      if (!pProjectType && !pProjectTypeTouched.current) setPProjectType(deriveProjectTypeFromCategory(category));
       if (!pBudgetCost && initialCost) setPBudgetCost(initialCost);
     }
     if (next === "NONE") {
