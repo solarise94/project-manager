@@ -4,7 +4,6 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -71,7 +70,7 @@ function RegionManagerConfig() {
                     <div className="font-medium">{m.user.name}</div>
                     <div className="text-xs text-muted-foreground">{m.user.email}</div>
                   </td>
-                  <td className="p-3 hidden md:table-cell text-muted-foreground">{m.regionName || "-"}</td>
+                  <td className="p-3 hidden md:table-cell text-muted-foreground">{m.region?.name || "-"}</td>
                   <td className="p-3">
                     <span className="text-xs bg-blue-100 text-blue-700 rounded px-2 py-0.5">
                       {m.reps.length} 位代表
@@ -134,7 +133,7 @@ function RegionManagerDialog({
   onSaved: () => void;
 }) {
   const [selectedUserId, setSelectedUserId] = useState(edit?.userId || "");
-  const [regionName, setRegionName] = useState(edit?.regionName || "");
+  const [regionId, setRegionId] = useState(edit?.regionId || "");
   const [selectedRepIds, setSelectedRepIds] = useState<string[]>(
     edit?.reps.map((r) => r.representativeId) || []
   );
@@ -147,15 +146,20 @@ function RegionManagerDialog({
     queryKey: ["admin-representatives"],
     queryFn: () => fetch("/api/representatives/list").then((r) => r.json()),
   });
+  const { data: regionsData } = useQuery<{ regions: { id: string; name: string }[] }>({
+    queryKey: ["representative-regions"],
+    queryFn: () => fetch("/api/crm/representative-regions").then((r) => r.json()),
+  });
 
   const users = usersData?.users || [];
   const reps = repsData?.representatives || [];
+  const regions = regionsData?.regions || [];
 
   const mutation = useMutation({
     mutationFn: async () => {
       const url = edit ? `/api/crm/region-managers/${edit.id}` : "/api/crm/region-managers";
       const method = edit ? "PATCH" : "POST";
-      const body: Record<string, unknown> = edit ? { regionName, repIds: selectedRepIds } : { userId: selectedUserId, regionName, repIds: selectedRepIds };
+      const body: Record<string, unknown> = edit ? { regionId: regionId || null, repIds: selectedRepIds } : { userId: selectedUserId, regionId: regionId || null, repIds: selectedRepIds };
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!res.ok) {
         const d = await res.json();
@@ -194,7 +198,22 @@ function RegionManagerDialog({
           )}
           <div>
             <label className="text-sm font-medium">地区名称</label>
-            <Input value={regionName} onChange={(e) => setRegionName(e.target.value)} placeholder="如: 华东区、华南区..." />
+            <Select value={regionId} onValueChange={(v) => setRegionId(v || "")}>
+              <SelectTrigger>
+                {regionId
+                  ? <span>{regions.find((r) => r.id === regionId)?.name || regionId}</span>
+                  : <span className="text-muted-foreground">选择地区...</span>}
+              </SelectTrigger>
+              <SelectContent>
+                {regions.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              如需新增地区，请前往{" "}
+              <a href="/admin/representative-regions" className="text-primary hover:underline">地区管理</a>
+            </p>
           </div>
           <div>
             <label className="text-sm font-medium">负责代表 ({selectedRepIds.length} 位)</label>

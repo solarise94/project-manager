@@ -2,12 +2,16 @@
 
 import { useSession } from "next-auth/react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import Link from "next/link";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeDetail } from "@/lib/crm/types";
+import { RepresentativeReportPanel } from "@/components/crm/representative-report-panel";
+import { RepresentativeRegionEditor } from "@/components/crm/representative-region-editor";
 import { StageBadge, ImportanceBadge, FollowUpStatusBadge } from "@/components/crm/badges";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ArrowLeft, Users, MapPin, AlertTriangle, Clock, Network } from "lucide-react";
 
 export default function RepDetailPage() {
@@ -24,6 +28,9 @@ function RepDetail() {
   const params = useParams<{ representativeId: string }>();
   const repId = params.representativeId;
   const router = useRouter();
+  const { data: session } = useSession();
+  const queryClient = useQueryClient();
+  const [regionEditorOpen, setRegionEditorOpen] = useState(false);
 
   const { data, isLoading } = useQuery<CrmRepresentativeDetail>({
     queryKey: crmKeys.representativeOpsDetail(repId),
@@ -38,7 +45,7 @@ function RepDetail() {
   if (isLoading) return <div className="p-6">加载中...</div>;
   if (!data) return <div className="p-6">未找到代表</div>;
 
-  const { representative, linkedUser, customerCount, visitCheckinCount, lastCheckinAt, overdueFollowUps, longUnvisitedCount, customers, recentCheckins, openFollowUps, relationCount } = data;
+  const { representative, linkedUser, customerCount, visitCheckinCount, lastCheckinAt, overdueFollowUps, longUnvisitedCount, customers, recentCheckins, openFollowUps, relationCount, regions } = data;
 
   return (
     <div className="p-6 space-y-4">
@@ -67,13 +74,13 @@ function RepDetail() {
 
       {/* Tabs */}
       <div className="flex gap-2 border-b pb-2">
-        {(["overview", "customers", "checkins", "followUps"] as const).map((t) => (
+        {(["overview", "customers", "checkins", "followUps", "report"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-3 py-1.5 text-sm rounded ${tab === t ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
           >
-            {t === "overview" ? "概览" : t === "customers" ? "名下客户" : t === "checkins" ? "拜访记录" : "跟进任务"}
+            {t === "overview" ? "概览" : t === "customers" ? "名下客户" : t === "checkins" ? "拜访记录" : t === "followUps" ? "跟进任务" : "周报"}
           </button>
         ))}
       </div>
@@ -81,7 +88,7 @@ function RepDetail() {
       {/* Tab content */}
       {tab === "overview" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="border rounded-lg p-4">
               <h3 className="font-medium mb-2">代表信息</h3>
               <dl className="text-sm space-y-1">
@@ -90,6 +97,29 @@ function RepDetail() {
                 <div className="flex gap-2"><dt className="text-muted-foreground">系统用户:</dt><dd>{linkedUser?.name || "未关联"}</dd></div>
               </dl>
             </div>
+
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-medium">所属地区</h3>
+                {session?.user?.role === "ADMIN" && (
+                  <Button variant="outline" size="sm" onClick={() => setRegionEditorOpen(true)}>
+                    编辑地区
+                  </Button>
+                )}
+              </div>
+              {regions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">未设置地区</p>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {regions.map((r) => (
+                    <Badge key={r.id} variant="secondary" className="text-xs">
+                      {r.name}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="border rounded-lg p-4">
               <h3 className="font-medium mb-2">近期动态</h3>
               {recentCheckins.length === 0 ? (
@@ -106,6 +136,18 @@ function RepDetail() {
               )}
             </div>
           </div>
+
+          {session?.user?.role === "ADMIN" && (
+            <RepresentativeRegionEditor
+              open={regionEditorOpen}
+              onOpenChange={setRegionEditorOpen}
+              representativeId={repId}
+              onSaved={() => {
+                queryClient.invalidateQueries({ queryKey: crmKeys.representativeOpsDetail(repId) });
+                queryClient.invalidateQueries({ queryKey: crmKeys.representativeOps() });
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -198,6 +240,9 @@ function RepDetail() {
             </table>
           </div>
         )
+      )}
+      {tab === "report" && (
+        <RepresentativeReportPanel representativeId={representative.id} readOnly />
       )}
     </div>
   );

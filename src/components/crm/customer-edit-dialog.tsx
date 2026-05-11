@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { OrganizationSelect } from "@/components/organization-select";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { CRM_PERSON_CATEGORIES, PERSON_CATEGORY_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
@@ -53,6 +53,13 @@ export function CustomerEditDialog({
   const [profileId, setProfileId] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const queryClient = useQueryClient();
+
+  const { data: orgSitesData } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
+    queryKey: ["organization-sites", form.organizationId],
+    queryFn: () => fetch(`/api/organizations/${form.organizationId}`).then((r) => r.json()).then((d) => ({ sites: d.organization?.sites || [] })),
+    enabled: !!form.organizationId && open,
+  });
+  const orgSites = orgSitesData?.sites || [];
 
   useEffect(() => {
     if (!open || !customerId) return;
@@ -236,6 +243,20 @@ export function CustomerEditDialog({
                 }}
               />
             </div>
+            {form.organizationId && orgSites.length > 0 && (
+              <div className="space-y-2">
+                <Label>院区/学院/大楼</Label>
+                <Select value={form.organizationSiteId || "__none__"} onValueChange={(v) => setForm({ ...form, organizationSiteId: (v === "__none__" || v === null) ? "" : v })}>
+                  <SelectTrigger><span>{form.organizationSiteId ? (orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId) : "不选择（可选）"}</span></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">不选择</SelectItem>
+                    {orgSites.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.siteName} ({s.siteType})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>通讯地址</Label>
               <Input

@@ -42,6 +42,9 @@ model User {
   customerRelationsCreated     CustomerRelation[]
   crmApplicationsSubmitted     CrmCustomerApplication[]      @relation("CrmApplicationsSubmitted")
   crmApplicationsReviewed      CrmCustomerApplication[]      @relation("CrmApplicationsReviewed")
+  crmApplicationsAdminReviewed CrmCustomerApplication[]      @relation("CrmApplicationsAdminReviewed")
+  reportDraftsCreated          CrmRepresentativeReportDraft[] @relation("ReportDraftCreatedBy")
+  reportDraftsUpdated          CrmRepresentativeReportDraft[] @relation("ReportDraftUpdatedBy")
   RegionManagers               CrmRegionManager[]
   crmProfilesAssigned          CrmCustomerProfile[]          @relation("CrmAssignedByUser")
   crmProfilesRecalled          CrmCustomerProfile[]          @relation("CrmRecalledByUser")
@@ -68,6 +71,8 @@ model Representative {
   projects           Project[]
   orders             Order[]
   regionManagerLinks CrmRegionManagerRepresentative[]
+  regionAssignments  RepresentativeRegionAssignment[]
+  reportDrafts       CrmRepresentativeReportDraft[]
 }
 
 model ProcurementChannel {
@@ -1022,11 +1027,19 @@ model CrmCustomerApplication {
   createdCustomer     Customer?           @relation("CrmApplicationsCreatedCustomer", fields: [createdCustomerId], references: [id])
   createdCrmProfileId String?
   createdCrmProfile   CrmCustomerProfile? @relation("CrmApplicationsCreatedProfile", fields: [createdCrmProfileId], references: [id])
+  autoApproved        Boolean             @default(false)
+  autoApprovedAt      DateTime?
+  adminReviewStatus   String              @default("NONE") // NONE | PENDING | CONFIRMED | REJECTED
+  adminReviewedByUserId String?
+  adminReviewedByUser User?               @relation("CrmApplicationsAdminReviewed", fields: [adminReviewedByUserId], references: [id])
+  adminReviewedAt     DateTime?
+  adminReviewNote     String?
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
   @@index([submittedByUserId])
   @@index([status])
+  @@index([adminReviewStatus])
 }
 
 model CustomerRelation {
@@ -1053,7 +1066,8 @@ model CrmRegionManager {
   id         String                           @id @default(cuid())
   userId     String                           @unique
   user       User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  regionName String?
+  regionId   String?
+  region     RepresentativeRegion?            @relation(fields: [regionId], references: [id], onDelete: SetNull)
   archived   Boolean                          @default(false)
   createdAt  DateTime                         @default(now())
   updatedAt  DateTime                         @updatedAt
@@ -1070,6 +1084,51 @@ model CrmRegionManagerRepresentative {
 
   @@unique([managerId, representativeId])
   @@index([representativeId])
+}
+
+model RepresentativeRegion {
+  id          String                           @id @default(cuid())
+  name        String                           @unique
+  province    String?
+  city        String?
+  district    String?
+  description String?
+  archived    Boolean                          @default(false)
+  createdAt   DateTime                         @default(now())
+  updatedAt   DateTime                         @updatedAt
+  reps        RepresentativeRegionAssignment[]
+  managers    CrmRegionManager[]
+}
+
+model RepresentativeRegionAssignment {
+  id               String               @id @default(cuid())
+  representativeId String
+  representative   Representative       @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  regionId         String
+  region           RepresentativeRegion @relation(fields: [regionId], references: [id], onDelete: Cascade)
+  isPrimary        Boolean              @default(false)
+  assignedAt       DateTime             @default(now())
+
+  @@unique([representativeId, regionId])
+  @@index([regionId])
+}
+
+model CrmRepresentativeReportDraft {
+  id               String         @id @default(cuid())
+  representativeId String
+  representative   Representative @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  periodType       String         // WEEK | DAY
+  periodKey        String         // e.g. "2026-05-05" (Monday date)
+  note             String         @default("")
+  createdByUserId  String
+  createdByUser    User           @relation("ReportDraftCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  updatedByUserId  String?
+  updatedByUser    User?          @relation("ReportDraftUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([representativeId, periodType, periodKey])
+  @@index([periodType, periodKey])
 }
 
 model CrmCustomerAssignmentLog {

@@ -11,6 +11,7 @@ export async function GET() {
   const managers = await prisma.crmRegionManager.findMany({
     include: {
       user: { select: { id: true, name: true, email: true } },
+      region: { select: { id: true, name: true } },
       reps: { include: { representative: { select: { id: true, name: true, email: true } } } },
     },
     orderBy: { createdAt: "desc" },
@@ -25,12 +26,20 @@ export async function POST(req: NextRequest) {
   if (session.user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
-  const { userId, regionName, repIds } = body;
+  const { userId, regionId, repIds } = body;
 
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+  // Validate regionId if provided
+  if (regionId) {
+    const region = await prisma.representativeRegion.findFirst({
+      where: { id: regionId, archived: false },
+    });
+    if (!region) return NextResponse.json({ error: "指定地区不存在或已归档" }, { status: 400 });
+  }
 
   const existing = await prisma.crmRegionManager.findUnique({ where: { userId } });
   if (existing) return NextResponse.json({ error: "该用户已是地区经理" }, { status: 409 });
@@ -44,13 +53,14 @@ export async function POST(req: NextRequest) {
     const created = await tx.crmRegionManager.create({
       data: {
         userId,
-        regionName: regionName || null,
+        regionId: regionId || null,
         reps: repIds?.length
           ? { create: repIds.map((repId: string) => ({ representativeId: repId })) }
           : undefined,
       },
       include: {
         user: { select: { id: true, name: true, email: true } },
+        region: { select: { id: true, name: true } },
         reps: { include: { representative: { select: { id: true, name: true, email: true } } } },
       },
     });

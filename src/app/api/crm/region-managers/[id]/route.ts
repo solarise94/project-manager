@@ -18,7 +18,17 @@ export async function PATCH(
   const body = await req.json();
   const data: Record<string, unknown> = {};
 
-  if (body.regionName !== undefined) data.regionName = body.regionName;
+  if (body.regionId !== undefined) {
+    if (body.regionId === null || body.regionId === "") {
+      data.regionId = null;
+    } else {
+      const region = await prisma.representativeRegion.findFirst({
+        where: { id: body.regionId, archived: false },
+      });
+      if (!region) return NextResponse.json({ error: "指定地区不存在或已归档" }, { status: 400 });
+      data.regionId = body.regionId;
+    }
+  }
   if (body.archived !== undefined) data.archived = body.archived;
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -54,6 +64,7 @@ export async function PATCH(
       data,
       include: {
         user: { select: { id: true, name: true, email: true } },
+        region: { select: { id: true, name: true } },
         reps: { include: { representative: { select: { id: true, name: true, email: true } } } },
       },
     });

@@ -6,8 +6,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import { StageBadge, ImportanceBadge, FollowUpStatusBadge, RelationTypeBadge } from "@/components/crm/badges";
 import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog";
 import { FollowUpFormDialog } from "@/components/crm/follow-up-form-dialog";
@@ -17,10 +15,11 @@ import { INTERACTION_TYPE_LABELS, ADDRESS_SOURCE_LABELS, RELATION_STRENGTH_LABEL
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmInteractionItem, CrmVisitCheckinItem, CrmCustomerAddressItem, CrmRelationItem } from "@/lib/crm/types";
 import { toast } from "sonner";
-import { ArrowLeft, Phone, Mail, Building2, Pencil, Loader2, MessageSquare, MapPin, ClipboardCheck, Network } from "lucide-react";
+import { ArrowLeft, Phone, Mail, Building2, Pencil, Loader2, MessageSquare, MapPin, ClipboardCheck, Network, Navigation, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
 import { useState, useCallback } from "react";
 import { CustomerEditDialog } from "@/components/crm/customer-edit-dialog";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 
 export default function CrmCustomerDetailPage() {
   const { status } = useSession();
@@ -91,19 +90,19 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
         <InfoItem icon={<Mail className="h-4 w-4" />} label="邮箱" value={customer.email} />
       </div>
 
-      <div className="sticky top-0 z-10 bg-background border-b pb-2 mb-2 md:hidden">
-        <div className="flex gap-2 overflow-x-auto">
-          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setQuickDialog("interaction")}>
-            <MessageSquare className="h-4 w-4 mr-1" />沟通
+      <div className="sticky top-0 z-20 backdrop-blur-md bg-background/90 shadow-sm border-b py-2 mb-2 md:hidden">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          <Button size="sm" variant="outline" className="shrink-0 h-8 px-2.5 py-1.5 text-xs" onClick={() => setQuickDialog("interaction")}>
+            <MessageSquare className="h-3.5 w-3.5 mr-1" />沟通
           </Button>
-          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setQuickDialog("checkin")}>
-            <MapPin className="h-4 w-4 mr-1" />签到
+          <Button size="sm" variant="outline" className="shrink-0 h-8 px-2.5 py-1.5 text-xs" onClick={() => setQuickDialog("checkin")}>
+            <MapPin className="h-3.5 w-3.5 mr-1" />签到
           </Button>
-          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setQuickDialog("followup")}>
-            <ClipboardCheck className="h-4 w-4 mr-1" />跟进
+          <Button size="sm" variant="outline" className="shrink-0 h-8 px-2.5 py-1.5 text-xs" onClick={() => setQuickDialog("followup")}>
+            <ClipboardCheck className="h-3.5 w-3.5 mr-1" />跟进
           </Button>
-          <Button size="sm" variant="outline" className="shrink-0" onClick={() => setActiveTab("relations")}>
-            <Network className="h-4 w-4 mr-1" />关系
+          <Button size="sm" variant="outline" className="shrink-0 h-8 px-2.5 py-1.5 text-xs" onClick={() => setActiveTab("relations")}>
+            <Network className="h-3.5 w-3.5 mr-1" />关系
           </Button>
         </div>
       </div>
@@ -145,18 +144,14 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
           ];
           return (
             <>
-              <div className="md:hidden">
-                <Label className="text-xs text-muted-foreground">当前栏目</Label>
-                <Select value={activeTab} onValueChange={(v) => setActiveTab(v || "overview")}>
-                  <SelectTrigger className="mt-1 w-full">
-                    <span>{crmDetailTabs.find((t) => t.value === activeTab)?.label}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {crmDetailTabs.map((t) => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="md:hidden overflow-x-auto no-scrollbar -mx-6 px-6">
+                <TabsList className="inline-flex h-10 w-auto">
+                  {crmDetailTabs.map((t) => (
+                    <TabsTrigger key={t.value} value={t.value} className="text-xs px-3 whitespace-nowrap">
+                      {t.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
               </div>
               <div className="hidden md:block">
                 <TabsList className="grid w-full grid-cols-6">
@@ -244,6 +239,17 @@ function OverviewTab({ profile, sourceCustomerId }: { profile: { id: string; own
 }
 
 function InteractionsTab({ profileId, interactions, sourceCustomerId }: { profileId: string; interactions: CrmInteractionItem[]; sourceCustomerId: string }) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleTranscript = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-3">
@@ -251,33 +257,56 @@ function InteractionsTab({ profileId, interactions, sourceCustomerId }: { profil
         <InteractionFormDialog profileId={profileId} sourceCustomerId={sourceCustomerId} />
       </div>
       {interactions.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无沟通记录</p>
+        <CrmEmptyState icon={MessageSquare} title="暂无沟通记录" description="点击上方按钮添加第一条沟通记录" />
       ) : (
         <div className="space-y-3">
-          {interactions.map((i) => (
-            <Card key={i.id}>
-              <CardContent className="pt-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs bg-muted px-2 py-0.5 rounded">{INTERACTION_TYPE_LABELS[i.type] || i.type}</span>
-                  <span className="text-xs text-muted-foreground">{new Date(i.happenedAt).toLocaleString("zh-CN")}</span>
-                  <span className="text-xs text-muted-foreground ml-auto">{i.createdByUser.name}</span>
-                </div>
-                <p className="text-sm font-medium">{i.summary}</p>
-                {i.detail && <p className="text-sm text-muted-foreground mt-1 break-words">{i.detail}</p>}
-                {i.summaryTitle && <p className="text-sm font-medium mt-1">AI: {i.summaryTitle}</p>}
-                {i.summaryNote && <p className="text-xs text-muted-foreground mt-0.5">{i.summaryNote}</p>}
-                {i.transcript && (
-                  <details className="mt-1">
-                    <summary className="text-xs text-muted-foreground cursor-pointer">查看转写文本</summary>
-                    <p className="text-xs text-muted-foreground bg-muted/50 rounded p-2 mt-1 max-h-24 overflow-y-auto">{i.transcript}</p>
-                  </details>
-                )}
-                {i.asrStatus === "TRANSCRIBING" && <p className="text-xs text-muted-foreground mt-1"><Loader2 className="h-3 w-3 inline animate-spin mr-1" />识别中...</p>}
-                {i.asrStatus === "FAILED" && <p className="text-xs text-red-500 mt-1">语音识别失败</p>}
-                {i.voiceUrl && <span className="text-xs text-muted-foreground mt-1">· 有录音</span>}
-              </CardContent>
-            </Card>
-          ))}
+          {interactions.map((i) => {
+            const isExpanded = expandedIds.has(i.id);
+            return (
+              <Card key={i.id}>
+                <CardContent className="pt-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs bg-muted px-2 py-0.5 rounded">{INTERACTION_TYPE_LABELS[i.type] || i.type}</span>
+                    <span className="text-xs text-muted-foreground">{new Date(i.happenedAt).toLocaleString("zh-CN")}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">{i.createdByUser.name}</span>
+                  </div>
+                  <p className="text-sm font-medium">{i.summary}</p>
+                  {i.detail && <p className="text-sm text-muted-foreground mt-1 break-words">{i.detail}</p>}
+                  {i.summaryTitle && <p className="text-sm font-medium mt-1">AI: {i.summaryTitle}</p>}
+                  {i.summaryNote && <p className="text-xs text-muted-foreground mt-0.5">{i.summaryNote}</p>}
+                  {i.transcript && (
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleTranscript(i.id)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {isExpanded ? (
+                          <>
+                            <ChevronUp className="h-3 w-3" /> 收起转写文本
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="h-3 w-3" /> 查看转写文本
+                          </>
+                        )}
+                      </button>
+                      <div
+                        className={`text-xs text-muted-foreground bg-muted/30 rounded-lg p-3 mt-2 overflow-y-auto transition-all duration-200 ${
+                          isExpanded ? "max-h-48 opacity-100" : "max-h-0 opacity-0 p-0"
+                        }`}
+                      >
+                        {i.transcript}
+                      </div>
+                    </div>
+                  )}
+                  {i.asrStatus === "TRANSCRIBING" && <p className="text-xs text-muted-foreground mt-1"><Loader2 className="h-3 w-3 inline animate-spin mr-1" />识别中...</p>}
+                  {i.asrStatus === "FAILED" && <p className="text-xs text-red-500 mt-1">语音识别失败</p>}
+                  {i.voiceUrl && <span className="text-xs text-muted-foreground mt-1">· 有录音</span>}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -354,7 +383,7 @@ function CheckinsTab({ profileId, checkins, sourceCustomerId }: { profileId: str
         <CheckinFlow profileId={profileId} sourceCustomerId={sourceCustomerId} />
       </div>
       {checkins.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无签到记录</p>
+        <CrmEmptyState icon={MapPin} title="暂无签到记录" description="点击上方按钮添加第一条签到记录" />
       ) : (
         <div className="space-y-3">
           {checkins.map((c) => (
@@ -421,7 +450,7 @@ function FollowUpsTab({ profileId, tasks, profileName, sourceCustomerId }: { pro
         <FollowUpFormDialog profileId={profileId} profileName={profileName} sourceCustomerId={sourceCustomerId} />
       </div>
       {tasks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无待处理跟进任务</p>
+        <CrmEmptyState icon={ClipboardCheck} title="暂无待处理跟进任务" description="点击上方按钮添加第一个跟进任务" />
       ) : (
         <div className="space-y-3">
           {tasks.map((t) => (
@@ -456,7 +485,7 @@ function AddressesTab({ addresses }: { addresses: CrmCustomerAddressItem[] }) {
     <div>
       <h3 className="font-medium mb-3">地址列表</h3>
       {addresses.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无地址记录</p>
+        <CrmEmptyState icon={Navigation} title="暂无地址记录" />
       ) : (
         <div className="space-y-3">
           {addresses.map((a) => (
@@ -559,7 +588,7 @@ function RelationsTab({ customerId, customerName }: { customerId: string; custom
       </div>
 
       {relations.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无关系记录</p>
+        <CrmEmptyState icon={Network} title="暂无关系记录" description="点击上方按钮添加第一条关系" />
       ) : (
         <div className="space-y-4">
           {referred.length > 0 && (

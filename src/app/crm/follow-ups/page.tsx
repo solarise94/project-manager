@@ -6,10 +6,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FollowUpStatusBadge } from "@/components/crm/badges";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 import type { CrmFollowUpTaskItem } from "@/lib/crm/types";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { toast } from "sonner";
 import Link from "next/link";
+import { ClipboardCheck } from "lucide-react";
 
 export default function CrmFollowUpsPage() {
   const { status } = useSession();
@@ -79,7 +81,7 @@ function FollowUpWorkbench() {
       <div>
         <h2 className="text-sm font-medium text-muted-foreground mb-2">待处理 ({upcoming.length})</h2>
         {upcoming.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无待处理任务</p>
+          <CrmEmptyState icon={ClipboardCheck} title="暂无待处理任务" />
         ) : (
           <div className="space-y-2">
             {upcoming.map((t) => (
@@ -94,7 +96,7 @@ function FollowUpWorkbench() {
 
 function TaskCard({ task, onComplete, isPending, isOverdue }: { task: CrmFollowUpTaskItem; onComplete: () => void; isPending: boolean; isOverdue?: boolean }) {
   return (
-    <Card className={isOverdue ? "border-red-200" : ""}>
+    <Card className={isOverdue ? "border-red-200 border-l-4 border-l-red-500" : ""}>
       <CardContent className="pt-4 flex items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium truncate">{task.title}</p>
@@ -105,7 +107,7 @@ function TaskCard({ task, onComplete, isPending, isOverdue }: { task: CrmFollowU
               </Link>
             )}
             <span>·</span>
-            <span className={isOverdue ? "text-red-600" : ""}>
+            <span className={isOverdue ? "text-red-600 font-medium" : ""}>
               截止: {new Date(task.dueAt).toLocaleString("zh-CN")}
             </span>
             <span>·</span>
@@ -114,7 +116,7 @@ function TaskCard({ task, onComplete, isPending, isOverdue }: { task: CrmFollowU
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <FollowUpStatusBadge status={task.status} />
-          <Button size="sm" variant="outline" onClick={onComplete} disabled={isPending}>
+          <Button size="default" variant="default" onClick={onComplete} disabled={isPending} className="min-w-[88px] h-10 md:h-9 md:text-sm">
             完成
           </Button>
         </div>

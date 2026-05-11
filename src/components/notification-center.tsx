@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle, Mail, MailX, RefreshCw } from "lucide-react";
+import { Bell, Check, CheckCheck, ClipboardCheck, Clock, Ticket, MessageSquare, Activity, AlertCircle, Mail, MailX, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { NotificationItem } from "@/lib/types";
@@ -16,6 +16,7 @@ import { toast } from "sonner";
 const TYPE_ICONS: Record<string, React.ElementType> = {
   REMINDER: Clock,
   CRM_FOLLOW_UP_REMINDER: Clock,
+  CRM_APPLICATION_REVIEW: ClipboardCheck,
   TICKET: Ticket,
   COMMENT: MessageSquare,
   STATUS: Activity,
@@ -25,13 +26,14 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
 const TYPE_COLORS: Record<string, string> = {
   REMINDER: "text-amber-500",
   CRM_FOLLOW_UP_REMINDER: "text-amber-500",
+  CRM_APPLICATION_REVIEW: "text-orange-500",
   TICKET: "text-blue-500",
   COMMENT: "text-green-500",
   STATUS: "text-purple-500",
   SYSTEM: "text-slate-500",
 };
 
-const REMINDER_TYPES = new Set(["REMINDER", "CRM_FOLLOW_UP_REMINDER"]);
+const REMINDER_TYPES = new Set(["REMINDER", "CRM_FOLLOW_UP_REMINDER", "CRM_APPLICATION_REVIEW"]);
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);

@@ -16,7 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { CheckCircle, XCircle, User, Building, Mail, MessageCircle, MapPin, FileText, AlertTriangle, Link2 } from "lucide-react";
+import { CheckCircle, XCircle, User, Building, Mail, MessageCircle, MapPin, FileText, AlertTriangle, Link2, ClipboardCheck } from "lucide-react";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 import Link from "next/link";
 import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 
@@ -39,6 +40,11 @@ interface ApplicationItem {
   createdCustomer: { id: string; name: string; customerCode: string } | null;
   createdCrmProfile: { id: string; sourceCustomerId: string } | null;
   createdAt: string;
+  autoApproved: boolean;
+  adminReviewStatus: string;
+  adminReviewedByUser: { id: string; name: string } | null;
+  adminReviewedAt: string | null;
+  adminReviewNote: string | null;
 }
 
 interface CandidateCustomer {
@@ -68,6 +74,13 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge>{status}</Badge>;
 }
 
+function AdminReviewBadge({ status }: { status: string }) {
+  if (status === "PENDING") return <Badge variant="secondary" className="border-amber-200 text-amber-700 dark:text-amber-400">待复核</Badge>;
+  if (status === "CONFIRMED") return <Badge variant="secondary" className="border-green-200 text-green-700 dark:text-green-400">已确认</Badge>;
+  if (status === "REJECTED") return <Badge variant="destructive">已拒绝</Badge>;
+  return null;
+}
+
 export default function CrmCustomerApplicationsPage() {
   const { status } = useSession();
   const router = useRouter();
@@ -93,17 +106,21 @@ function ApplicationList() {
   const [batchOwnerUserId, setBatchOwnerUserId] = useState("");
   const [batchReviewNote, setBatchReviewNote] = useState("");
 
-  const isAdmin = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const isAdmin = session?.user?.role === "ADMIN";
+  const canReviewLegacy = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const isRep = session?.user?.role === "REPRESENTATIVE";
+
+  const [filterMode, setFilterMode] = useState<"review" | "all">(isRep ? "all" : "review");
 
   const { data, isLoading } = useQuery<{ applications: ApplicationItem[] }>({
-    queryKey: ["crm-customer-applications"],
-    queryFn: () => fetch("/api/crm/customer-applications").then((r) => r.json()),
+    queryKey: ["crm-customer-applications", filterMode],
+    queryFn: () => fetch(`/api/crm/customer-applications${filterMode === "review" ? "?review=PENDING" : ""}`).then((r) => r.json()),
   });
 
   const { data: assigneesData } = useQuery<{ assignees: AssigneeOption[] }>({
     queryKey: ["crm-assignees"],
     queryFn: () => fetch("/api/crm/assignees").then((r) => r.json()),
-    enabled: isAdmin,
+    enabled: canReviewLegacy,
   });
 
   const [candidates, setCandidates] = useState<CandidateCustomer[]>([]);
@@ -177,6 +194,48 @@ function ApplicationList() {
     onSuccess: () => {
       toast.success("客户申请已驳回");
       queryClient.invalidateQueries({ queryKey: ["crm-customer-applications"] });
+      resetReview();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const confirmReviewMutation = useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      const res = await fetch(`/api/crm/customer-applications/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "confirm-review" }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "操作失败");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("已确认该客户申请");
+      queryClient.invalidateQueries({ queryKey: ["crm-customer-applications"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const rejectReviewMutation = useMutation({
+    mutationFn: async ({ id }: { id: string }) => {
+      const res = await fetch(`/api/crm/customer-applications/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reject-review", reviewNote: reviewNote || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "操作失败");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("已拒绝该客户申请，客户档案已删除");
+      queryClient.invalidateQueries({ queryKey: ["crm-customer-applications"] });
+      queryClient.invalidateQueries({ queryKey: ["crm-profiles"] });
       resetReview();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -298,21 +357,42 @@ function ApplicationList() {
 
   const applications = data?.applications || [];
   const pendingCount = applications.filter((a) => a.status === "PENDING").length;
+  const reviewCount = applications.filter((a) => a.adminReviewStatus === "PENDING").length;
   const assignees = assigneesData?.assignees || [];
+
+  function openRejectReviewDialog(app: ApplicationItem) {
+    setReviewing(app);
+    setReviewNote("");
+    setOwnerUserId("");
+    setBindTargetId("");
+    setActionType("reject");
+    setCandidates([]);
+    setReviewOpen(true);
+  }
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {isAdmin ? "客户申请审核" : "我的客户申请"}
+            {canReviewLegacy ? "客户申请审核" : "我的客户申请"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {isAdmin
-              ? `待审核 ${pendingCount} 条申请`
-              : "查看您提交的客户申请进度"}
+            {canReviewLegacy
+              ? `待复核 ${reviewCount} 条，待审核 ${pendingCount} 条`
+              : "申请将自动通过并创建客户档案，管理员会进行复核"}
           </p>
-          {isAdmin && pendingCount > 0 && (
+          {canReviewLegacy && (
+            <div className="flex items-center gap-2 mt-2">
+              <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => setFilterMode("review")}>
+                待复核 ({reviewCount})
+              </Button>
+              <Button size="sm" variant={filterMode === "all" ? "default" : "outline"} onClick={() => setFilterMode("all")}>
+                全部
+              </Button>
+            </div>
+          )}
+          {canReviewLegacy && pendingCount > 0 && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -324,11 +404,11 @@ function ApplicationList() {
             </label>
           )}
         </div>
-        {!isAdmin && <CustomerApplicationFormDialog />}
+        {!canReviewLegacy && <CustomerApplicationFormDialog />}
       </div>
 
       {/* Batch action bar */}
-      {isAdmin && selectedIds.size > 0 && (
+      {canReviewLegacy && selectedIds.size > 0 && (
         <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-sm font-medium">已选择 {selectedIds.size} 条</span>
@@ -385,7 +465,7 @@ function ApplicationList() {
       {isLoading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
       ) : applications.length === 0 ? (
-        <div className="text-sm text-muted-foreground py-8 text-center">暂无客户申请</div>
+        <CrmEmptyState icon={ClipboardCheck} title="暂无客户申请" />
       ) : (
         <div className="space-y-3">
           {applications.map((app) => (
@@ -393,7 +473,7 @@ function ApplicationList() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
-                    {isAdmin && app.status === "PENDING" && (
+                    {canReviewLegacy && app.status === "PENDING" && (
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 shrink-0"
@@ -403,6 +483,7 @@ function ApplicationList() {
                     )}
                     <span className="font-medium text-lg">{app.name}</span>
                     <StatusBadge status={app.status} />
+                    {app.autoApproved && <AdminReviewBadge status={app.adminReviewStatus} />}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-sm text-muted-foreground">
                     {app.principal && (
@@ -465,7 +546,7 @@ function ApplicationList() {
                     </div>
                   )}
                 </div>
-                {isAdmin && app.status === "PENDING" && (
+                {canReviewLegacy && app.status === "PENDING" && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       size="sm"
@@ -484,6 +565,26 @@ function ApplicationList() {
                     </Button>
                   </div>
                 )}
+                {isAdmin && app.autoApproved && app.adminReviewStatus === "PENDING" && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => confirmReviewMutation.mutate({ id: app.id })}
+                      disabled={confirmReviewMutation.isPending}
+                    >
+                      <CheckCircle className="h-4 w-4 mr-1" />确认
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => openRejectReviewDialog(app)}
+                    >
+                      <XCircle className="h-4 w-4 mr-1" />拒绝并删除
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -494,7 +595,7 @@ function ApplicationList() {
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {actionType === "reject" ? "驳回客户申请" : "审核客户申请"}
+              {actionType === "reject" && reviewing?.autoApproved ? "拒绝并删除客户" : actionType === "reject" ? "驳回客户申请" : "审核客户申请"}
             </DialogTitle>
           </DialogHeader>
           {reviewing && (
@@ -606,10 +707,16 @@ function ApplicationList() {
                 <Button
                   variant="destructive"
                   className="w-full"
-                  disabled={rejectMutation.isPending}
-                  onClick={() => rejectMutation.mutate({ id: reviewing.id })}
+                  disabled={rejectMutation.isPending || rejectReviewMutation.isPending}
+                  onClick={() => {
+                    if (reviewing?.autoApproved) {
+                      rejectReviewMutation.mutate({ id: reviewing.id });
+                    } else {
+                      rejectMutation.mutate({ id: reviewing.id });
+                    }
+                  }}
                 >
-                  {rejectMutation.isPending ? "处理中..." : "确认驳回"}
+                  {rejectMutation.isPending || rejectReviewMutation.isPending ? "处理中..." : reviewing?.autoApproved ? "确认拒绝并删除" : "确认驳回"}
                 </Button>
               ) : (
                 <div className="flex gap-2">

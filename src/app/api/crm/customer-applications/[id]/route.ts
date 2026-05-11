@@ -92,6 +92,92 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!application) {
     return NextResponse.json({ error: "申请不存在" }, { status: 404 });
   }
+
+  // Admin review actions for auto-approved applications (ADMIN only)
+  if (action === "confirm-review" || action === "reject-review") {
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  if (action === "confirm-review") {
+    const reviewNote = body.reviewNote?.trim() || null;
+    const claimed = await prisma.$transaction(async (tx) => {
+      const result = await tx.crmCustomerApplication.updateMany({
+        where: { id, adminReviewStatus: "PENDING" },
+        data: {
+          adminReviewStatus: "CONFIRMED",
+          adminReviewedByUserId: session.user.id,
+          adminReviewedAt: new Date(),
+          adminReviewNote: reviewNote,
+        },
+      });
+      if (result.count === 0) return { claimed: false, application: null };
+
+      const updated = await tx.crmCustomerApplication.findUnique({
+        where: { id },
+        include: applicationInclude,
+      });
+      return { claimed: true, application: updated };
+    });
+
+    if (!claimed.claimed) {
+      return NextResponse.json({ error: "该申请已被处理" }, { status: 400 });
+    }
+    return NextResponse.json({ application: claimed.application });
+  }
+
+  if (action === "reject-review") {
+    const reviewNote = body.reviewNote?.trim() || null;
+    const claimed = await prisma.$transaction(async (tx) => {
+      // Atomically claim the review
+      const claimResult = await tx.crmCustomerApplication.updateMany({
+        where: { id, adminReviewStatus: "PENDING" },
+        data: {
+          adminReviewStatus: "REJECTED",
+          status: "REJECTED",
+          adminReviewedByUserId: session.user.id,
+          adminReviewedAt: new Date(),
+          adminReviewNote: reviewNote,
+        },
+      });
+      if (claimResult.count === 0) return { claimed: false };
+
+      // After claiming, clean up the auto-created customer/profile
+      if (application.createdCrmProfileId) {
+        await tx.crmCustomerProfile.deleteMany({
+          where: { id: application.createdCrmProfileId },
+        });
+      }
+
+      if (application.createdCustomerId) {
+        const depCounts = await Promise.all([
+          tx.project.count({ where: { customerId: application.createdCustomerId, deleted: false } }),
+          tx.order.count({ where: { customerId: application.createdCustomerId } }),
+          tx.financeCost.count({ where: { customerId: application.createdCustomerId } }),
+          tx.customerRelation.count({ where: { OR: [{ fromCustomerId: application.createdCustomerId }, { toCustomerId: application.createdCustomerId }] } }),
+        ]);
+        const hasDeps = depCounts.some((c) => c > 0);
+        if (hasDeps) {
+          await tx.customer.update({
+            where: { id: application.createdCustomerId },
+            data: { deleted: true },
+          });
+        } else {
+          await tx.customer.delete({ where: { id: application.createdCustomerId } });
+        }
+      }
+
+      return { claimed: true };
+    });
+
+    if (!claimed.claimed) {
+      return NextResponse.json({ error: "该申请已被处理" }, { status: 400 });
+    }
+    return NextResponse.json({ success: true });
+  }
+
+  // Legacy actions for old PENDING applications
   if (application.status !== "PENDING") {
     return NextResponse.json({ error: "该申请已处理" }, { status: 400 });
   }

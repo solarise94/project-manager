@@ -16,7 +16,10 @@ export async function GET(
   }
 
   const { representativeId } = await params;
-  const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
+  const rep = await prisma.representative.findUnique({
+    where: { id: representativeId },
+    include: { regionAssignments: { include: { region: { select: { id: true, name: true } } } } },
+  });
   if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
 
   // Regional manager: verify this rep is in their managed set
@@ -53,6 +56,11 @@ export async function GET(
       recentCheckins: [],
       openFollowUps: [],
       relationCount: 0,
+      regions: rep.regionAssignments.map((a) => ({
+        id: a.region.id,
+        name: a.region.name,
+        isPrimary: a.isPrimary,
+      })),
     });
   }
 
@@ -139,5 +147,10 @@ export async function GET(
     recentCheckins,
     openFollowUps,
     relationCount,
+    regions: rep.regionAssignments.map((a) => ({
+      id: a.region.id,
+      name: a.region.name,
+      isPrimary: a.isPrimary,
+    })),
   });
 }

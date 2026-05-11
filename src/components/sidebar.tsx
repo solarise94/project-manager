@@ -15,6 +15,7 @@ import {
   Banknote,
   Package,
   UserCog,
+  MapPin,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,7 @@ function useNavGroups(): NavGroup[] {
       items: [
         { href: "/admin/users", label: "用户管理", icon: Users },
         { href: "/admin/representatives", label: "代表账号管理", icon: UserCog },
+        { href: "/admin/representative-regions", label: "地区管理", icon: MapPin },
         { href: "/admin/dev-logs", label: "开发日志", icon: FileText },
       ],
     });

@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildCrmWhereForRole, isRegionalManagerRole, isRepresentativeRole, extractScopedUserIds } from "@/lib/crm/permissions";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
-import { GRADUATION_LOOKAHEAD_DAYS } from "@/lib/crm/constants";
+import { deriveGraduationStatus, buildGraduationStatusWhere } from "@/lib/crm/profile-filters";
 
 const profileInclude = {
   sourceCustomer: {
@@ -19,46 +19,6 @@ const profileInclude = {
   _count: { select: { interactions: true, followUpTasks: true, visitCheckins: true, addresses: true } },
 };
 
-function deriveGraduationStatus(personCategory: string | null, graduationDate: Date | null): string {
-  if (!personCategory || personCategory !== "STUDENT") return "NOT_APPLICABLE";
-  if (!graduationDate) return "UNKNOWN";
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const grad = new Date(graduationDate);
-  grad.setHours(0, 0, 0, 0);
-  if (grad <= now) return "GRADUATED";
-  const lookahead = new Date(now);
-  lookahead.setDate(lookahead.getDate() + GRADUATION_LOOKAHEAD_DAYS);
-  if (grad <= lookahead) return "GRADUATING_SOON";
-  return "ENROLLED";
-}
-
-function buildGraduationStatusWhere(status: string): Record<string, unknown> | null {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const lookahead = new Date(now);
-  lookahead.setDate(lookahead.getDate() + GRADUATION_LOOKAHEAD_DAYS);
-  switch (status) {
-    case "NOT_APPLICABLE":
-      return {
-        OR: [
-          { personCategory: null },
-          { personCategory: { not: "STUDENT" } },
-        ],
-      };
-    case "UNKNOWN":
-      return { personCategory: "STUDENT", graduationDate: null };
-    case "ENROLLED":
-      return { personCategory: "STUDENT", graduationDate: { gt: lookahead } };
-    case "GRADUATING_SOON":
-      return { personCategory: "STUDENT", graduationDate: { gt: now, lte: lookahead } };
-    case "GRADUATED":
-      return { personCategory: "STUDENT", graduationDate: { lte: now } };
-    default:
-      return null;
-  }
-}
-
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,7 +31,6 @@ export async function GET(req: NextRequest) {
   const assignee = searchParams.get("assignee") || "";
   const sourceCustomerId = searchParams.get("sourceCustomerId") || "";
   const organizationId = searchParams.get("organizationId") || "";
-  const siteType = searchParams.get("siteType") || "";
   const siteId = searchParams.get("siteId") || "";
   const personCategory = searchParams.get("personCategory") || "";
   const jobTitle = searchParams.get("jobTitle") || "";
@@ -87,12 +46,12 @@ export async function GET(req: NextRequest) {
   const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role, { includeUnassigned: hasAssigneeFilter });
   const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
-  const where: Record<string, unknown> = { ...roleWhere, archived: false };
-  if (sourceCustomerId) where.sourceCustomerId = sourceCustomerId;
-  if (stage) where.stage = stage;
-  if (importance) where.importance = importance;
+  const andConditions: Record<string, unknown>[] = [{ ...roleWhere, archived: false }];
+  if (sourceCustomerId) andConditions.push({ sourceCustomerId });
+  if (stage) andConditions.push({ stage });
+  if (importance) andConditions.push({ importance });
   if (assignee === "UNASSIGNED") {
-    where.assignmentStatus = { in: ["UNASSIGNED", "RECALLED"] };
+    andConditions.push({ assignmentStatus: { in: ["UNASSIGNED", "RECALLED"] } });
   } else if (assignee) {
     if (isScoped) {
       const scopedIds = extractScopedUserIds(roleWhere);
@@ -100,7 +59,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
     }
-    where.ownerUserId = assignee;
+    andConditions.push({ ownerUserId: assignee });
   } else if (ownerUserId) {
     if (isScoped) {
       const scopedIds = extractScopedUserIds(roleWhere);
@@ -108,40 +67,37 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
     }
-    where.ownerUserId = ownerUserId;
+    andConditions.push({ ownerUserId });
   }
-  if (personCategory) where.personCategory = personCategory;
-  if (jobTitle) where.jobTitle = { contains: jobTitle };
+  if (personCategory) andConditions.push({ personCategory });
+  if (jobTitle) andConditions.push({ jobTitle: { contains: jobTitle } });
   if (graduationDateFrom || graduationDateTo) {
     const dateRange: Record<string, Date> = {};
     if (graduationDateFrom) dateRange.gte = new Date(graduationDateFrom);
     if (graduationDateTo) dateRange.lte = new Date(graduationDateTo);
-    where.graduationDate = dateRange;
+    andConditions.push({ graduationDate: dateRange });
   }
   if (graduationStatus) {
     const gradWhere = buildGraduationStatusWhere(graduationStatus);
-    if (gradWhere) Object.assign(where, gradWhere);
+    if (gradWhere) andConditions.push(gradWhere);
   }
 
   const sourceCustomerWhere: Record<string, unknown> = {};
   if (search) {
-    Object.assign(sourceCustomerWhere, {
-      OR: [
-        { name: { contains: search } },
-        { customerCode: { contains: search } },
-        { organization: { contains: search } },
-        { principal: { contains: search } },
-      ],
-    });
+    sourceCustomerWhere.OR = [
+      { name: { contains: search } },
+      { customerCode: { contains: search } },
+      { organization: { contains: search } },
+      { principal: { contains: search } },
+    ];
   }
-  if (organizationId) Object.assign(sourceCustomerWhere, { organizationId });
-  if (siteId) Object.assign(sourceCustomerWhere, { organizationSiteId: siteId });
-  if (siteType) {
-    Object.assign(sourceCustomerWhere, { orgSite: { siteType } });
-  }
+  if (organizationId) sourceCustomerWhere.organizationId = organizationId;
+  if (siteId) sourceCustomerWhere.organizationSiteId = siteId;
   if (Object.keys(sourceCustomerWhere).length > 0) {
-    where.sourceCustomer = sourceCustomerWhere;
+    andConditions.push({ sourceCustomer: sourceCustomerWhere });
   }
+
+  const where: Record<string, unknown> = andConditions.length === 1 ? andConditions[0] : { AND: andConditions };
 
   const validSorts = ["updatedAt", "createdAt", "lastFollowUpAt", "nextFollowUpAt", "stage"];
   const sortField = validSorts.includes(sort) ? sort : "updatedAt";

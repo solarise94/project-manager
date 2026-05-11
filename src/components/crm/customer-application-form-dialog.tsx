@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { OrganizationSelect } from "@/components/organization-select";
 import { CrmVoiceInput } from "@/components/crm/crm-voice-input";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { toast } from "sonner";
 import { UserPlus, MapPin, Wand2, Loader2, AlertCircle } from "lucide-react";
@@ -50,6 +51,13 @@ export function CustomerApplicationFormDialog() {
   const [orgResolving, setOrgResolving] = useState(false);
   const orgResolveAbortRef = useRef<AbortController | null>(null);
 
+  const { data: orgSitesData } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
+    queryKey: ["organization-sites", form.organizationId],
+    queryFn: () => fetch(`/api/organizations/${form.organizationId}`).then((r) => r.json()).then((d) => ({ sites: d.organization?.sites || [] })),
+    enabled: !!form.organizationId,
+  });
+  const orgSites = orgSitesData?.sites || [];
+
   const mutation = useMutation({
     mutationFn: async () => {
       const res = await fetch("/api/crm/customer-applications", {
@@ -64,7 +72,7 @@ export function CustomerApplicationFormDialog() {
       return res.json();
     },
     onSuccess: () => {
-      toast.success("客户申请已提交，等待管理员审核");
+      toast.success("客户已创建，管理员将进行复核");
       queryClient.invalidateQueries({ queryKey: crmKeys.customerApplications() });
       setOpen(false);
       setForm({ ...emptyForm });
@@ -346,6 +354,20 @@ export function CustomerApplicationFormDialog() {
               <p className="text-xs text-muted-foreground">
                 未在单位主数据中精确匹配，已保留原始文本。如需创建新单位，请使用上方选择器的「快速添加单位」。
               </p>
+            )}
+            {form.organizationId && orgSites.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">院区/学院/大楼</Label>
+                <Select value={form.organizationSiteId || "__none__"} onValueChange={(v) => setForm({ ...form, organizationSiteId: (v === "__none__" || v === null) ? "" : v })}>
+                  <SelectTrigger className="h-9 text-sm"><span>{form.organizationSiteId ? (orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId) : "不选择（可选）"}</span></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">不选择</SelectItem>
+                    {orgSites.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.siteName} ({s.siteType})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
           </div>
           <div className="space-y-2">

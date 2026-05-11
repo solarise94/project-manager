@@ -15,6 +15,15 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl;
   const search = searchParams.get("search") || "";
+  const representativeIdsParam = searchParams.get("representativeIds") || "";
+  const regionId = searchParams.get("regionId") || "";
+  const archived = searchParams.get("archived") || "active";
+  const hasUserParam = searchParams.get("hasUser") || "";
+  const hasOverdueParam = searchParams.get("hasOverdue") || "";
+  const hasLongUnvisitedParam = searchParams.get("hasLongUnvisited") || "";
+  const sort = searchParams.get("sort") || "name";
+  const order = searchParams.get("order") || "asc";
+  const period = searchParams.get("period") || ""; // "today" | "week" | ""
 
   // Determine which representatives to query
   let repEmailFilter: string[] | undefined;
@@ -29,13 +38,48 @@ export async function GET(req: NextRequest) {
     repEmailFilter = manager.reps.map((r) => r.representative.email);
   }
 
+  // Build where clause
   const where: Prisma.RepresentativeWhereInput = {};
   if (repEmailFilter) where.email = { in: repEmailFilter };
-  if (search) where.name = { contains: search };
+  if (search) {
+    where.OR = [
+      { name: { contains: search } },
+      { email: { contains: search } },
+    ];
+  }
+
+  // Filter by specific representative IDs
+  if (representativeIdsParam) {
+    const ids = representativeIdsParam.split(",").filter(Boolean);
+    // Scope enforcement for REGIONAL_MANAGER
+    if (isRegionalManagerRole(session.user.role) && repEmailFilter) {
+      const allowedReps = await prisma.representative.findMany({
+        where: { id: { in: ids }, email: { in: repEmailFilter } },
+        select: { id: true },
+      });
+      where.id = { in: allowedReps.map((r) => r.id) };
+    } else {
+      where.id = { in: ids };
+    }
+  }
+
+  // Archived filter
+  if (archived === "active") where.archived = false;
+  else if (archived === "archived") where.archived = true;
+
+  // Region filter
+  if (regionId) {
+    where.regionAssignments = { some: { regionId } };
+  }
 
   const reps = await prisma.representative.findMany({
     where,
-    select: { id: true, name: true, email: true, archived: true },
+    select: {
+      id: true, name: true, email: true, archived: true,
+      regionAssignments: {
+        select: { id: true, isPrimary: true, region: { select: { id: true, name: true } } },
+      },
+    },
     orderBy: { name: "asc" },
   });
 
@@ -51,34 +95,53 @@ export async function GET(req: NextRequest) {
   const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
   const now = new Date();
 
-  const representatives = await Promise.all(
+  // Period window for today/week stats
+  let periodStart: Date | null = null;
+  let periodEnd: Date | null = null;
+  if (period === "today" || period === "week") {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    if (period === "week") {
+      // Monday 00:00
+      const day = start.getDay();
+      const diff = day === 0 ? -6 : 1 - day; // Sunday → go back 6 days, else go back to Monday
+      start.setDate(start.getDate() + diff);
+    }
+    periodStart = start;
+    periodEnd = new Date(start);
+    if (period === "today") {
+      periodEnd.setDate(periodEnd.getDate() + 1);
+    } else {
+      periodEnd.setDate(periodEnd.getDate() + 7);
+    }
+  }
+
+  let representatives = await Promise.all(
     reps.map(async (rep) => {
       const linkedUser = emailToUser.get(rep.email);
       const userId = linkedUser?.id;
 
-      if (!userId) {
-        return {
-          representativeId: rep.id,
-          name: rep.name,
-          email: rep.email,
-          archived: rep.archived,
-          userId: null,
-          userName: null,
-          customerCount: 0,
-          visitCheckinCount: 0,
-          lastCheckinAt: null,
-          overdueFollowUps: 0,
-          longUnvisitedCount: 0,
-        };
-      }
+      const base = {
+        representativeId: rep.id,
+        name: rep.name,
+        email: rep.email,
+        archived: rep.archived,
+        userId: userId || null,
+        userName: linkedUser?.name || null,
+        customerCount: 0,
+        visitCheckinCount: 0,
+        lastCheckinAt: null as string | null,
+        overdueFollowUps: 0,
+        longUnvisitedCount: 0,
+        regions: rep.regionAssignments.map((a) => ({ id: a.region.id, name: a.region.name, isPrimary: a.isPrimary })),
+        periodVisitCheckinCount: 0,
+        periodNewCustomerCount: 0,
+        periodReservedOrderCount: 0,
+      };
 
-      const [
-        customerCount,
-        visitCheckinCount,
-        lastCheckin,
-        overdueFollowUps,
-        longUnvisitedCount,
-      ] = await Promise.all([
+      if (!userId) return base;
+
+      const statQueries: Promise<number | { createdAt: Date } | null>[] = [
         prisma.crmCustomerProfile.count({ where: { ownerUserId: userId, archived: false } }),
         prisma.crmVisitCheckin.count({
           where: { userId, status: "COMPLETED", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
@@ -91,7 +154,6 @@ export async function GET(req: NextRequest) {
         prisma.crmFollowUpTask.count({
           where: { ownerUserId: userId, status: "OPEN", dueAt: { lt: now } },
         }),
-        // Long-unvisited: profiles with no recent visit or interaction
         prisma.crmCustomerProfile.count({
           where: {
             ownerUserId: userId,
@@ -101,23 +163,96 @@ export async function GET(req: NextRequest) {
             interactions: { none: { type: "VISIT", happenedAt: { gte: thresholdDate } } },
           },
         }),
-      ]);
+      ];
 
-      return {
-        representativeId: rep.id,
-        name: rep.name,
-        email: rep.email,
-        archived: rep.archived,
-        userId: linkedUser.id,
-        userName: linkedUser.name,
+      // Period stats
+      if (periodStart && periodEnd) {
+        statQueries.push(
+          prisma.crmVisitCheckin.count({
+            where: { userId, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
+          }),
+          prisma.crmCustomerProfile.count({
+            where: {
+              ownerUserId: userId,
+              archived: false,
+              OR: [
+                { assignedAt: { gte: periodStart, lt: periodEnd } },
+                { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
+              ],
+            },
+          }),
+          prisma.order.count({
+            where: {
+              representativeId: rep.id,
+              orderedAt: { gte: periodStart, lt: periodEnd },
+              customerMatchStatus: { not: "UNMATCHED" },
+            },
+          }),
+        );
+      }
+
+      const results = await Promise.all(statQueries);
+      const customerCount = results[0] as number;
+      const visitCheckinCount = results[1] as number;
+      const lastCheckin = results[2] as { createdAt: Date } | null;
+      const overdueFollowUps = results[3] as number;
+      const longUnvisitedCount = results[4] as number;
+
+      const out = {
+        ...base,
         customerCount,
         visitCheckinCount,
         lastCheckinAt: lastCheckin?.createdAt?.toISOString() ?? null,
         overdueFollowUps,
         longUnvisitedCount,
       };
+
+      if (periodStart && periodEnd) {
+        out.periodVisitCheckinCount = results[5] as number;
+        out.periodNewCustomerCount = results[6] as number;
+        out.periodReservedOrderCount = results[7] as number;
+      }
+
+      return out;
     })
   );
+
+  // Post-filter: hasUser
+  if (hasUserParam === "true") {
+    representatives = representatives.filter((r) => r.userId !== null);
+  } else if (hasUserParam === "false") {
+    representatives = representatives.filter((r) => r.userId === null);
+  }
+
+  // Post-filter: hasOverdue
+  if (hasOverdueParam === "true") {
+    representatives = representatives.filter((r) => r.overdueFollowUps > 0);
+  } else if (hasOverdueParam === "false") {
+    representatives = representatives.filter((r) => r.overdueFollowUps === 0);
+  }
+
+  // Post-filter: hasLongUnvisited
+  if (hasLongUnvisitedParam === "true") {
+    representatives = representatives.filter((r) => r.longUnvisitedCount > 0);
+  } else if (hasLongUnvisitedParam === "false") {
+    representatives = representatives.filter((r) => r.longUnvisitedCount === 0);
+  }
+
+  // Sort
+  const sortField = sort || "name";
+  const sortOrder = order === "desc" ? -1 : 1;
+  representatives.sort((a, b) => {
+    let cmp = 0;
+    switch (sortField) {
+      case "name": cmp = a.name.localeCompare(b.name); break;
+      case "customerCount": cmp = a.customerCount - b.customerCount; break;
+      case "visitCheckinCount": cmp = a.visitCheckinCount - b.visitCheckinCount; break;
+      case "overdueFollowUps": cmp = a.overdueFollowUps - b.overdueFollowUps; break;
+      case "longUnvisitedCount": cmp = a.longUnvisitedCount - b.longUnvisitedCount; break;
+      default: cmp = a.name.localeCompare(b.name);
+    }
+    return cmp * sortOrder;
+  });
 
   return NextResponse.json({ representatives });
 }

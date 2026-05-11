@@ -2,7 +2,6 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import type { MouseEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
@@ -10,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { StageBadge, AssignmentStatusBadge, PersonCategoryBadge } from "@/components/crm/badges";
-import { CRM_STAGES, STAGE_LABELS, CRM_ASSIGNMENT_STATUS, ASSIGNMENT_STATUS_LABELS, CRM_PERSON_CATEGORIES, PERSON_CATEGORY_LABELS, CRM_GRADUATION_STATUSES, GRADUATION_STATUS_LABELS, CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
+import { CRM_STAGES, STAGE_LABELS, CRM_ASSIGNMENT_STATUS, ASSIGNMENT_STATUS_LABELS, CRM_PERSON_CATEGORIES, PERSON_CATEGORY_LABELS, CRM_GRADUATION_STATUSES, GRADUATION_STATUS_LABELS, SITE_TYPE_LABELS } from "@/lib/crm/constants";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmCustomerProfileItem } from "@/lib/crm/types";
 import { toast } from "sonner";
@@ -19,7 +18,8 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
-import { Search, UserCog, Undo2, Layers, Filter, X } from "lucide-react";
+import { Search, UserCog, Undo2, Layers, Filter, X, Users } from "lucide-react";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 
 export default function CustomerPoolPage() {
   const { data: session, status } = useSession();
@@ -39,7 +39,6 @@ function CustomerPool() {
   const [assignmentStatus, setAssignmentStatus] = useState("");
   const [personCategory, setPersonCategory] = useState("ALL");
   const [graduationStatus, setGraduationStatus] = useState("ALL");
-  const [siteType, setSiteType] = useState("ALL");
   const [organizationId, setOrganizationId] = useState("");
   const [siteId, setSiteId] = useState("");
   const [jobTitleFilter, setJobTitleFilter] = useState("");
@@ -54,7 +53,6 @@ function CustomerPool() {
   if (assignmentStatus) params.set("assignmentStatus", assignmentStatus);
   if (personCategory !== "ALL") params.set("personCategory", personCategory);
   if (graduationStatus !== "ALL") params.set("graduationStatus", graduationStatus);
-  if (siteType !== "ALL") params.set("siteType", siteType);
   if (organizationId) params.set("organizationId", organizationId);
   if (siteId) params.set("siteId", siteId);
   if (jobTitleFilter) params.set("jobTitle", jobTitleFilter);
@@ -62,26 +60,24 @@ function CustomerPool() {
   params.set("sort", sort);
   params.set("order", order);
 
-  const queryKey = ["crm-customer-pool", search, stage, assignmentStatus, personCategory, graduationStatus, siteType, organizationId, siteId, jobTitleFilter, page, sort, order];
+  const queryKey = ["crm-customer-pool", search, stage, assignmentStatus, personCategory, graduationStatus, organizationId, siteId, jobTitleFilter, page, sort, order];
 
   const { data, isLoading } = useQuery<{ profiles: CrmCustomerProfileItem[]; total: number; page: number; pageSize: number; totalPages: number }>({
     queryKey,
     queryFn: () => fetch(`/api/crm/customer-pool?${params}`).then((r) => r.json()),
   });
 
-  const router = useRouter();
   const profiles = data?.profiles || [];
   const totalPages = data?.totalPages || 1;
   const isMobile = useMediaQuery("(max-width: 767px)");
 
-  const activeFilterCount = [stage, personCategory, graduationStatus, siteType].filter((v) => v !== "ALL").length + (assignmentStatus ? 1 : 0) + (organizationId ? 1 : 0) + (siteId ? 1 : 0) + (jobTitleFilter ? 1 : 0);
+  const activeFilterCount = [stage, personCategory, graduationStatus].filter((v) => v !== "ALL").length + (assignmentStatus ? 1 : 0) + (organizationId ? 1 : 0) + (siteId ? 1 : 0) + (jobTitleFilter ? 1 : 0);
 
   function clearAllFilters() {
     setStage("ALL");
     setAssignmentStatus("");
     setPersonCategory("ALL");
     setGraduationStatus("ALL");
-    setSiteType("ALL");
     setOrganizationId("");
     setSiteId("");
     setJobTitleFilter("");
@@ -104,11 +100,6 @@ function CustomerPool() {
     enabled: !!organizationId,
   });
   const orgSites = orgSitesData?.sites || [];
-
-  function handleCardClick(e: MouseEvent, href: string) {
-    e.preventDefault();
-    router.push(href);
-  }
 
   const scanMutation = useMutation({
     mutationFn: async () => {
@@ -194,16 +185,6 @@ function CustomerPool() {
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm text-muted-foreground">院区类型</label>
-        <Select value={siteType} onValueChange={(v) => { setSiteType(v || "ALL"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0"><SelectDisplay label="类型" valueLabel={siteType === "ALL" ? "全部类型" : SITE_TYPE_LABELS[siteType] || "未知"} placeholder="全部类型" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">全部类型</SelectItem>
-            {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2">
         <label className="text-sm text-muted-foreground">职务关键词</label>
         <Input className="w-full min-w-0" placeholder="例如：教授、博士" value={jobTitleFilter} onChange={(e) => { setJobTitleFilter(e.target.value); setPage(1); }} />
       </div>
@@ -236,7 +217,7 @@ function CustomerPool() {
           <h1 className="text-2xl font-bold">客户流转池</h1>
           <p className="text-sm text-muted-foreground">管理客户分配、收回和长期未拜访客户</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending}>
+        <Button variant="outline" className="h-9" onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending}>
           <Layers className="h-4 w-4 mr-1" />
           {scanMutation.isPending ? "扫描中..." : "扫描长期未拜访"}
         </Button>
@@ -299,13 +280,6 @@ function CustomerPool() {
                 {CRM_GRADUATION_STATUSES.map((gs) => (<SelectItem key={gs} value={gs}>{GRADUATION_STATUS_LABELS[gs]}</SelectItem>))}
               </SelectContent>
             </Select>
-            <Select value={siteType} onValueChange={(v) => { setSiteType(v || "ALL"); setPage(1); }}>
-              <SelectTrigger className="w-[90px] h-9 text-xs"><SelectDisplay label="院区类型" valueLabel={siteType === "ALL" ? "全部" : SITE_TYPE_LABELS[siteType] || "?"} placeholder="院区" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">全部</SelectItem>
-                {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
-              </SelectContent>
-            </Select>
             <Select value={sort} onValueChange={(v) => { setSort(v || "updatedAt"); setPage(1); }}>
               <SelectTrigger className="w-[90px] h-9 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : "排序"}</span></SelectTrigger>
               <SelectContent>
@@ -325,7 +299,6 @@ function CustomerPool() {
           {stage !== "ALL" && <Badge variant="secondary" className="text-xs">阶段: {STAGE_LABELS[stage]}</Badge>}
           {personCategory !== "ALL" && <Badge variant="secondary" className="text-xs">分类: {PERSON_CATEGORY_LABELS[personCategory]}</Badge>}
           {graduationStatus !== "ALL" && <Badge variant="secondary" className="text-xs">毕业: {GRADUATION_STATUS_LABELS[graduationStatus]}</Badge>}
-          {siteType !== "ALL" && <Badge variant="secondary" className="text-xs">院区: {SITE_TYPE_LABELS[siteType]}</Badge>}
           {organizationId && <Badge variant="secondary" className="text-xs">单位: {uniqueOrgs.find((o) => o.organizationId === organizationId)?.organization || organizationId}</Badge>}
           {siteId && <Badge variant="secondary" className="text-xs">院区: {orgSites.find((s) => s.id === siteId)?.siteName || siteId}</Badge>}
           {jobTitleFilter && <Badge variant="secondary" className="text-xs">职务: {jobTitleFilter}</Badge>}
@@ -335,19 +308,20 @@ function CustomerPool() {
       {isLoading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
       ) : profiles.length === 0 ? (
-        <div className="text-sm text-muted-foreground py-8 text-center">暂无待处理客户</div>
+        <CrmEmptyState icon={Users} title="暂无待处理客户" />
       ) : isMobile ? (
         <div className="space-y-3">
           {profiles.map((p) => (
-            <Card
-              key={p.id}
-              className="cursor-pointer hover:border-primary/50 transition-colors"
-              onClick={(e) => handleCardClick(e, `/crm/customers/${p.sourceCustomerId}`)}
-            >
+            <Card key={p.id} className="hover:border-primary/50 transition-colors">
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-base font-medium">{p.sourceCustomer.name}</div>
+                    <Link
+                      href={`/crm/customers/${p.sourceCustomerId}`}
+                      className="block truncate text-base font-medium text-primary hover:underline"
+                    >
+                      {p.sourceCustomer.name}
+                    </Link>
                     <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {p.sourceCustomer.customerCode}
                       {p.sourceCustomer.organization ? ` · ${p.sourceCustomer.organization}` : ""}
@@ -363,7 +337,7 @@ function CustomerPool() {
                   <AssignmentStatusBadge status={p.assignmentStatus} />
                   <span className="text-xs text-muted-foreground">{p.ownerUser.name}</span>
                 </div>
-                <div className="flex gap-2 mt-3" onClick={(e) => e.stopPropagation()}>
+                <div className="flex gap-2 mt-3">
                   <AssignButton profileId={p.id} currentOwner={p.ownerUser.name} />
                   {(p.assignmentStatus === "ASSIGNED" || p.assignmentStatus === "RECALL_CANDIDATE") && (
                     <RecallButton profileId={p.id} currentOwner={p.ownerUser.name} />
@@ -464,7 +438,7 @@ function AssignButton({ profileId, currentOwner }: { profileId: string; currentO
 
   return (
     <>
-      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+      <Button variant="outline" className="h-8" onClick={() => setOpen(true)}>
         <UserCog className="h-4 w-4 mr-1" />分配
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -521,7 +495,7 @@ function RecallButton({ profileId, currentOwner }: { profileId: string; currentO
 
   return (
     <Dialog>
-      <DialogTrigger render={<Button variant="ghost" size="sm"><Undo2 className="h-4 w-4 mr-1" />收回</Button>} />
+      <DialogTrigger render={<Button variant="outline" className="h-8"><Undo2 className="h-4 w-4 mr-1" />收回</Button>} />
       <DialogContent className="max-w-sm">
         <DialogHeader><DialogTitle>收回客户</DialogTitle></DialogHeader>
         <p className="text-sm text-muted-foreground">将客户从 {currentOwner} 处收回</p>

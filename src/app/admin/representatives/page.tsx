@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { RepresentativeRegionEditor } from "@/components/crm/representative-region-editor";
 import { toast } from "sonner";
 
 interface RepItem {
@@ -46,6 +47,8 @@ export default function AdminRepresentativesPage() {
   const [editing, setEditing] = useState<RepItem | null>(null);
   const [form, setForm] = useState({ name: "", email: "" });
   const [editForm, setEditForm] = useState({ name: "", email: "" });
+  const [editRegionIds, setEditRegionIds] = useState<string[]>([]);
+  const [loadingRegions, setLoadingRegions] = useState(false);
 
   const { data, isLoading, error } = useQuery<{ representatives: RepItem[] }>({
     queryKey: ["admin-representatives"],
@@ -88,11 +91,11 @@ export default function AdminRepresentativesPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (payload: { id: string; name?: string; email?: string }) => {
+    mutationFn: async (payload: { id: string; name?: string; email?: string; regionIds?: string[] }) => {
       const res = await fetch(`/api/representatives/${payload.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: payload.name, email: payload.email }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "更新失败");
@@ -217,10 +220,17 @@ export default function AdminRepresentativesPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
+                  onClick={async () => {
                     setEditing(rep);
                     setEditForm({ name: rep.name, email: rep.email });
+                    setEditRegionIds([]);
+                    setLoadingRegions(true);
                     setEditOpen(true);
+                    try {
+                      const d = await fetch(`/api/crm/representatives/${rep.id}`).then((r) => r.json());
+                      if (d?.regions) setEditRegionIds(d.regions.map((rg: { id: string }) => rg.id));
+                    } catch { /* ignore */ }
+                    finally { setLoadingRegions(false); }
                   }}
                 >
                   <Pencil className="h-3 w-3 mr-1" />
@@ -325,10 +335,17 @@ export default function AdminRepresentativesPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
+                        onClick={async () => {
                           setEditing(rep);
                           setEditForm({ name: rep.name, email: rep.email });
+                          setEditRegionIds([]);
+                          setLoadingRegions(true);
                           setEditOpen(true);
+                          try {
+                            const d = await fetch(`/api/crm/representatives/${rep.id}`).then((r) => r.json());
+                            if (d?.regions) setEditRegionIds(d.regions.map((rg: { id: string }) => rg.id));
+                          } catch { /* ignore */ }
+                          finally { setLoadingRegions(false); }
                         }}
                         title="编辑"
                       >
@@ -432,15 +449,12 @@ export default function AdminRepresentativesPage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!editing) return;
-              const updates: { name?: string; email?: string } = {};
+              const updates: { name?: string; email?: string; regionIds?: string[] } = {};
               if (editForm.name.trim() !== editing.name) updates.name = editForm.name.trim();
               if (editForm.email.trim().toLowerCase() !== editing.email) {
                 updates.email = editForm.email.trim().toLowerCase();
               }
-              if (Object.keys(updates).length === 0) {
-                setEditOpen(false);
-                return;
-              }
+              updates.regionIds = editRegionIds;
               updateMutation.mutate({ id: editing.id, ...updates });
             }}
             className="space-y-4"
@@ -464,7 +478,15 @@ export default function AdminRepresentativesPage() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+            {editing && (
+              <RepresentativeRegionEditor
+                representativeId={editing.id}
+                embedded
+                selectedIds={editRegionIds}
+                onSelectionChange={setEditRegionIds}
+              />
+            )}
+            <Button type="submit" className="w-full" disabled={updateMutation.isPending || loadingRegions}>
               <Pencil className="mr-2 h-4 w-4" />
               {updateMutation.isPending ? "保存中..." : "保存修改"}
             </Button>

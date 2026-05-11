@@ -169,7 +169,8 @@ export interface CrmRegionManagerItem {
   id: string;
   userId: string;
   user: { id: string; name: string; email: string };
-  regionName: string | null;
+  regionId: string | null;
+  region: { id: string; name: string } | null;
   archived: boolean;
   createdAt: string;
   reps: { id: string; representativeId: string; representative: { id: string; name: string; email: string } }[];
@@ -187,6 +188,10 @@ export interface CrmRepresentativeOpsItem {
   lastCheckinAt: string | null;
   overdueFollowUps: number;
   longUnvisitedCount: number;
+  periodVisitCheckinCount?: number;
+  periodNewCustomerCount?: number;
+  periodReservedOrderCount?: number;
+  regions?: { id: string; name: string; isPrimary: boolean }[];
 }
 
 export interface CrmRepresentativeDetail {
@@ -201,6 +206,7 @@ export interface CrmRepresentativeDetail {
   recentCheckins: CrmVisitCheckinItem[];
   openFollowUps: CrmFollowUpTaskItem[];
   relationCount: number;
+  regions: { id: string; name: string; isPrimary: boolean }[];
 }
 
 export interface CrmAssignmentLogItem {
@@ -215,4 +221,36 @@ export interface CrmAssignmentLogItem {
   createdByUserId: string;
   createdByUser: { id: string; name: string };
   createdAt: string;
+}
+
+export interface CrmReportCustomerItem {
+  customerId: string;
+  customerName: string;
+  customerCode: string;
+  organization: string | null;
+  stage: string;
+  importance: string;
+  personCategory: string | null;
+  jobTitle: string | null;
+  graduationStatus: string | null;
+  weeklyVisitCount: number;
+  lastVisitAt: string | null;
+  latestDemand: string | null;
+  latestInteractionAt: string | null;
+  nextFollowUpAt: string | null;
+  hasOrderThisWeek: boolean;
+}
+
+export interface CrmRepresentativeReport {
+  representative: { id: string; name: string; email: string };
+  periodStart: string;
+  periodEnd: string;
+  summary: {
+    visitCheckinCount: number;
+    newCustomerCount: number;
+    reservedOrderCount: number;
+    communicatedCustomerCount: number;
+  };
+  customers: CrmReportCustomerItem[];
+  draftNote: string | null;
 }

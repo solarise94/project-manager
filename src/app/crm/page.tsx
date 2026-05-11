@@ -16,8 +16,10 @@ import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
   MessageSquare, ClipboardCheck, Building2,
+  ChevronRight, Inbox,
 } from "lucide-react";
 import Link from "next/link";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 
 export default function CrmDashboardPage() {
   const { status } = useSession();
@@ -63,7 +65,7 @@ function CrmDashboard() {
 
   if (isLoading) return <div className="p-6">加载中...</div>;
   const stats = data?.stats;
-  if (!stats) return <div className="p-6">暂无数据</div>;
+  if (!stats) return <CrmEmptyState icon={Inbox} title="暂无数据" className="py-20" />;
 
   return (
     <div className="p-4 sm:p-6 space-y-5 pb-20 max-w-full overflow-x-hidden">
@@ -182,7 +184,7 @@ function CrmDashboard() {
           </CardHeader>
           <CardContent>
             {stats.stageDistribution.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无数据</p>
+              <CrmEmptyState icon={BarChart3} title="暂无数据" className="py-8" />
             ) : (
               <div className="space-y-2">
                 {stats.stageDistribution.map((s) => (
@@ -203,7 +205,7 @@ function CrmDashboard() {
           </CardHeader>
           <CardContent>
             {stats.recentInteractions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无记录</p>
+              <CrmEmptyState icon={MessageSquare} title="暂无记录" className="py-8" />
             ) : (
               <div className="space-y-2.5">
                 {stats.recentInteractions.slice(0, 8).map((i) => (
@@ -221,26 +223,71 @@ function CrmDashboard() {
         </Card>
       </div>
 
-      {/* Quick navigation - compact row */}
+      {/* Quick navigation */}
       <div className="space-y-2">
         <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">快捷导航</h2>
-        <div className="flex flex-wrap gap-1.5">
-          <Link href="/crm/customers" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Users className="h-3.5 w-3.5" />客户池</Link>
-          <Link href="/crm/follow-ups" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><CalendarClock className="h-3.5 w-3.5" />跟进任务</Link>
-          <Link href="/crm/customer-applications" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><ClipboardCheck className="h-3.5 w-3.5" />{isRep ? "客户申请" : "申请审核"}</Link>
-          <Link href="/crm/relations" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Network className="h-3.5 w-3.5" />关系网络</Link>
-          <Link href="/crm/graph" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Network className="h-3.5 w-3.5" />关系图谱</Link>
+        <nav className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+          <QuickNavCard
+            href="/crm/customers"
+            icon={<Users className="h-5 w-5" />}
+            label="客户池"
+            color="border-l-blue-500"
+          />
+          <QuickNavCard
+            href="/crm/follow-ups"
+            icon={<CalendarClock className="h-5 w-5" />}
+            label="跟进任务"
+            color="border-l-orange-500"
+          />
+          {!isRep && !isAdmin && (
+            <QuickNavCard
+              href="/crm/customer-pool"
+              icon={<Users className="h-5 w-5" />}
+              label="客户流转池"
+              color="border-l-sky-500"
+            />
+          )}
+          <QuickNavCard
+            href="/crm/customer-applications"
+            icon={<ClipboardCheck className="h-5 w-5" />}
+            label={isRep ? "客户申请" : "申请审核"}
+            color="border-l-green-500"
+          />
+          <QuickNavCard
+            href="/crm/relations"
+            icon={<Network className="h-5 w-5" />}
+            label="关系网络"
+            color="border-l-purple-500"
+          />
+          <QuickNavCard
+            href="/crm/graph"
+            icon={<Network className="h-5 w-5" />}
+            label="关系图谱"
+            color="border-l-indigo-500"
+          />
           {isAdmin && (
             <>
-              <Link href="/admin/organizations/analytics" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><Building2 className="h-3.5 w-3.5" />机构分析</Link>
-              <Link href="/crm/representatives" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><BarChart3 className="h-3.5 w-3.5" />代表运营</Link>
-              <Link href="/crm/region-managers" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md"><UserCog className="h-3.5 w-3.5" />地区经理</Link>
+              <QuickNavCard
+                href="/admin/organizations/analytics"
+                icon={<Building2 className="h-5 w-5" />}
+                label="机构分析"
+                color="border-l-cyan-500"
+              />
+              <QuickNavCard
+                href="/crm/representatives"
+                icon={<BarChart3 className="h-5 w-5" />}
+                label="代表运营"
+                color="border-l-pink-500"
+              />
+              <QuickNavCard
+                href="/crm/region-managers"
+                icon={<UserCog className="h-5 w-5" />}
+                label="地区经理"
+                color="border-l-amber-500"
+              />
             </>
           )}
-          {!isRep && !isAdmin && (
-            <Link href="/crm/customer-pool" className="inline-flex items-center gap-1 h-7 px-2.5 text-[0.8rem] border border-input bg-background hover:bg-muted rounded-md">客户流转池</Link>
-          )}
-        </div>
+        </nav>
       </div>
 
       {/* Quick action dialogs */}
@@ -275,5 +322,30 @@ function MetricCard({ icon, label, value, color }: { icon: React.ReactNode; labe
         <p className={`text-xl font-bold ${color || ""}`}>{value}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function QuickNavCard({
+  href,
+  icon,
+  label,
+  color,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  color: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`group flex items-center gap-3 h-14 md:h-12 px-4 border border-input bg-background hover:bg-muted/80 rounded-md border-l-4 ${color} active:scale-[0.98] transition-transform`}
+    >
+      <span className="text-muted-foreground group-hover:text-foreground transition-colors">
+        {icon}
+      </span>
+      <span className="text-sm font-medium flex-1">{label}</span>
+      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+    </Link>
   );
 }

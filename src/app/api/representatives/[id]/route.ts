@@ -27,10 +27,27 @@ export async function PATCH(
 
   try {
     const body = await req.json();
-    const { name, email, archived } = body;
+    const { name, email, archived, regionIds } = body;
 
     const existing = await prisma.representative.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // Validate regionIds if provided — must be a string array, all must exist and not be archived
+    if (regionIds !== undefined) {
+      if (!Array.isArray(regionIds) || regionIds.some((id: unknown) => typeof id !== "string" || !id.trim())) {
+        return NextResponse.json({ error: "regionIds 必须是字符串数组" }, { status: 400 });
+      }
+      const deduped: string[] = [...new Set(regionIds as string[])];
+      if (deduped.length > 0) {
+        const validRegions = await prisma.representativeRegion.findMany({
+          where: { id: { in: deduped }, archived: false },
+          select: { id: true },
+        });
+        if (validRegions.length !== deduped.length) {
+          return NextResponse.json({ error: "地区不存在或已归档" }, { status: 400 });
+        }
+      }
+    }
 
     const newEmail = email !== undefined ? email.trim().toLowerCase() : existing.email;
     const newName = name !== undefined ? name.trim() : existing.name;
@@ -81,6 +98,19 @@ export async function PATCH(
           where: { representativeId: id },
           data: { representative: newName },
         });
+      }
+
+      // Region assignments: delete old + recreate new
+      if (regionIds !== undefined) {
+        await tx.representativeRegionAssignment.deleteMany({ where: { representativeId: id } });
+        if (Array.isArray(regionIds) && regionIds.length > 0) {
+          await tx.representativeRegionAssignment.createMany({
+            data: regionIds.map((regionId: string) => ({
+              representativeId: id,
+              regionId,
+            })),
+          });
+        }
       }
 
       return updated;

@@ -12,7 +12,8 @@ import { CRM_RELATION_TYPES, RELATION_TYPE_LABELS, RELATION_STRENGTH_LABELS } fr
 import { crmKeys } from "@/lib/crm/query-keys";
 import { RelationCreateDialog } from "@/components/crm/relation-create-dialog";
 import type { CrmRelationItem } from "@/lib/crm/types";
-import { ArrowLeft, Trash2, Filter } from "lucide-react";
+import { ArrowLeft, Trash2, Filter, Network, ArrowRight } from "lucide-react";
+import { CrmEmptyState } from "@/components/crm/empty-state";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -112,7 +113,7 @@ function RelationsList() {
       {isLoading ? (
         <p className="text-sm text-muted-foreground">加载中...</p>
       ) : relations.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无关系记录</p>
+        <CrmEmptyState icon={Network} title="暂无关系记录" />
       ) : (
         <div className="space-y-2">
           {relations.map((r) => (
@@ -130,7 +131,7 @@ function RelationsList() {
                           <span className="text-sm font-medium truncate block">{r.fromCustomer.name}</span>
                         )}
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-muted-foreground text-xs">→</span>
+                          <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
                           {r.toHasCrm ? (
                             <Link href={`/crm/customers/${r.toCustomerId}`} className="min-w-0 flex-1 text-sm font-medium text-primary hover:underline truncate">
                               {r.toCustomer.name}
@@ -150,7 +151,7 @@ function RelationsList() {
                         ) : (
                           <span className="text-sm font-medium truncate max-w-[180px]">{r.fromCustomer.name}</span>
                         )}
-                        <span className="text-muted-foreground text-xs">→</span>
+                        <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
                         {r.toHasCrm ? (
                           <Link href={`/crm/customers/${r.toCustomerId}`} className="text-sm font-medium text-primary hover:underline truncate max-w-[180px]">
                             {r.toCustomer.name}
