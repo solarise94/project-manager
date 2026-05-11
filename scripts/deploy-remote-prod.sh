@@ -386,11 +386,12 @@ remote_ssh "mkdir -p ${REMOTE_APP_DIR} ${REMOTE_APP_DIR}/.next/static ${REMOTE_A
 # ── [4/8] Rsync code to remote ───────────────────────────────────────────
 echo ""
 echo "[4/8] Syncing standalone output to remote..."
-remote_rsync -a --delete --exclude=".env" --exclude="dev.db" \
+remote_rsync -a --delete --exclude=".env" --exclude="dev.db" --exclude='public/uploads/***' \
   "${REPO_DIR}/.next/standalone/" "${SSH_TARGET}:${REMOTE_APP_DIR}/"
 remote_rsync -a --delete \
   "${REPO_DIR}/.next/static/" "${SSH_TARGET}:${REMOTE_APP_DIR}/.next/static/"
-remote_rsync -a --delete \
+## public/uploads is runtime data and must survive deploys.
+remote_rsync -a --delete --exclude='uploads/***' \
   "${REPO_DIR}/public/" "${SSH_TARGET}:${REMOTE_APP_DIR}/public/"
 
 # ── [4.5/8] Sync Prisma runtime to remote ────────────────────────────────

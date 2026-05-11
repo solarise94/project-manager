@@ -76,9 +76,10 @@ echo "[2/8] Preparing runtime directory..."
 mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/.next/static" "${TARGET_DIR}/public" "$(dirname "${RUNTIME_DB}")"
 
 echo "[3/8] Syncing standalone output..."
-rsync -a --delete --exclude=".env" --exclude="dev.db" "${REPO_DIR}/.next/standalone/" "${TARGET_DIR}/"
+rsync -a --delete --exclude=".env" --exclude="dev.db" --exclude='public/uploads/***' "${REPO_DIR}/.next/standalone/" "${TARGET_DIR}/"
 rsync -a --delete "${REPO_DIR}/.next/static/" "${TARGET_DIR}/.next/static/"
-rsync -a --delete "${REPO_DIR}/public/" "${TARGET_DIR}/public/"
+## public/uploads is runtime data and must survive deploys.
+rsync -a --delete --exclude='uploads/***' "${REPO_DIR}/public/" "${TARGET_DIR}/public/"
 
 echo "[3.5/8] Ensuring Prisma runtime is available in standalone..."
 # Copy the canonical Prisma client packages
