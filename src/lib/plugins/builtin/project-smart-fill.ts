@@ -18,7 +18,6 @@ const projectSmartFill: FormDraftPlugin = {
 
     if (result.name) fields.name = result.name;
     if (result.description) fields.description = result.description;
-    if (result.orderNumber) fields.orderNumber = result.orderNumber;
     if (result.organization) fields.organization = result.organization;
     if (result.client) fields.client = result.client;
     if (result.representative) fields.representative = result.representative;
@@ -36,7 +35,6 @@ const projectSmartFill: FormDraftPlugin = {
     if (result.budgetCost != null) fields.budgetCost = result.budgetCost;
 
     if (!result.name) warnings.push("未能解析出项目名称");
-    if (!result.orderNumber) warnings.push("未能解析出订单号");
 
     return {
       summary: result.name ? `解析到项目：${result.name}` : "解析完成，部分字段可能缺失",

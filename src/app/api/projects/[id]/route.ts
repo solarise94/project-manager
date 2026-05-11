@@ -81,7 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, archived, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     const existing = await prisma.project.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -90,7 +90,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
     if (projectNo !== undefined) data.projectNo = (projectNo as string)?.trim() || null;
-    if (orderNumber !== undefined) data.orderNumber = orderNumber;
     if (organization !== undefined) data.organization = organization;
     if (client !== undefined) data.client = client;
     if (status !== undefined) data.status = status;
@@ -104,7 +103,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (procurementSource !== undefined) data.procurementSource = procurementSource || null;
     if (brand !== undefined) data.brand = brand || null;
     if (techSupport !== undefined) data.techSupport = techSupport || null;
-    if (budgetAmount !== undefined) data.budgetAmount = budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null;
+    if (budgetAmount !== undefined) {
+      const amt = budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null;
+      data.budgetAmount = amt;
+      data.budgetAmountSource = amt != null ? "MANUAL" : null;
+    }
     if (budgetCost !== undefined) data.budgetCost = budgetCost != null && budgetCost !== "" ? Number(budgetCost) : null;
 
     // customerId drives client snapshot; organization only overridden if customer has one
@@ -164,25 +167,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data.representativeId !== undefined &&
       data.representativeId !== existing.representativeId;
 
-    // Pre-compute order sync data for COMPLETED transition
-    const isCompleting = status === "COMPLETED" && existing.status !== "COMPLETED";
-    let orderSyncOrders: Array<{ id: string; oldDeliveryStatus: string }> = [];
-
-    if (isCompleting) {
-      const links = await prisma.orderProjectLink.findMany({
-        where: { projectId: id, treatment: "PROJECT_INCLUDED" },
-        select: { orderId: true },
-      });
-      if (links.length > 0) {
-        const orders = await prisma.order.findMany({
-          where: { id: { in: links.map((l) => l.orderId) }, deliveryStatus: { not: "DELIVERED" } },
-          select: { id: true, deliveryStatus: true },
-        });
-        orderSyncOrders = orders.map((o) => ({ id: o.id, oldDeliveryStatus: o.deliveryStatus }));
-      }
-    }
-
-    // Atomic: project update + status history + activity logs + order delivery sync
+    // Atomic: project update + status history + activity logs
     let updated: typeof existing;
     await prisma.$transaction(async (tx) => {
       updated = await tx.project.update({ where: { id }, data });
@@ -218,25 +203,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             userId: session.user.id,
           },
         });
-      }
-
-      // Order delivery sync (inside same transaction as project update)
-      if (orderSyncOrders.length > 0) {
-        await tx.order.updateMany({
-          where: { id: { in: orderSyncOrders.map((o) => o.id) } },
-          data: { deliveryStatus: "DELIVERED", deliveredAt: new Date() },
-        });
-        for (const o of orderSyncOrders) {
-          await tx.orderStatusHistory.create({
-            data: {
-              orderId: o.id,
-              oldDeliveryStatus: o.oldDeliveryStatus,
-              newDeliveryStatus: "DELIVERED",
-              note: `项目 "${existing.name}" 已完成，联动交付`,
-              createdById: session.user.id,
-            },
-          });
-        }
       }
 
       // Log financial field overrides for audit trail (normalize before compare)

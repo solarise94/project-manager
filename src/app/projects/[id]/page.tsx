@@ -364,41 +364,6 @@ export default function ProjectDetailPage() {
     },
   });
 
-  // ── Order amount sync ──────────────────────────────────────────────
-  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
-  const [syncMode, setSyncMode] = useState("FINANCE_OVERRIDE");
-  const [syncTarget, setSyncTarget] = useState<{
-    orderId: string;
-    orderNo: string;
-    orderTotal: number;
-    financeOverride: number | null;
-    allocatedAmount: number | null;
-    source: string;
-    projectCount: number;
-    hasFinancial: boolean;
-  } | null>(null);
-
-  const syncAmountMutation = useMutation({
-    mutationFn: async (payload: { orderId: string; mode: string }) => {
-      const res = await fetch(`/api/projects/${projectId}/sync-order-amount`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "同步失败");
-      return data;
-    },
-    onSuccess: (data: { message: string }) => {
-      toast.success(data.message);
-      setSyncDialogOpen(false);
-      setSyncTarget(null);
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
   // When server progress catches up to the locally-dragged value, clear the override
   useEffect(() => {
     const progress = projectData?.project?.progress;
@@ -539,14 +504,6 @@ export default function ProjectDetailPage() {
           </div>
           {!project.deleted && permissions?.canManage && (
             <div className="flex items-center gap-2 flex-wrap justify-end">
-              {isAdmin && (
-                <Link href={`/orders/new?fromProjectId=${project.id}`}>
-                  <Button variant="default" size="sm">
-                    <Plus className="mr-1 h-3 w-3" />
-                    从本项目创建订单
-                  </Button>
-                </Link>
-              )}
               {permissions?.canManage && (
                 <>
                   <Button
@@ -596,7 +553,6 @@ export default function ProjectDetailPage() {
                     name: editForm.name,
                     description: editForm.description,
                     projectNo: editForm.projectNo,
-                    orderNumber: editForm.orderNumber,
                     organization: editForm.organization,
                     client: editForm.client,
                     customerId: editForm.customerId,
@@ -717,10 +673,6 @@ export default function ProjectDetailPage() {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">项目号</label>
                     <Input value={editForm.projectNo || ""} onChange={(e) => setEditForm({ ...editForm, projectNo: e.target.value })} placeholder="PRJ-YYYYMMDD-0001" />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">订单号</label>
-                    <Input value={editForm.orderNumber || ""} onChange={(e) => setEditForm({ ...editForm, orderNumber: e.target.value })} />
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">单位</label>
@@ -1557,32 +1509,6 @@ export default function ProjectDetailPage() {
                       <Button variant="outline" size="sm"><Banknote className="h-3 w-3 mr-1" />新增成本</Button>
                     </Link>
                   </div>
-                  {isAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="mt-2"
-                      disabled={!project.budgetAmount || project.budgetAmount <= 0}
-                      title={!project.budgetAmount || project.budgetAmount <= 0 ? "项目金额来自关联订单，请先通过订单同步金额" : undefined}
-                      onClick={() => {
-                        const orderProjectCount = o._count?.projectLinks ?? 1;
-                        setSyncTarget({
-                          orderId: o.id,
-                          orderNo: o.orderNo,
-                          orderTotal: o.totalAmount,
-                          financeOverride: o.financeAmountOverride,
-                          allocatedAmount: link.allocatedAmount,
-                          source: o.source,
-                          projectCount: orderProjectCount,
-                          hasFinancial: false,
-                        });
-                        setSyncMode(orderProjectCount <= 1 ? "FINANCE_OVERRIDE" : "ALLOCATED_AMOUNT");
-                        setSyncDialogOpen(true);
-                      }}
-                    >
-                      同步金额到订单
-                    </Button>
-                  )}
                 </Card>
               );
               })
@@ -1590,14 +1516,6 @@ export default function ProjectDetailPage() {
               <div className="text-sm text-muted-foreground py-8 text-center space-y-3">
                 <p>暂无关联订单</p>
                 <div className="flex items-center justify-center gap-3">
-                  {isAdmin && (
-                    <Link href={`/orders/new?fromProjectId=${project.id}`}>
-                      <Button size="sm">
-                        <Plus className="mr-1 h-3 w-3" />
-                        从本项目创建订单
-                      </Button>
-                    </Link>
-                  )}
                   <Link href="/orders">
                     <Button variant="outline" size="sm">去订单管理查看/绑定</Button>
                   </Link>
@@ -1606,79 +1524,6 @@ export default function ProjectDetailPage() {
             )}
           </TabsContent>
       </Tabs>
-
-      {/* Sync Order Amount Dialog */}
-      <Dialog open={syncDialogOpen} onOpenChange={(v) => { if (!v) { setSyncDialogOpen(false); setSyncTarget(null); } }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>同步金额到订单</DialogTitle>
-          </DialogHeader>
-          {syncTarget && (
-              <div className="space-y-4">
-                <div className="rounded-lg border p-3 text-sm space-y-1">
-                  <div>项目金额: <span className="font-medium">¥{((project.budgetAmount ?? 0)).toLocaleString()}</span></div>
-                  <div>订单 {syncTarget.orderNo}</div>
-                  <div>订单原始金额: ¥{syncTarget.orderTotal.toLocaleString()}</div>
-                  {syncTarget.financeOverride != null && (
-                    <div>当前财务覆盖: ¥{syncTarget.financeOverride.toLocaleString()}</div>
-                  )}
-                  {syncTarget.allocatedAmount != null && (
-                    <div>当前分摊金额: ¥{syncTarget.allocatedAmount.toLocaleString()}</div>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">同步方式</label>
-                  <div className="space-y-2">
-                    <label className="flex items-start gap-2 cursor-pointer">
-                      <input type="radio" name="syncMode" value="FINANCE_OVERRIDE"
-                        checked={syncMode === "FINANCE_OVERRIDE"}
-                        onChange={() => setSyncMode("FINANCE_OVERRIDE")} />
-                      <div className="text-sm">
-                        <span className="font-medium">财务覆盖</span>
-                        <span className="text-xs text-muted-foreground ml-1">{syncTarget.projectCount <= 1 ? "（推荐）" : ""}</span>
-                        <p className="text-xs text-muted-foreground">更新订单财务有效金额为项目金额，不改原始订单数据</p>
-                      </div>
-                    </label>
-                    <label className="flex items-start gap-2 cursor-pointer">
-                      <input type="radio" name="syncMode" value="ALLOCATED_AMOUNT"
-                        checked={syncMode === "ALLOCATED_AMOUNT"}
-                        onChange={() => setSyncMode("ALLOCATED_AMOUNT")} />
-                      <div className="text-sm">
-                        <span className="font-medium">分摊金额</span>
-                        <span className="text-xs text-muted-foreground ml-1">{syncTarget.projectCount > 1 ? "（推荐）" : ""}</span>
-                        <p className="text-xs text-muted-foreground">更新当前项目在该订单中的分摊金额</p>
-                      </div>
-                    </label>
-                    <label className="flex items-start gap-2 cursor-pointer">
-                      <input type="radio" name="syncMode" value="ORDER_TOTAL"
-                        checked={syncMode === "ORDER_TOTAL"}
-                        onChange={() => setSyncMode("ORDER_TOTAL")} />
-                      <div className="text-sm">
-                        <span className="font-medium">原始金额</span>
-                        <span className="text-xs text-red-500 ml-1">高风险</span>
-                        <p className="text-xs text-muted-foreground">
-                          直接修改订单原始金额{syncTarget.source === "MANUAL" ? "" : "（仅手动订单可用）"}。
-                          有发票、收款或成本的订单不可用此模式。
-                        </p>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                <Button
-                  className="w-full"
-                  disabled={syncAmountMutation.isPending}
-                  onClick={() => {
-                    syncAmountMutation.mutate({ orderId: syncTarget.orderId, mode: syncMode });
-                  }}
-                >
-                  {syncAmountMutation.isPending ? "同步中..." : `确认同步 (¥${(project.budgetAmount ?? 0).toLocaleString()})`}
-                </Button>
-              </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Image Preview Dialog */}
       <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>

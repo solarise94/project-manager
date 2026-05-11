@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Suspense, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
@@ -83,53 +83,7 @@ function NewOrderForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // Prefill from project
-  const searchParams = useSearchParams();
-  const fromProjectId = searchParams.get("fromProjectId");
-  const prefilledProjectIdRef = useRef<string | null>(null);
-  const [prefillProjectName, setPrefillProjectName] = useState<string | null>(null);
-  const [prefillError, setPrefillError] = useState(false);
 
-  useEffect(() => {
-    if (!fromProjectId || prefilledProjectIdRef.current === fromProjectId) return;
-    prefilledProjectIdRef.current = fromProjectId;
-    (async () => {
-      try {
-        const res = await fetch(`/api/projects/${fromProjectId}`);
-        if (!res.ok) throw new Error("Failed to load project");
-        const data = await res.json();
-        const project = data.project || data;
-        if (!project) throw new Error("Project not found");
-
-        const qty = Number(project.quantity) > 0 ? Number(project.quantity) : 1;
-        const budget = project.budgetAmount ? Number(project.budgetAmount) : 0;
-
-        setTitle(project.name || "");
-        setCategory("SERVICE");
-        setCustomerId(project.customerId || project.cust?.id || "");
-        setCustomerName(project.client || project.cust?.name || "");
-        setCustomerOrgName(project.organization || project.cust?.organization || "");
-        setBuyerName(project.client || project.cust?.name || "");
-        setBuyerOrgName(project.organization || project.cust?.organization || "");
-        setBuyerOrgId(project.organizationId || project.cust?.organizationId || "");
-        setRepresentativeId(project.representativeId || "");
-        setProjectAction("LINK");
-        setProjectId(project.id);
-        setFinanceTreatment("PROJECT_INCLUDED");
-        setLines([{
-          itemName: project.projectContent || getProjectTypeLabel(project.projectType) || project.name || "",
-          spec: getProjectTypeLabel(project.projectType),
-          unit: "项",
-          quantity: qty,
-          unitPrice: qty > 0 ? budget / qty : 0,
-          amount: budget,
-        }]);
-        setPrefillProjectName(project.name || null);
-      } catch {
-        setPrefillError(true);
-      }
-    })();
-  }, [fromProjectId]);
 
   // Sync project draft defaults from order fields.
   // Only auto-sync when the current value is still a simple category-derived default
@@ -496,16 +450,6 @@ function NewOrderForm() {
 
       {error && <Card className="p-3 text-sm text-red-600 bg-red-50 border-red-200">{error}</Card>}
 
-      {prefillProjectName && (
-        <Card className="p-3 text-sm text-blue-700 bg-blue-50 border-blue-200">
-          已从项目「{prefillProjectName}」导入基础信息，创建后会自动绑定到该项目。
-        </Card>
-      )}
-      {prefillError && (
-        <Card className="p-3 text-sm text-amber-700 bg-amber-50 border-amber-200">
-          项目导入失败，请手动填写订单信息。
-        </Card>
-      )}
 
       <Card className="p-4 space-y-3">
         <div><label className="text-sm font-medium">订单标题 *</label><Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例: 单细胞测序服务" /></div>

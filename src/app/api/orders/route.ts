@@ -261,6 +261,7 @@ export async function POST(req: NextRequest) {
           brand: (draft.brand as string) || null,
           techSupport: (draft.techSupport as string) || null,
           budgetAmount: computedAmount,
+          budgetAmountSource: "ORDER_LINK",
           budgetCost: pBudgetCost,
           startDate: new Date(pStartDate),
           status: "NOT_STARTED",

@@ -75,7 +75,7 @@ const orderSmartFill: FormDraftPlugin = {
 
     try {
       const projectLike = parseSmartFill(text);
-      const title = projectLike.name || projectLike.projectContent || projectLike.orderNumber;
+      const title = projectLike.name || projectLike.projectContent;
       const amount = projectLike.budgetAmount;
       const quantity = projectLike.quantity && projectLike.quantity > 0 ? projectLike.quantity : 1;
 

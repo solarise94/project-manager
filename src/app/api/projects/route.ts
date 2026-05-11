@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { name, description, orderNumber, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
+    const { name, description, organization, client, representativeId, customerId, projectNo, status, progress, startDate, endDate, projectType, projectContent, quantity, procurementSource, brand, techSupport, budgetAmount, budgetCost } = body;
 
     // Derive CRM context when customerId is present
     let resolvedRepId: string | null = null;
@@ -172,7 +172,6 @@ export async function POST(req: NextRequest) {
           projectNo: finalProjectNo,
           name,
           description,
-          orderNumber,
           organization: (customerId && custOrg) ? custOrg : (organization || null),
           client: custClient || client || null,
           representative: resolvedRepName,
@@ -189,6 +188,7 @@ export async function POST(req: NextRequest) {
           brand: brand || null,
           techSupport: techSupport || null,
           budgetAmount: budgetAmount != null && budgetAmount !== "" ? Number(budgetAmount) : null,
+          budgetAmountSource: budgetAmount != null && budgetAmount !== "" ? "MANUAL" : null,
           budgetCost: bc,
           members: {
             create: {

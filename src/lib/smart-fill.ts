@@ -1,7 +1,6 @@
 export interface SmartFillResult {
   name?: string;
   description?: string;
-  orderNumber?: string;
   organization?: string;
   client?: string;
   representative?: string;
@@ -90,13 +89,13 @@ export function parseSmartFill(text: string): SmartFillResult {
   const result: SmartFillResult = {};
 
   // Column mapping (Feishu export):
-  // 0: orderNumber, 1: internal code, 2: organization, 3: client, 4: representative,
+  // 0: (was orderNumber, now ignored), 1: internal code, 2: organization, 3: client, 4: representative,
   // 5: techSupport, 6: projectType, 7: projectContent, 8: quantity,
   // 9: procurementSource, 10: brand, 11: progress/status,
   // 12: startDate, 13: endDate, 14: (unused),
   // 15: budgetAmount, 16-17: progress payments, 18: budgetCost
 
-  if (cols[0]) result.orderNumber = cols[0];
+  // Column 0 (orderNumber) is deliberately skipped — orderNumber is set from order side only
   if (cols[2]) result.organization = cols[2];
   if (cols[3]) result.client = cols[3];
   if (cols[4]) result.representative = cols[4];

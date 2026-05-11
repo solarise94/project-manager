@@ -23,6 +23,7 @@ export interface LinkOptions {
 export interface LinkResult {
   link: Awaited<ReturnType<TransactionClient["orderProjectLink"]["create"]>>;
   orderUpdateData?: Record<string, unknown>;
+  projectUpdateData?: Record<string, unknown>;
 }
 
 /**
@@ -41,15 +42,30 @@ export async function linkOrderToProject(
   options: LinkOptions = {},
   existingOrderCustomer?: string | null,
 ): Promise<LinkResult> {
-  const [orderCust, projectCust] = await Promise.all([
-    existingOrderCustomer !== undefined
-      ? { customerId: existingOrderCustomer }
-      : tx.order.findUnique({ where: { id: orderId }, select: { customerId: true } }),
-    tx.project.findUnique({ where: { id: projectId }, select: { customerId: true } }),
+  const [orderInfo, projectInfo] = await Promise.all([
+    tx.order.findUnique({
+      where: { id: orderId },
+      select: {
+        customerId: true,
+        orderNo: true,
+        totalAmount: true,
+        financeAmountOverride: true,
+      },
+    }),
+    tx.project.findUnique({
+      where: { id: projectId },
+      select: {
+        customerId: true,
+        orderNumber: true,
+        budgetAmount: true,
+        budgetAmountSource: true,
+        budgetCost: true,
+      },
+    }),
   ]);
 
-  const oCustId = orderCust?.customerId || null;
-  const pCustId = projectCust?.customerId || null;
+  const oCustId = existingOrderCustomer !== undefined ? existingOrderCustomer : (orderInfo?.customerId || null);
+  const pCustId = projectInfo?.customerId || null;
 
   // Conflict: both have different customers
   if (oCustId && pCustId && oCustId !== pCustId) {
@@ -84,6 +100,35 @@ export async function linkOrderToProject(
       customerMatchStatus: "MANUAL_MATCHED",
       customerMatchReason: "inherited_from_project_link",
     };
+  }
+
+  // Backfill project fields from order (only if project doesn't already have them)
+  if (orderInfo) {
+    const projectUpdates: Record<string, unknown> = {};
+    // orderNumber is a cross-reference — always backfill if missing
+    if (!projectInfo?.orderNumber && orderInfo.orderNo) {
+      projectUpdates.orderNumber = orderInfo.orderNo;
+    }
+    // budgetAmount only backfills for PROJECT_INCLUDED, and only when the project
+    // has no manually-set amount (both budgetAmount AND budgetAmountSource are null).
+    // Once a project has MANUAL budget, link mutations never overwrite it.
+    const treatment = options.treatment || "PROJECT_INCLUDED";
+    if (
+      treatment === "PROJECT_INCLUDED" &&
+      projectInfo?.budgetAmount == null &&
+      projectInfo?.budgetAmountSource == null
+    ) {
+      const orderAmount = orderInfo.financeAmountOverride ?? orderInfo.totalAmount;
+      const effectiveAmount = options.allocatedAmount ?? orderAmount;
+      if (effectiveAmount != null) {
+        projectUpdates.budgetAmount = effectiveAmount;
+        projectUpdates.budgetAmountSource = "ORDER_LINK";
+      }
+    }
+    if (Object.keys(projectUpdates).length > 0) {
+      await tx.project.update({ where: { id: projectId }, data: projectUpdates });
+      result.projectUpdateData = projectUpdates;
+    }
   }
 
   // Create the link with options

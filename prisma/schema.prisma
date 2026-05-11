@@ -233,6 +233,7 @@ model Project {
   brand             String?
   techSupport       String?
   budgetAmount      Float?
+  budgetAmountSource String? // null | MANUAL | ORDER_LINK
   budgetCost        Float?
   status            String           @default("NOT_STARTED")
   progress          Int              @default(0)

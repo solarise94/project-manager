@@ -82,7 +82,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     name: "",
     description: "",
     projectNo: "",
-    orderNumber: "",
     organization: "",
     client: "",
     representative: "",
@@ -140,7 +139,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
     onSuccess: () => {
       toast.success("项目创建成功");
       setOpen(false);
-      setForm({ name: "", description: "", projectNo: "", orderNumber: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", progress: 0, startDate: new Date().toISOString().slice(0, 10), endDate: "" });
+      setForm({ name: "", description: "", projectNo: "", organization: "", client: "", representative: "", representativeId: "", customerId: "", status: "NOT_STARTED", progress: 0, startDate: new Date().toISOString().slice(0, 10), endDate: "" });
       setSelectedOrgId("");
       setCustomerOrgId(null);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -244,7 +243,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
               <DraftInputPanel
                 formKey="project.create"
                 fieldLabels={{
-                  name: "项目名称", description: "项目描述", orderNumber: "订单号",
+                  name: "项目名称", description: "项目描述",
                   organization: "单位", client: "客户", representative: "代表",
                   status: "状态", startDate: "开始日期", endDate: "结束日期",
                   progress: "项目进度",
@@ -254,7 +253,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   // Whitelist: only base fields allowed for new project creation.
                   // Product/financial fields are managed through orders.
                   const ALLOWED_KEYS = new Set([
-                    "name", "description", "projectNo", "orderNumber",
+                    "name", "description", "projectNo",
                     "organization", "client", "customerId", "representativeId", "representative",
                     "status", "progress", "startDate", "endDate",
                   ]);
@@ -411,14 +410,6 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                     value={form.projectNo}
                     onChange={(e) => setForm({ ...form, projectNo: e.target.value })}
                     placeholder="PRJ-YYYYMMDD-0001（留空自动生成）"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>订单号</Label>
-                  <Input
-                    value={form.orderNumber}
-                    onChange={(e) => setForm({ ...form, orderNumber: e.target.value })}
-                    placeholder="例如: SC-2026-001"
                   />
                 </div>
                 <div className="space-y-2">
@@ -718,6 +709,9 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                             <ProjectBadges project={project} />
                           </div>
                         </div>
+                        {project.projectNo && (
+                          <p className="text-xs text-muted-foreground">项目号: {project.projectNo}</p>
+                        )}
                         {project.orderNumber && (
                           <p className="text-xs text-muted-foreground">订单号: {project.orderNumber}</p>
                         )}
@@ -779,6 +773,7 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                     {project.description || "暂无描述"}
                   </p>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-1">
+                    {project.projectNo && <span>项目号: {project.projectNo}</span>}
                     {project.orderNumber && <span>订单: {project.orderNumber}</span>}
                     {project.organization && <span>{project.organization}</span>}
                     {project.client && <span>客户: {project.client}</span>}

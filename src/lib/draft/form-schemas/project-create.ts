@@ -5,7 +5,6 @@ export const projectCreateSchema: FormSchema = {
   fields: [
     { key: "name", label: "项目名称", type: "string", required: true },
     { key: "description", label: "项目描述", type: "string" },
-    { key: "orderNumber", label: "订单号", type: "string" },
     {
       key: "organization",
       label: "单位",
