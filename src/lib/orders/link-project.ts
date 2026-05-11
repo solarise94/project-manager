@@ -20,10 +20,20 @@ export interface LinkOptions {
   note?: string | null;
 }
 
+export interface RepAssignedSnapshot {
+  projectId: string;
+  projectName: string;
+  representativeId: string;
+  representativeName: string;
+  representativeEmail: string;
+}
+
 export interface LinkResult {
   link: Awaited<ReturnType<TransactionClient["orderProjectLink"]["create"]>>;
   orderUpdateData?: Record<string, unknown>;
   projectUpdateData?: Record<string, unknown>;
+  /** snapshot of the representative newly/changed assigned to the project during this link */
+  repAssignedToProject: RepAssignedSnapshot | null;
 }
 
 /**
@@ -55,7 +65,9 @@ export async function linkOrderToProject(
     tx.project.findUnique({
       where: { id: projectId },
       select: {
+        name: true,
         customerId: true,
+        representativeId: true,
         orderNumber: true,
         budgetAmount: true,
         budgetAmountSource: true,
@@ -72,11 +84,12 @@ export async function linkOrderToProject(
     throw new OrderProjectCustomerConflictError(oCustId, pCustId);
   }
 
-  const result: LinkResult = { link: {} as LinkResult["link"] };
+  const result: LinkResult = { link: {} as LinkResult["link"], repAssignedToProject: null };
 
   // Sync CRM from order → project
   if (oCustId && !pCustId) {
     const ctx = await resolveCustomerBusinessContext(oCustId);
+    const prevRepId = projectInfo?.representativeId || null;
     await tx.project.update({
       where: { id: projectId },
       data: {
@@ -87,6 +100,21 @@ export async function linkOrderToProject(
         representative: ctx.representativeName,
       },
     });
+    if (ctx.representativeId && ctx.representativeId !== prevRepId) {
+      const rep = await tx.representative.findUnique({
+        where: { id: ctx.representativeId, archived: false },
+        select: { id: true, name: true, email: true },
+      });
+      if (rep) {
+        result.repAssignedToProject = {
+          projectId,
+          projectName: projectInfo!.name,
+          representativeId: rep.id,
+          representativeName: rep.name,
+          representativeEmail: rep.email,
+        };
+      }
+    }
   }
 
   // Sync CRM from project → order

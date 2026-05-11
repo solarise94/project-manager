@@ -142,6 +142,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "生成项目需要先选择或新建客户" }, { status: 400 });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let generatedRepSnapshot: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let linkedRepSnapshot: any = null;
+
   // LINK requires a valid project — verify it exists before creating the order
   if (projectAction === "LINK") {
     if (!projectId) {
@@ -243,6 +248,8 @@ export async function POST(req: NextRequest) {
           ? Number(draft.quantity)
           : firstLine?.quantity ?? null;
 
+      generatedRepSnapshot = null;
+
       const project = await tx.project.create({
         data: {
           projectNo: newProjectNo,
@@ -270,6 +277,22 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+
+      if (ctx.representativeId) {
+        const rep = await tx.representative.findUnique({
+          where: { id: ctx.representativeId, archived: false },
+          select: { id: true, name: true, email: true },
+        });
+        if (rep) {
+          generatedRepSnapshot = {
+            projectId: project.id,
+            projectName: project.name,
+            representativeId: rep.id,
+            representativeName: rep.name,
+            representativeEmail: rep.email,
+          };
+        }
+      }
 
       await tx.orderProjectLink.create({
         data: {
@@ -299,12 +322,14 @@ export async function POST(req: NextRequest) {
 
     // ── Project linking ─────────────────────────────────────────────
     if (projectAction === "LINK" && projectId) {
+      linkedRepSnapshot = null;
       const linkResult = await linkOrderToProject(
         tx, created.id, projectId as string,
         session.user.id,
         { treatment: "PROJECT_INCLUDED", isPrimary: true },
         created.customerId,
       );
+      linkedRepSnapshot = linkResult.repAssignedToProject;
       if (linkResult.orderUpdateData) {
         await tx.order.update({
           where: { id: created.id },
@@ -349,16 +374,28 @@ export async function POST(req: NextRequest) {
       }
       const isP2002 = typeof err === "object" && err !== null && "code" in err && (err as { code: string }).code === "P2002";
       const target = Array.isArray(((err as { meta?: { target?: unknown } }).meta?.target)) ? ((err as { meta?: { target?: string[] } }).meta?.target || []) : [];
-      // Retry auto-generated orderNo collisions (always auto) and auto-generated projectNo collisions
-      const canRetry = isP2002 && attempt < 2 && (
-        target.includes("orderNo") ||
-        (autoProjectNoInDraft && target.includes("projectNo"))
-      );
-      if (canRetry) continue;
-      if (isP2002 && target.includes("orderNo")) return NextResponse.json({ error: "订单号冲突，请重试" }, { status: 409 });
-      if (isP2002 && target.includes("projectNo")) return NextResponse.json({ error: "项目号已被使用" }, { status: 409 });
+      if (isP2002 && attempt < 2 && (target.includes("orderNo") || (autoProjectNoInDraft && target.includes("projectNo")))) {
+        continue;
+      }
+      if (isP2002 && target.includes("orderNo")) {
+        return NextResponse.json({ error: "订单号冲突，请重试" }, { status: 409 });
+      }
+      if (isP2002 && target.includes("projectNo")) {
+        return NextResponse.json({ error: "项目号已被使用" }, { status: 409 });
+      }
       throw err;
     }
+  }
+
+  // Notify representative for generated/linked project (fire-and-forget, outside transaction)
+  // Uses snapshots captured inside the transaction — no post-commit project/rep queries.
+  const snap = generatedRepSnapshot || linkedRepSnapshot;
+  if (snap) {
+    const { notifyRepresentativeById } = await import("@/lib/representative-link");
+    const { buildRepAssignedNotifications } = await import("@/lib/notification-helpers");
+    notifyRepresentativeById(snap.representativeId, snap.representativeEmail, "/projects/" + snap.projectId,
+      buildRepAssignedNotifications(snap.representativeName, snap.projectName),
+    ).catch(() => {});
   }
 
   return NextResponse.json({ order }, { status: 201 });

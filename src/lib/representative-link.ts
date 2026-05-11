@@ -78,6 +78,35 @@ export async function generateRepresentativeLoginLink(
   return { magicLink, isRepresentative: true };
 }
 
+export async function notifyRepresentativeById(
+  repId: string,
+  repEmail: string,
+  redirect: string,
+  notifications: Array<{ subject: string; text: string; html: string }>,
+): Promise<{ ok: boolean }> {
+  const rep = await prisma.representative.findUnique({
+    where: { id: repId, archived: false },
+  });
+  if (!rep) return { ok: false };
+
+  const { magicLink } = await issueOrReuseRepresentativeMagicLink(rep.id, redirect);
+
+  import("./mail").then(({ sendMail }) => {
+    for (const n of notifications) {
+      sendMail({
+        to: repEmail,
+        subject: n.subject,
+        text: n.text,
+        html: appendLoginLinkToEmail(n.html, magicLink),
+      }).catch((err) => {
+        console.error("[MAGIC_LINK] SMTP notification failed for", repEmail, err);
+      });
+    }
+  }).catch(() => {});
+
+  return { ok: true };
+}
+
 export async function notifyRepresentative(
   repEmail: string,
   redirect: string,

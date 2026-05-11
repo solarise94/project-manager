@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
 import { linkOrderToProject, OrderProjectCustomerConflictError } from "@/lib/orders/link-project";
+import type { RepAssignedSnapshot } from "@/lib/orders/link-project";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -64,8 +65,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Use shared helper for customer conflict check + CRM sync + link creation
   let link: Awaited<ReturnType<typeof prisma.orderProjectLink.create>>;
+  let repAssigned: RepAssignedSnapshot | null = null;
   try {
-    link = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const linkResult = await linkOrderToProject(
         tx, orderId, projectId as string, session.user.id,
         {
@@ -82,8 +84,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           data: linkResult.orderUpdateData,
         });
       }
-      return linkResult.link;
+      return linkResult;
     });
+    link = result.link;
+    repAssigned = result.repAssignedToProject;
   } catch (e) {
     if (e instanceof OrderProjectCustomerConflictError) {
       return NextResponse.json({
@@ -93,6 +97,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }, { status: 409 });
     }
     throw e;
+  }
+
+  // Notify representative only if the link actually assigned one to the project
+  if (repAssigned) {
+    const { notifyRepresentativeById } = await import("@/lib/representative-link");
+    const { buildRepAssignedNotifications } = await import("@/lib/notification-helpers");
+    const redirect = "/projects/" + repAssigned.projectId;
+    notifyRepresentativeById(
+      repAssigned.representativeId,
+      repAssigned.representativeEmail,
+      redirect,
+      buildRepAssignedNotifications(repAssigned.representativeName, repAssigned.projectName),
+    ).catch(() => {});
   }
 
   return NextResponse.json({ link }, { status: 201 });
