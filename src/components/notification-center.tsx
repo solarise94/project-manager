@@ -38,7 +38,9 @@ const REMINDER_TYPES = new Set(["REMINDER", "CRM_FOLLOW_UP_REMINDER", "CRM_APPLI
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
-  const seenReminderIds = useRef<Set<string>>(new Set());
+  const seenReminderIds = useRef<Set<string>>(
+    new Set(JSON.parse(typeof window !== "undefined" ? sessionStorage.getItem("seenNotificationIds") || "[]" : "[]"))
+  );
 
   const { data, isLoading } = useQuery<{ notifications: NotificationItem[]; unreadCount: number }>({
     queryKey: ["notifications"],
@@ -56,11 +58,13 @@ export function NotificationCenter() {
     for (const n of data.notifications) {
       if (!n.read && REMINDER_TYPES.has(n.type) && !seenReminderIds.current.has(n.id)) {
         seenReminderIds.current.add(n.id);
+        try { sessionStorage.setItem("seenNotificationIds", JSON.stringify([...seenReminderIds.current])); } catch { /* ignore quota */ }
         toast(n.title, {
           description: n.content.length > 80 ? n.content.slice(0, 80) + "..." : n.content,
           action: {
             label: "查看",
             onClick: () => {
+              fetch(`/api/notifications/${n.id}`, { method: "PATCH" }).catch(() => {});
               if (n.link) window.location.href = n.link;
             },
           },

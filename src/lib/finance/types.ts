@@ -141,8 +141,9 @@ export function isProjectCompleted(project: { status: string; progress: number }
 
 export function isProductProject(projectType: string | null | undefined): boolean {
   if (!projectType) return false;
+  if (isProductProjectType(projectType)) return true;
   const t = projectType.toLowerCase();
-  return t.includes("商品") || t.includes("产品") || t.includes("耗材") || t.includes("设备") || t === "product";
+  return t.includes("耗材") || t.includes("设备");
 }
 
 export function computeProjectReceivable(project: { budgetAmount?: number | null; projectType?: string | null; status: string; progress: number }): number {
@@ -174,3 +175,4 @@ export function isOrderStandalone(order: {
 }): boolean {
   return getOrderEffectiveTreatment(order) === "STANDALONE";
 }
+import { isProductProjectType } from "@/lib/project-type";

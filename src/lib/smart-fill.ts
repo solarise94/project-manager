@@ -19,6 +19,14 @@ export interface SmartFillResult {
   budgetCost?: number;
 }
 
+export function normalizeSmartFillProjectType(raw: string): string {
+  if (/商品|货物|产品/.test(raw)) return "商品";
+  if (/服务|技术|实验/.test(raw)) return "服务";
+  if (raw === "SERVICE") return "服务";
+  if (raw === "PRODUCT") return "商品";
+  return raw;
+}
+
 function splitLine(line: string): string[] {
   // Try tab first, then multiple spaces
   if (line.includes("\t")) {
@@ -94,10 +102,7 @@ export function parseSmartFill(text: string): SmartFillResult {
   if (cols[4]) result.representative = cols[4];
   if (cols[5]) result.techSupport = cols[5];
   if (cols[6]) {
-    const rawType = cols[6];
-    if (/商品|货物|产品/.test(rawType)) result.projectType = "商品";
-    else if (/服务|技术|实验/.test(rawType)) result.projectType = "服务";
-    else result.projectType = rawType;
+    result.projectType = normalizeSmartFillProjectType(cols[6]);
   }
   if (cols[7]) result.projectContent = cols[7];
   if (cols[8]) result.quantity = parseNumber(cols[8]);

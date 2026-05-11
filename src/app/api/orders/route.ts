@@ -7,6 +7,7 @@ import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-represen
 import { resolveCustomerBusinessContext } from "@/lib/business/customer-context";
 import { generateProjectNo } from "@/lib/project-number";
 import { linkOrderToProject, OrderProjectCustomerConflictError } from "@/lib/orders/link-project";
+import { normalizeProjectType } from "@/lib/project-type";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -235,7 +236,7 @@ export async function POST(req: NextRequest) {
         derivedFromLine ||
         title.trim();
       const derivedProjectType =
-        (draft.projectType as string)?.trim() ||
+        normalizeProjectType(draft.projectType as string) ||
         (orderCategory === "PRODUCT" ? "商品" : "服务");
       const derivedQuantity =
         draft.quantity != null && draft.quantity !== ""

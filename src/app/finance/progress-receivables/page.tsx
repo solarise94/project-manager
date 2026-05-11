@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/finance/stat-card";
 import { FolderKanban, ShoppingBag, TrendingUp } from "lucide-react";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { getOrderCategoryLabel } from "@/lib/order-labels";
 
 export default function ProgressReceivablesPage() {
   const { data: session, status } = useSession();
@@ -163,7 +164,7 @@ function ProgressContent() {
                   </Badge>
                 </div>
                 <div className="text-xs text-muted-foreground truncate">{String(item.customerName || "-")}</div>
-                <div className="text-xs text-muted-foreground">分类: {String(item.financeCategory)}</div>
+                <div className="text-xs text-muted-foreground">分类: {getOrderCategoryLabel(String(item.financeCategory))}</div>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{new Date(String(item.eventDate)).toLocaleDateString("zh-CN")}</span>
                   <span className="font-medium">{Math.round(Number(item.rate) * 100)}%</span>
@@ -198,7 +199,7 @@ function ProgressContent() {
                 <tr key={i} className="border-b">
                   <td className="py-2 px-2 font-mono text-xs">{String(item.orderNo || item.externalOrderNo)}</td>
                   <td className="py-2 px-2 text-muted-foreground">{String(item.customerName || "-")}</td>
-                  <td className="py-2 px-2 text-center"><Badge variant="outline">{String(item.financeCategory)}</Badge></td>
+                  <td className="py-2 px-2 text-center"><Badge variant="outline">{getOrderCategoryLabel(String(item.financeCategory))}</Badge></td>
                   <td className="py-2 px-2 text-center">
                     <Badge variant="outline">{item.eventType === "PRODUCT_ORDER" ? "商品订单" : "服务订单(30%)"}</Badge>
                   </td>

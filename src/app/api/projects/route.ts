@@ -7,6 +7,7 @@ import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { resolveCustomerBusinessContext } from "@/lib/business/customer-context";
 import { generateProjectNo } from "@/lib/project-number";
 import type { Prisma } from "@prisma/client";
+import { normalizeProjectType } from "@/lib/project-type";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -181,7 +182,7 @@ export async function POST(req: NextRequest) {
           progress: Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Number(progress))) : 0,
           startDate: startDate ? new Date(startDate) : new Date(),
           endDate: endDate ? new Date(endDate) : null,
-          projectType: projectType || null,
+          projectType: normalizeProjectType(projectType as string) || null,
           projectContent: projectContent || null,
           quantity: quantity != null && quantity !== "" ? Number(quantity) : null,
           procurementSource: procurementSource || null,

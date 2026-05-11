@@ -42,8 +42,9 @@ function safe(v: string | number | null | undefined): string {
 
 function progressPayment(amount: number | null | undefined, projectType: string | null | undefined, ratio: number): string {
   if (amount == null) return "";
-  if (projectType === "商品") return ratio === 0 ? "0.00" : fmtAmount(amount);
-  if (projectType === "服务") return ratio === 0 ? fmtAmount(amount * 0.3) : fmtAmount(amount * 0.7);
+  const type = getProjectTypeLabel(projectType);
+  if (type === "商品") return ratio === 0 ? "0.00" : fmtAmount(amount);
+  if (type === "服务") return ratio === 0 ? fmtAmount(amount * 0.3) : fmtAmount(amount * 0.7);
   return "";
 }
 
@@ -89,7 +90,7 @@ export function projectToFeishuRow(p: ProjectExportData): string {
     safe(p.client),
     safe(p.representative),
     safe(p.techSupport),
-    safe(p.projectType),
+    safe(getProjectTypeLabel(p.projectType)),
     safe(p.projectContent || p.description),
     p.quantity != null ? String(p.quantity) : "",
     safe(p.procurementSource),
@@ -142,3 +143,4 @@ export function externalOrderToFeishuRow(o: ExternalOrderExportData): string {
 export function externalOrdersToFeishuText(orders: ExternalOrderExportData[]): string {
   return orders.map(externalOrderToFeishuRow).join("\n");
 }
+import { getProjectTypeLabel } from "@/lib/project-type";

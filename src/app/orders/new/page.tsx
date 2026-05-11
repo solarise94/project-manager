@@ -16,6 +16,7 @@ import { RepresentativeSelect } from "@/components/representative-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { isAdmin } from "@/lib/role-guards";
 import { toast } from "sonner";
+import { getProjectTypeLabel, normalizeProjectType } from "@/lib/project-type";
 
 const ORDER_FIELD_LABELS: Record<string, string> = {
   title: "订单标题", description: "描述", category: "分类",
@@ -47,13 +48,15 @@ function NewOrderForm() {
   const [projectId, setProjectId] = useState("");
   const [manualProjectOverride, setManualProjectOverride] = useState(false);
   // Project draft fields (for GENERATE)
-  const [pProjectType, setPProjectType] = useState("");
+  const [pProjectType, setPProjectType] = useState(category === "PRODUCT" ? "商品" : category === "MIXED" ? "混合" : "服务");
+  const pProjectTypeTouched = useRef(false);
   const [pProjectContent, setPProjectContent] = useState("");
   const [pQuantity, setPQuantity] = useState("");
   const [pProcurementSource, setPProcurementSource] = useState("");
   const [pBrand, setPBrand] = useState("");
   const [pTechSupport, setPTechSupport] = useState("");
-  const [pStartDate, setPStartDate] = useState(new Date().toISOString().slice(0, 10));
+  const [pStartDate, setPStartDate] = useState(orderedAt);
+  const pStartDateTouched = useRef(false);
   const [pBudgetCost, setPBudgetCost] = useState("");
   // Order-level cost (for non-GENERATE)
   const [initialCost, setInitialCost] = useState("");
@@ -106,8 +109,8 @@ function NewOrderForm() {
         setProjectId(project.id);
         setFinanceTreatment("PROJECT_INCLUDED");
         setLines([{
-          itemName: project.projectContent || project.projectType || project.name || "",
-          spec: project.projectType || "",
+          itemName: project.projectContent || getProjectTypeLabel(project.projectType) || project.name || "",
+          spec: getProjectTypeLabel(project.projectType),
           unit: "项",
           quantity: qty,
           unitPrice: qty > 0 ? budget / qty : 0,
@@ -119,6 +122,23 @@ function NewOrderForm() {
       }
     })();
   }, [fromProjectId]);
+
+  // Sync project draft defaults from order fields.
+  // Only auto-sync when the current value is still a simple category-derived default
+  // ("商品"/"服务"/"混合"). AI drafts often fill a richer projectType like "mRNA转录组测序"
+  // — those should be preserved even though the user hasn't manually touched the input.
+  const DERIVED_TYPE_SET = new Set(["商品", "服务", "混合"]);
+  useEffect(() => {
+    if (!pProjectTypeTouched.current && DERIVED_TYPE_SET.has(pProjectType)) {
+      setPProjectType(category === "PRODUCT" ? "商品" : category === "MIXED" ? "混合" : "服务");
+    }
+  }, [category]);
+
+  useEffect(() => {
+    if (!pStartDateTouched.current) {
+      setPStartDate(orderedAt);
+    }
+  }, [orderedAt]);
 
   const handleDraftApply = useCallback(async (fields: Record<string, unknown>) => {
     if (fields.title) setTitle(String(fields.title));
@@ -328,7 +348,7 @@ function NewOrderForm() {
       }
     }
     // Supplement project fields (non-derivable)
-    if (fields.projectType) setPProjectType(String(fields.projectType));
+    if (fields.projectType) setPProjectType(getProjectTypeLabel(String(fields.projectType)));
     if (fields.procurementSource) setPProcurementSource(String(fields.procurementSource));
     if (fields.brand) setPBrand(String(fields.brand));
     if (fields.techSupport) setPTechSupport(String(fields.techSupport));
@@ -371,7 +391,7 @@ function NewOrderForm() {
     if (next === "GENERATE") {
       setProjectAction("GENERATE");
       setFinanceTreatment("PROJECT_INCLUDED");
-      if (!pProjectType) setPProjectType(category === "PRODUCT" ? "商品" : "服务");
+      if (!pProjectType && !pProjectTypeTouched.current) setPProjectType(category === "PRODUCT" ? "商品" : "服务");
       if (!pBudgetCost && initialCost) setPBudgetCost(initialCost);
     }
     if (next === "NONE") {
@@ -411,7 +431,7 @@ function NewOrderForm() {
 
       if (projectAction === "GENERATE") {
         body.projectDraft = {
-          projectType: pProjectType || null,
+          projectType: normalizeProjectType(pProjectType) || null,
           projectContent: manualProjectOverride ? (pProjectContent || null) : null,
           quantity: manualProjectOverride ? (pQuantity || null) : null,
           procurementSource: pProcurementSource || null,
@@ -631,7 +651,7 @@ function NewOrderForm() {
 
           <h3 className="font-medium pt-2 border-t">项目补充信息</h3>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-sm font-medium">项目类型</label><Input value={pProjectType} onChange={(e) => setPProjectType(e.target.value)} placeholder="商品 / 服务" /></div>
+            <div><label className="text-sm font-medium">项目类型</label><Input value={pProjectType} onChange={(e) => { setPProjectType(e.target.value); pProjectTypeTouched.current = true; }} placeholder="商品 / 服务" /></div>
             <div>
               <label className="text-sm font-medium">采购渠道</label>
               <Select value={pProcurementSource} onValueChange={(v) => setPProcurementSource(v || "")}>
@@ -658,7 +678,7 @@ function NewOrderForm() {
             </div>
             <div><label className="text-sm font-medium">品牌</label><SourceBrandSelect value={pBrand} onChange={setPBrand} /></div>
             <div><label className="text-sm font-medium">技术支持</label><Input value={pTechSupport} onChange={(e) => setPTechSupport(e.target.value)} placeholder="技术支持" /></div>
-            <div><label className="text-sm font-medium">开始日期</label><Input type="date" value={pStartDate} onChange={(e) => setPStartDate(e.target.value)} /></div>
+            <div><label className="text-sm font-medium">开始日期</label><Input type="date" value={pStartDate} onChange={(e) => { setPStartDate(e.target.value); pStartDateTouched.current = true; }} /></div>
             <div><label className="text-sm font-medium">项目成本</label><Input type="number" value={pBudgetCost} onChange={(e) => setPBudgetCost(e.target.value)} placeholder="0" /></div>
           </div>
         </Card>

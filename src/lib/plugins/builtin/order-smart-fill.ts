@@ -1,6 +1,7 @@
 import { registerPlugin } from "../registry";
 import type { FormDraftPlugin, FormDraftResult } from "../types";
 import { parseSmartFill } from "@/lib/smart-fill";
+import { normalizeProjectType } from "@/lib/project-type";
 
 type OrderLineDraft = {
   itemName: string;
@@ -86,11 +87,11 @@ const orderSmartFill: FormDraftPlugin = {
       }
       if (projectLike.organization) fields.buyerOrgNameSnapshot = projectLike.organization;
       if (projectLike.startDate) fields.orderedAt = projectLike.startDate;
-      if (projectLike.projectType) fields.category = /商品|产品|货物/.test(projectLike.projectType) ? "PRODUCT" : "SERVICE";
+      if (projectLike.projectType) fields.category = normalizeProjectType(projectLike.projectType) === "商品" ? "PRODUCT" : "SERVICE";
       if (amount != null) fields.totalAmount = amount;
 
       // Supplement project fields (non-derivable, user/AI to fill)
-      if (projectLike.projectType) fields.projectType = projectLike.projectType;
+      if (projectLike.projectType) fields.projectType = normalizeProjectType(projectLike.projectType);
       if (projectLike.procurementSource) fields.procurementSource = projectLike.procurementSource;
       if (projectLike.brand) fields.brand = projectLike.brand;
       if (projectLike.techSupport) fields.techSupport = projectLike.techSupport;
@@ -141,7 +142,7 @@ const orderSmartFill: FormDraftPlugin = {
     if (!fields.orderedAt && orderedAt) fields.orderedAt = orderedAt;
     if (totalAmount != null) fields.totalAmount = totalAmount;
     if (!fields.category) fields.category = "SERVICE";
-    if (!fields.projectType && projectType) fields.projectType = projectType;
+    if (!fields.projectType && projectType) fields.projectType = normalizeProjectType(projectType);
     if (sampleType) fields.sampleType = sampleType;
     if (parsedQuantity != null) fields.quantity = parsedQuantity;
     if (unitPrice != null) fields.unitPrice = unitPrice;
@@ -165,7 +166,7 @@ const orderSmartFill: FormDraftPlugin = {
       if (lineItemName && typeof lineItemName === "string" && lineItemName !== "订单服务") {
         fields.title = lineItemName;
       } else if (projectType) {
-        fields.title = projectType;
+        fields.title = normalizeProjectType(projectType);
       }
     }
 

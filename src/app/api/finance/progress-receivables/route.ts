@@ -5,6 +5,7 @@ import { isFinanceBlocked, getFinanceProjectScopeWhere, getFinanceCustomerScopeW
 import { prisma } from "@/lib/prisma";
 import { isProductProject } from "@/lib/finance/types";
 import { getProjectStartDate, getOrderDate, getOrderEffectiveTreatment, computeOrderFinanceAmount, resolveProjectCompletionDate } from "@/lib/finance/progress";
+import { getProjectTypeLabel } from "@/lib/project-type";
 
 function getWeekRange() {
   const now = new Date();
@@ -110,7 +111,7 @@ export async function GET(req: NextRequest) {
         totalProductReceivable += budget;
         projectItems.push({
           projectId: p.id, projectName: p.name, customerName: p.cust?.name || "",
-          projectType: p.projectType || "未分类",
+          projectType: getProjectTypeLabel(p.projectType),
           eventType: "PRODUCT_START", eventDate: startDate.toISOString(),
           budgetAmount: budget, receivableAmount: budget, rate: 1,
         });
@@ -120,7 +121,7 @@ export async function GET(req: NextRequest) {
         totalServiceDeposit += budget * 0.3;
         projectItems.push({
           projectId: p.id, projectName: p.name, customerName: p.cust?.name || "",
-          projectType: p.projectType || "未分类",
+          projectType: getProjectTypeLabel(p.projectType),
           eventType: "SERVICE_START", eventDate: startDate.toISOString(),
           budgetAmount: budget, receivableAmount: budget * 0.3, rate: 0.3,
         });
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest) {
         totalServiceFinal += budget * 0.7;
         projectItems.push({
           projectId: p.id, projectName: p.name, customerName: p.cust?.name || "",
-          projectType: p.projectType || "未分类",
+          projectType: getProjectTypeLabel(p.projectType),
           eventType: "SERVICE_COMPLETED", eventDate: (completionDate || new Date()).toISOString(),
           budgetAmount: budget, receivableAmount: budget * 0.7, rate: 0.7,
         });

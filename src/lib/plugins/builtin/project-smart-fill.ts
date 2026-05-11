@@ -1,6 +1,7 @@
 import { registerPlugin } from "../registry";
 import type { FormDraftPlugin, FormDraftResult } from "../types";
 import { parseSmartFill } from "@/lib/smart-fill";
+import { normalizeProjectType } from "@/lib/project-type";
 
 const projectSmartFill: FormDraftPlugin = {
   manifest: {
@@ -25,7 +26,7 @@ const projectSmartFill: FormDraftPlugin = {
     if (result.startDate) fields.startDate = result.startDate;
     if (result.endDate) fields.endDate = result.endDate;
     if (result.progress != null) fields.progress = result.progress;
-    if (result.projectType) fields.projectType = result.projectType;
+    if (result.projectType) fields.projectType = normalizeProjectType(result.projectType);
     if (result.projectContent) fields.projectContent = result.projectContent;
     if (result.quantity != null) fields.quantity = result.quantity;
     if (result.procurementSource) fields.procurementSource = result.procurementSource;

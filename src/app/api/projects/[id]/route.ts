@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { canReadProject, canManageProject, buildProjectPermissions } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { normalizeProjectType } from "@/lib/project-type";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -97,7 +98,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (startDate !== undefined) data.startDate = startDate ? new Date(startDate) : null;
     if (endDate !== undefined) data.endDate = endDate ? new Date(endDate) : null;
     if (archived !== undefined) data.archived = archived;
-    if (projectType !== undefined) data.projectType = projectType || null;
+    if (projectType !== undefined) data.projectType = normalizeProjectType(projectType as string) || null;
     if (projectContent !== undefined) data.projectContent = projectContent || null;
     if (quantity !== undefined) data.quantity = quantity != null && quantity !== "" ? Number(quantity) : null;
     if (procurementSource !== undefined) data.procurementSource = procurementSource || null;

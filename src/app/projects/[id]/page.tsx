@@ -56,6 +56,7 @@ import { DraftInputPanel } from "@/components/draft-input-panel";
 import { PushToFollowUpButton } from "@/components/crm/push-to-follow-up-button";
 import { SourceBrandSelect } from "@/components/source-brand-select";
 import { projectToFeishuRow } from "@/lib/feishu-export";
+import { getProjectTypeLabel, normalizeProjectType } from "@/lib/project-type";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   NOT_STARTED: { label: "未开始", color: "text-slate-600", bg: "bg-slate-100" },
@@ -581,7 +582,7 @@ export default function ProjectDetailPage() {
                     复制到飞书
                   </Button>
                   <Dialog open={editOpen} onOpenChange={setEditOpen}>
-                    <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); const ms = (project.members || []).map((m: Record<string, unknown>) => ({ userId: (m.userId || (m.user as Record<string, unknown>)?.id) as string, role: m.role as string, user: m.user as { id: string; name: string; email: string } })); setEditMembers(ms); }} />}>
+                    <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project, projectType: normalizeProjectType(project.projectType) || project.projectType }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); const ms = (project.members || []).map((m: Record<string, unknown>) => ({ userId: (m.userId || (m.user as Record<string, unknown>)?.id) as string, role: m.role as string, user: m.user as { id: string; name: string; email: string } })); setEditMembers(ms); }} />}>
                       编辑项目
                     </DialogTrigger>
               <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
@@ -846,7 +847,7 @@ export default function ProjectDetailPage() {
                     <div className="space-y-2">
                       <label className="text-sm font-medium">项目类型</label>
                       <Select value={editForm.projectType || ""} onValueChange={(v) => setEditForm({ ...editForm, projectType: v })}>
-                        <SelectTrigger><span>{editForm.projectType || "选择类型"}</span></SelectTrigger>
+                      <SelectTrigger><span>{getProjectTypeLabel(editForm.projectType)}</span></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="商品">商品</SelectItem>
                           <SelectItem value="服务">服务</SelectItem>
