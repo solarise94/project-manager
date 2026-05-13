@@ -58,26 +58,44 @@ export function CustomerApplicationFormDialog() {
   });
   const orgSites = orgSitesData?.sites || [];
 
+  // Duplicate candidate state
+  const [dupCandidates, setDupCandidates] = useState<Array<{
+    id: string; name: string; customerCodeLast6: string;
+    organization: string | null; hasCrmProfile: boolean; matchReasons: string[];
+  }> | null>(null);
+
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (override?: { duplicateDecision: string }) => {
+      const body = override ? { ...form, ...override } : form;
       const res = await fetch("/api/crm/customer-applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
+      const data = await res.json();
+      if (res.status === 409 && data.code === "DUPLICATE_CANDIDATES") {
+        return { duplicateCandidates: data.candidates };
+      }
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || "提交失败");
       }
-      return res.json();
+      return data;
     },
-    onSuccess: () => {
-      toast.success("客户已创建，管理员将进行复核");
+    onSuccess: (data: { duplicateCandidates?: unknown[]; application?: unknown }) => {
+      if (data.duplicateCandidates) {
+        setDupCandidates(data.duplicateCandidates as Array<{
+          id: string; name: string; customerCodeLast6: string;
+          organization: string | null; hasCrmProfile: boolean; matchReasons: string[];
+        }>);
+        return;
+      }
+      toast.success("客户已创建，主管将进行复核");
       queryClient.invalidateQueries({ queryKey: crmKeys.customerApplications() });
       setOpen(false);
       setForm({ ...emptyForm });
       setAiInput("");
       setOrgResolveStatus(null);
+      setDupCandidates(null);
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -299,7 +317,7 @@ export function CustomerApplicationFormDialog() {
         <DialogHeader>
           <DialogTitle>申请新增客户</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; mutation.mutate(); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; mutation.mutate(undefined); }} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>客户姓名 *</Label>
@@ -422,9 +440,65 @@ export function CustomerApplicationFormDialog() {
             </Button>
           </div>
 
-          <Button type="submit" className="w-full" disabled={mutation.isPending || !form.name.trim()}>
-            {mutation.isPending ? "提交中..." : "提交申请"}
-          </Button>
+          {dupCandidates && dupCandidates.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                <AlertCircle className="h-4 w-4" />
+                检测到 {dupCandidates.length} 个可能重复的客户
+              </div>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {dupCandidates.map((c) => (
+                  <div key={c.id} className="bg-white rounded border p-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{c.name}</span>
+                      <span className="text-xs text-muted-foreground">...{c.customerCodeLast6}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {c.organization && <span>{c.organization}</span>}
+                      {c.hasCrmProfile && <Badge variant="secondary" className="ml-1 text-xs">已有CRM</Badge>}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {c.matchReasons.map((r, i) => (
+                        <Badge key={i} variant="secondary" className="text-xs">{r}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => {
+                    setDupCandidates(null);
+                    setOpen(false);
+                    setForm({ ...emptyForm });
+                  }}
+                >
+                  取消，去客户池查看
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="flex-1"
+                  disabled={mutation.isPending}
+                  onClick={() => {
+                    mutation.mutate({ duplicateDecision: "CREATE_NEW" });
+                  }}
+                >
+                  {mutation.isPending ? "提交中..." : "这是新客户，继续创建"}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!dupCandidates && (
+            <Button type="submit" className="w-full" disabled={mutation.isPending || !form.name.trim()}>
+              {mutation.isPending ? "提交中..." : "提交申请"}
+            </Button>
+          )}
         </form>
       </DialogContent>
     </Dialog>

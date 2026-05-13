@@ -16,8 +16,7 @@ interface ReceiptItem {
   source: string;
   remark: string | null;
   customer: { id: string; name: string } | null;
-  project: { id: string; name: string } | null;
-  externalOrder: { id: string; externalOrderNo: string } | null;
+  order: { id: string; orderNo: string } | null;
   createdBy: { id: string; name: string } | null;
 }
 
@@ -61,11 +60,11 @@ function InvoiceReceiptDetailContent() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">开票/到款明细</h1>
+      <h1 className="text-2xl font-bold">订单回款流水</h1>
 
       <div className="relative max-w-sm">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="搜索客户/项目/订单..." className="pl-8" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+        <Input placeholder="搜索客户/订单号/外部订单号..." className="pl-8" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
       </div>
 
       {isLoading ? (
@@ -79,7 +78,7 @@ function InvoiceReceiptDetailContent() {
                   <th className="text-right py-2 px-2">金额</th>
                   <th className="text-left py-2 px-2">到款日期</th>
                   <th className="text-left py-2 px-2">客户</th>
-                  <th className="text-left py-2 px-2">项目</th>
+                  <th className="text-left py-2 px-2">订单号</th>
                   <th className="text-center py-2 px-2">来源</th>
                   <th className="text-left py-2 px-2">备注</th>
                 </tr>
@@ -97,7 +96,7 @@ function InvoiceReceiptDetailContent() {
                         {new Date(r.receivedAt).toLocaleDateString("zh-CN")}
                       </td>
                       <td className="py-2 px-2">{r.customer?.name || "-"}</td>
-                      <td className="py-2 px-2">{r.project?.name || "-"}</td>
+                      <td className="py-2 px-2">{r.order?.orderNo || "-"}</td>
                       <td className="py-2 px-2 text-center">
                         <Badge variant="outline">{sourceLabels[r.source] || r.source}</Badge>
                       </td>

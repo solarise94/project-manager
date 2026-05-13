@@ -99,10 +99,48 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await req.json();
-  const { amount, receivedAt, source, remark, customerId, projectId } = body;
+  const { amount, receivedAt, source, remark, orderId } = body;
 
-  const existing = await prisma.financeReceipt.findUnique({ where: { id } });
+  // Reject projectId edits — project-only receipts are deprecated
+  if ("projectId" in body || "customerId" in body) {
+    return NextResponse.json({ error: "projectId/customerId 已废弃，customer 由订单派生" }, { status: 400 });
+  }
+
+  const existing = await prisma.financeReceipt.findUnique({
+    where: { id },
+    include: { settledAdvanceRefunds: { select: { id: true, amount: true } } },
+  });
   if (!existing) return NextResponse.json({ error: "Not Found" }, { status: 404 });
+
+  // Block amount/orderId changes if this receipt has settled advance refunds
+  const hasRefunds = existing.settledAdvanceRefunds.length > 0;
+  if ((amount !== undefined && amount !== existing.amount) || (orderId !== undefined && orderId !== existing.orderId)) {
+    if (hasRefunds) {
+      return NextResponse.json({ error: "该回款已有垫付退款绑定，修改金额或订单可能破坏结算一致性。请先处理关联退款" }, { status: 409 });
+    }
+  }
+
+  // Resolve effective orderId: use new if provided, else keep existing
+  const effectiveOrderId = orderId !== undefined ? orderId : existing.orderId;
+  if (!effectiveOrderId) {
+    return NextResponse.json({ error: "回款必须关联订单。请先迁移此记录或设置 orderId" }, { status: 400 });
+  }
+
+  // Derive customerId from order — always
+  const order = await prisma.order.findUnique({
+    where: { id: effectiveOrderId },
+    select: { id: true, customerId: true },
+  });
+  if (!order) return NextResponse.json({ error: "订单不存在" }, { status: 400 });
+
+  // If changing to a different order, verify it exists (already done) and consistency
+  if (orderId !== undefined && orderId !== existing.orderId && existing.customerId && order.customerId && existing.customerId !== order.customerId) {
+    // Allow the change since new order's customer takes precedence
+  }
+
+  // When orderId is confirmed, clear legacy fields to prevent scope conflicts.
+  // This covers both explicit orderId changes and editing a receipt that still has legacy refs.
+  const clearLegacy = (effectiveOrderId && (existing.projectId || existing.projectInvoiceId || existing.externalOrderId || existing.externalOrderInvoiceRequestId));
 
   const receipt = await prisma.financeReceipt.update({
     where: { id },
@@ -111,8 +149,9 @@ export async function PATCH(
       ...(receivedAt !== undefined ? { receivedAt: new Date(receivedAt) } : {}),
       ...(source !== undefined ? { source } : {}),
       ...(remark !== undefined ? { remark } : {}),
-      ...(customerId !== undefined ? { customerId } : {}),
-      ...(projectId !== undefined ? { projectId } : {}),
+      customerId: order.customerId,
+      ...(orderId !== undefined ? { orderId } : {}),
+      ...(clearLegacy ? { projectId: null, projectInvoiceId: null, externalOrderId: null, externalOrderInvoiceRequestId: null } : {}),
     },
   });
 

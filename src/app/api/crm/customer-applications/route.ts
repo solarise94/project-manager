@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isRepresentative } from "@/lib/permissions";
-import { validateOrg, buildCustomerData } from "@/lib/crm/customer-application-review";
+import { validateOrg, buildCustomerData, findDuplicateCustomers, checkOrgOwnership, checkCustomerOwnershipConflict } from "@/lib/crm/customer-application-review";
 import { generateCustomerCode } from "@/lib/customer-code";
+import { notifyApplicationSupervisors } from "@/lib/crm/supervisor";
+import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -12,6 +13,21 @@ const applicationInclude = {
   createdCustomer: { select: { id: true, name: true, customerCode: true } },
   createdCrmProfile: { select: { id: true, sourceCustomerId: true } },
 };
+
+// Privacy-safe candidate shape for 409 / non-reviewer responses
+function pruneCandidate(c: {
+  id: string; name: string; customerCodeLast6: string;
+  organization: string | null; hasCrmProfile: boolean; matchReasons: string[];
+}) {
+  return {
+    id: c.id,
+    name: c.name,
+    customerCodeLast6: c.customerCodeLast6,
+    organization: c.organization,
+    hasCrmProfile: c.hasCrmProfile,
+    matchReasons: c.matchReasons,
+  };
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -22,14 +38,30 @@ export async function GET(req: NextRequest) {
   const review = searchParams.get("review") || "";
 
   const where: Record<string, unknown> = {};
+
+  // ── Role-based access (allow-list) ──
+  if (session.user.role === "ADMIN") {
+    // no restriction
+  } else if (session.user.role === "REPRESENTATIVE") {
+    where.submittedByUserId = session.user.id;
+  } else if (session.user.role === "REGIONAL_MANAGER") {
+    const repUserIds = await getRegionalManagerUserIds(session.user.id);
+    if (repUserIds && repUserIds.length > 0) {
+      where.submittedByUserId = { in: repUserIds };
+    } else {
+      where.submittedByUserId = session.user.id;
+    }
+  } else {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   if (status) where.status = status;
   if (review === "PENDING") {
     where.status = "APPROVED";
-    where.adminReviewStatus = "PENDING";
-  }
-
-  if (isRepresentative(session.user.role)) {
-    where.submittedByUserId = session.user.id;
+    where.OR = [
+      { supervisorReviewStatus: "PENDING" },
+      { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
+    ];
   }
 
   const applications = await prisma.crmCustomerApplication.findMany({
@@ -45,11 +77,18 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Allow-list: only ADMIN, REPRESENTATIVE, REGIONAL_MANAGER can submit
+  const allowedRoles = ["ADMIN", "REPRESENTATIVE", "REGIONAL_MANAGER"];
+  if (!allowedRoles.includes(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await req.json();
   const {
     name, principal, email, wechat, organization,
     organizationId, organizationSiteId, organizationRawInput, address, miniProgramId, notes,
     locationLat, locationLng, locationAddress,
+    duplicateDecision,
   } = body;
 
   if (!name?.trim()) {
@@ -62,6 +101,40 @@ export async function POST(req: NextRequest) {
   if (orgValidation.error) {
     return NextResponse.json({ error: orgValidation.error }, { status: 400 });
   }
+
+  // ── Duplicate detection ──
+  const { blocking, weak } = await findDuplicateCustomers({
+    name: name.trim(),
+    email,
+    wechat,
+    miniProgramId,
+    organizationId: orgValidation.organizationId || null,
+    organizationRawInput: rawOrgText,
+    organization,
+    principal,
+  });
+  const allCandidates = [...blocking, ...weak];
+
+  if (blocking.length > 0 && duplicateDecision !== "CREATE_NEW") {
+    return NextResponse.json({
+      error: "检测到可能重复的客户",
+      code: "DUPLICATE_CANDIDATES",
+      candidates: blocking.map(pruneCandidate),
+    }, { status: 409 });
+  }
+
+  // ── Conflict checks ──
+  const hasOrgConflict = await checkOrgOwnership(session.user.id, orgValidation.organizationId);
+  const hasCustConflict = checkCustomerOwnershipConflict(allCandidates, session.user.id);
+
+  let conflictType: string | null = null;
+  if (hasOrgConflict && hasCustConflict) conflictType = "BOTH";
+  else if (hasOrgConflict) conflictType = "ORG_CONFLICT";
+  else if (hasCustConflict) conflictType = "CUSTOMER_CONFLICT";
+
+  const isOverride = blocking.length > 0 && duplicateDecision === "CREATE_NEW";
+  const duplicateCheckStatus = isOverride ? "OVERRIDDEN_NEW" : (blocking.length > 0 ? "CANDIDATES_FOUND" : "CLEAN");
+  const supervisorReviewReason = isOverride ? "DUPLICATE_OVERRIDE" : (conflictType || "NORMAL");
 
   const appData = {
     name: name.trim(),
@@ -134,31 +207,20 @@ export async function POST(req: NextRequest) {
             status: "APPROVED",
             autoApproved: true,
             autoApprovedAt: new Date(),
-            adminReviewStatus: "PENDING",
             submittedByUserId: session.user.id,
             createdCustomerId: customer.id,
             createdCrmProfileId: profile.id,
+            // ── Supervisor review fields ──
+            supervisorReviewStatus: "PENDING",
+            supervisorReviewReason,
+            duplicateCheckStatus,
+            duplicateCandidatesJson: allCandidates.length > 0 ? JSON.stringify(allCandidates.map(pruneCandidate)) : null,
+            conflictType,
+            // Backward compat
+            adminReviewStatus: "PENDING",
           },
           include: applicationInclude,
         });
-
-        // Notify all ADMINs
-        const admins = await tx.user.findMany({
-          where: { role: "ADMIN" },
-          select: { id: true },
-        });
-        if (admins.length > 0) {
-          await tx.notification.createMany({
-            data: admins.map((a) => ({
-              userId: a.id,
-              type: "CRM_APPLICATION_REVIEW",
-              title: "新客户申请待复核",
-              content: `${appData.name} 的客户申请已自动通过，请复核`,
-              link: `/crm/customer-applications?review=PENDING`,
-              dedupeKey: `crm-application-review:${app.id}:${a.id}`,
-            })),
-          });
-        }
 
         return app;
       });
@@ -171,6 +233,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "申请提交失败" }, { status: 500 });
       }
     }
+  }
+
+  // Notify supervisors (in-app only; email is cron-only)
+  const app = application as { id: string } | undefined;
+  if (app?.id) {
+    notifyApplicationSupervisors(app.id, supervisorReviewReason).catch(() => {});
   }
 
   return NextResponse.json({ application }, { status: 201 });

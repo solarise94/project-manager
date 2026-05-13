@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { canReadProject, canManageProject } from "@/lib/permissions";
+import { canReadProject } from "@/lib/permissions";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -10,15 +10,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const { id: projectId } = await params;
   const canRead = await canReadProject(projectId, session.user.id, session.user.role);
-  if (!canRead) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  if (!canRead) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const invoices = await prisma.projectInvoice.findMany({
     where: { projectId },
     include: {
       items: { orderBy: { sortOrder: "asc" } },
       createdBy: { select: { id: true, name: true } },
+      sellerProfile: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -26,177 +25,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   return NextResponse.json({ invoices });
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { id: projectId } = await params;
-  const canManage = await canManageProject(projectId, session.user.id, session.user.role);
-  if (!canManage) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { deleted: true },
-  });
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  if (project.deleted) {
-    return NextResponse.json({ error: "已删除的项目不能新建开票申请" }, { status: 403 });
-  }
-
-  const body = await req.json();
-  const {
-    contactName,
-    projectCode,
-    sellerProfileId,
-    sellerName,
-    sellerTaxId: manualSellerTaxId,
-    sellerBankName: manualSellerBankName,
-    sellerBankAccount: manualSellerBankAccount,
-    buyerOrganizationId,
-    buyerOrganizationName,
-    buyerTaxId,
-    invoiceType,
-    contentSummary,
-    remark,
-    items,
-    taxIdFromLookup,
-  } = body as {
-    contactName?: string;
-    projectCode?: string;
-    sellerProfileId?: string;
-    sellerName?: string;
-    sellerTaxId?: string;
-    sellerBankName?: string;
-    sellerBankAccount?: string;
-    buyerOrganizationId?: string;
-    buyerOrganizationName?: string;
-    buyerTaxId?: string;
-    invoiceType?: string;
-    contentSummary?: string;
-    remark?: string;
-    items?: Array<{
-      itemName: string;
-      spec?: string;
-      unit?: string;
-      quantity?: number;
-      amount?: number;
-    }>;
-    taxIdFromLookup?: boolean;
-  };
-
-  if (!buyerOrganizationName?.trim()) {
-    return NextResponse.json({ error: "对方公司名称不能为空" }, { status: 400 });
-  }
-
-  if (!sellerProfileId && !sellerName?.trim()) {
-    return NextResponse.json({ error: "开票方不能为空" }, { status: 400 });
-  }
-
-  // If org selected but no taxId provided, reject
-  if (buyerOrganizationId && !buyerTaxId?.trim()) {
-    return NextResponse.json({ error: "已选择单位但未填写税号，请补填统一社会信用代码/纳税人识别号" }, { status: 400 });
-  }
-
-  const itemRows = (items || []).filter((it) => it.itemName?.trim());
-  const totalAmount = itemRows.reduce((sum, it) => sum + (it.amount || 0), 0);
-
-  // If org selected and has no taxId in master data, write back the provided one
-  // Skip writeback when taxId came from AI lookup (requires human confirmation at org level)
-  if (buyerOrganizationId && buyerTaxId?.trim() && !taxIdFromLookup) {
-    const org = await prisma.organization.findUnique({
-      where: { id: buyerOrganizationId },
-      select: { taxId: true },
-    });
-    if (org && !org.taxId) {
-      await prisma.organization.update({
-        where: { id: buyerOrganizationId },
-        data: { taxId: buyerTaxId.trim() },
-      });
-    }
-  }
-
-  // Resolve seller profile snapshot
-  let sellerSnapshot: {
-    sellerProfileId?: string | null;
-    sellerName?: string | null;
-    sellerTaxId?: string | null;
-    sellerBankName?: string | null;
-    sellerBankAccount?: string | null;
-    sellerAddress?: string | null;
-    sellerPhone?: string | null;
-  } = {};
-  if (sellerProfileId) {
-    const profile = await prisma.billingProfile.findUnique({ where: { id: sellerProfileId } });
-    if (profile) {
-      sellerSnapshot = {
-        sellerProfileId: profile.id,
-        sellerName: profile.name,
-        sellerTaxId: profile.taxId || null,
-        sellerBankName: profile.bankName || null,
-        sellerBankAccount: profile.bankAccount || null,
-        sellerAddress: profile.address || null,
-        sellerPhone: profile.phone || null,
-      };
-    }
-  }
-  if (!sellerSnapshot.sellerName && sellerName?.trim()) {
-    sellerSnapshot.sellerName = sellerName.trim();
-  }
-  // Manual seller fields (only when no profile selected)
-  if (!sellerProfileId) {
-    if (manualSellerTaxId?.trim()) sellerSnapshot.sellerTaxId = manualSellerTaxId.trim();
-    if (manualSellerBankName?.trim()) sellerSnapshot.sellerBankName = manualSellerBankName.trim();
-    if (manualSellerBankAccount?.trim()) sellerSnapshot.sellerBankAccount = manualSellerBankAccount.trim();
-  }
-
-  const invoice = await prisma.$transaction(async (tx) => {
-    const inv = await tx.projectInvoice.create({
-      data: {
-        projectId,
-        contactName: contactName?.trim() || null,
-        projectCode: projectCode?.trim() || null,
-        ...sellerSnapshot,
-        buyerOrganizationId: buyerOrganizationId || null,
-        buyerOrganizationName: buyerOrganizationName.trim(),
-        buyerTaxId: buyerTaxId?.trim() || null,
-        buyerTaxIdFromLookup: !!taxIdFromLookup,
-        invoiceType: invoiceType === "SPECIAL" ? "SPECIAL" : "NORMAL",
-        contentSummary: contentSummary?.trim() || null,
-        totalAmount,
-        remark: remark?.trim() || null,
-        createdById: session.user.id,
-        items: {
-          create: itemRows.map((it, i) => ({
-            sortOrder: i,
-            itemName: it.itemName.trim(),
-            spec: it.spec?.trim() || null,
-            unit: it.unit?.trim() || null,
-            quantity: it.quantity ?? null,
-            amount: it.amount || 0,
-          })),
-        },
-      },
-      include: {
-        items: { orderBy: { sortOrder: "asc" } },
-        createdBy: { select: { id: true, name: true } },
-      },
-    });
-
-    await tx.activityLog.create({
-      data: {
-        type: "INVOICE_CREATED",
-        content: `创建了开票申请：${buyerOrganizationName.trim()} / ¥${totalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`,
-        metadata: JSON.stringify({ invoiceId: inv.id, totalAmount, buyerOrganizationName: buyerOrganizationName.trim() }),
-        projectId,
-        userId: session.user.id,
-      },
-    });
-
-    return inv;
-  });
-
-  return NextResponse.json({ invoice }, { status: 201 });
+export async function POST(_req: NextRequest, _params: { params: Promise<{ id: string }> }) {
+  return NextResponse.json({ error: "项目开票已停用，请从订单详情页创建订单发票" }, { status: 410 });
 }

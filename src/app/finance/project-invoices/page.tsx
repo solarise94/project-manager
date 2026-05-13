@@ -1,36 +1,21 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader2, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import { toast } from "sonner";
-import { InvoiceFormDialog, type InvoiceRecord } from "@/components/invoice-form-dialog";
+import type { InvoiceRecord } from "@/components/invoice-form-dialog";
 import { InvoiceCard } from "@/components/finance/invoice-card";
 
 const STATUS_OPTIONS: Record<string, string> = {
   "": "全部状态", DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票", CANCELLED: "已取消",
 };
-
-interface ProjectItem {
-  id: string;
-  name: string;
-  cust?: { id: string; name: string; organizationId?: string | null; organization?: string | null } | null;
-  projectNo?: string | null;
-  orderNumber?: string | null;
-  organizationId?: string | null;
-  organization?: string | null;
-  projectContent?: string | null;
-}
 
 interface InvoiceWithProject extends InvoiceRecord {
   project?: { id: string; name: string; cust?: { id: string; name: string } | null } | null;
@@ -46,18 +31,12 @@ export default function ProjectInvoicesPage() {
 }
 
 function ProjectInvoicesContent() {
-  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const initialProjectId = searchParams.get("projectId") || "";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 20;
-
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [editingInvoice, setEditingInvoice] = useState<InvoiceRecord | null>(null);
-  const [createProjectId, setCreateProjectId] = useState(initialProjectId);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
 
   const { data, isLoading } = useQuery<{ invoices: InvoiceWithProject[]; total: number; totalPages: number }>({
     queryKey: ["finance", "project-invoices", search, statusFilter, initialProjectId, page],
@@ -72,105 +51,17 @@ function ProjectInvoicesContent() {
     },
   });
 
-  const invalidate = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["finance", "project-invoices"] });
-  }, [queryClient]);
-
-  const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const res = await fetch(`/api/project-invoices/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "操作失败");
-      return data;
-    },
-    onSuccess: () => { toast.success("状态已更新"); invalidate(); },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const remarkMutation = useMutation({
-    mutationFn: async ({ id, remark }: { id: string; remark: string }) => {
-      const res = await fetch(`/api/project-invoices/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ remark }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "保存失败");
-      return data;
-    },
-    onSuccess: () => { toast.success("备注已更新"); invalidate(); },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const confirmTaxIdMutation = useMutation({
-    mutationFn: async (invoiceId: string) => {
-      const res = await fetch(`/api/project-invoices/${invoiceId}/confirm-tax-id`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "同步失败");
-      return data;
-    },
-    onSuccess: (data: { conflict?: boolean; message?: string }) => {
-      if (data.conflict) toast.warning(data.message || "税号冲突，已清除标记");
-      else toast.success(data.message || "税号已同步到主数据");
-      invalidate();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  const handleCreate = () => {
-    if (createProjectId) {
-      setEditingInvoice(null);
-      setInvoiceOpen(true);
-    } else {
-      setProjectPickerOpen(true);
-    }
-  };
-
   const invoices = data?.invoices || [];
-
-  // Fetch project info for pre-filling defaults when creating from project context
-  const { data: defaultProject } = useQuery<ProjectItem>({
-    queryKey: ["project", createProjectId],
-    queryFn: async () => {
-      const res = await fetch(`/api/projects/${createProjectId}`);
-      if (!res.ok) throw new Error("Failed");
-      const data = await res.json();
-      return data.project || data;
-    },
-    enabled: !!createProjectId && !editingInvoice,
-  });
-
-  const invoiceDefaults = defaultProject ? {
-    projectCode: defaultProject.projectNo || defaultProject.orderNumber || "",
-    buyerOrgId: defaultProject.cust?.organizationId || defaultProject.organizationId || "",
-    buyerOrgName: defaultProject.cust?.organization || defaultProject.organization || "",
-  } : undefined;
-
-  // Project picker for new invoice
-  const [projectSearch, setProjectSearch] = useState("");
-  const { data: projectData } = useQuery<{ projects: ProjectItem[] }>({
-    queryKey: ["projects", "search", projectSearch],
-    queryFn: async () => {
-      const params = new URLSearchParams({ pageSize: "20" });
-      if (projectSearch) params.set("search", projectSearch);
-      const res = await fetch(`/api/projects?${params}`);
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    enabled: projectPickerOpen,
-  });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">项目开票</h1>
-        <Button size="sm" onClick={handleCreate}>
-          <Plus className="mr-1 h-3.5 w-3.5" /> 新建开票申请
-        </Button>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">历史项目发票</h1>
+        </div>
+        <div className="text-sm text-muted-foreground bg-muted/50 rounded p-2">
+          新开票请从订单详情页操作。项目发票仅用于历史数据追溯，不再新建。
+        </div>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -212,16 +103,7 @@ function ProjectInvoicesContent() {
                   {inv.project.cust && <span> · {inv.project.cust.name}</span>}
                 </div>
               )}
-              <InvoiceCard
-                inv={inv}
-                callbacks={{
-                  onEdit: () => { setEditingInvoice(inv as InvoiceRecord); setCreateProjectId(inv.project?.id || ""); setInvoiceOpen(true); },
-                  onStatusChange: (id, status) => statusMutation.mutate({ id, status }),
-                  onRemarkSave: async (id, remark) => { remarkMutation.mutate({ id, remark }); },
-                  onConfirmTaxId: (id) => confirmTaxIdMutation.mutate(id),
-                  confirmTaxIdPending: confirmTaxIdMutation.isPending,
-                }}
-              />
+              <InvoiceCard inv={inv} />
             </div>
           ))}
         </div>
@@ -237,55 +119,7 @@ function ProjectInvoicesContent() {
         </div>
       )}
 
-      {/* Project Picker Dialog */}
-      <Dialog open={projectPickerOpen} onOpenChange={setProjectPickerOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>选择项目</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="搜索项目..." className="pl-8" value={projectSearch} onChange={(e) => setProjectSearch(e.target.value)} />
-            </div>
-            <div className="max-h-64 overflow-y-auto space-y-1">
-              {(projectData?.projects || []).map((proj) => (
-                <button
-                  key={proj.id}
-                  type="button"
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                    createProjectId === proj.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-                  }`}
-                  onClick={() => {
-                    setCreateProjectId(proj.id);
-                    setProjectPickerOpen(false);
-                    setEditingInvoice(null);
-                    setInvoiceOpen(true);
-                  }}
-                >
-                  <div className="font-medium">{proj.name}</div>
-                  {proj.cust && <div className="text-xs opacity-70">{proj.cust.name}</div>}
-                </button>
-              ))}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* Invoice Form Dialog */}
-      {createProjectId && (
-        <InvoiceFormDialog
-          open={invoiceOpen}
-          onOpenChange={setInvoiceOpen}
-          editingInvoice={editingInvoice}
-          createUrl={`/api/projects/${createProjectId}/invoices`}
-          patchUrlPrefix="/api/project-invoices"
-          onSuccess={invalidate}
-          defaultValues={editingInvoice ? undefined : invoiceDefaults}
-          showProjectCode={true}
-          aiDraftUrl={`/api/projects/${createProjectId}/invoice-draft`}
-          projectName={defaultProject?.name}
-          projectContent={defaultProject?.projectContent || undefined}
-        />
-      )}
     </div>
   );
 }

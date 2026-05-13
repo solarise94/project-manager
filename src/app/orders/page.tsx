@@ -384,7 +384,7 @@ function OrdersContent() {
         {isAdmin && (
           <div className="flex gap-2">
             <Link href="/orders/new"><Button>新建服务订单</Button></Link>
-            <Link href="/orders/import/pingoodmice"><Button variant="outline">拼好鼠导入</Button></Link>
+            <Link href="/orders/import"><Button variant="outline">导入订单列表</Button></Link>
           </div>
         )}
       </div>

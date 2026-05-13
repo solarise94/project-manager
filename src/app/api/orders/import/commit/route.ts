@@ -1,0 +1,253 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { parseOrderText, decodeImportFile } from "@/lib/external-order";
+import { normalizeOrderSource } from "@/lib/orders/constants";
+import { generateImportOrderNo, computeOrderAmount, withRetry } from "@/lib/orders/import-commit";
+import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
+import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
+import * as XLSX from "xlsx";
+
+function tryParseXlsx(buffer: Buffer): string | null {
+  try {
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    const sheetName = wb.SheetNames[0];
+    if (!sheetName) return null;
+    const sheet = wb.Sheets[sheetName];
+    return XLSX.utils.sheet_to_csv(sheet);
+  } catch {
+    return null;
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.user.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const ct = req.headers.get("content-type") || "";
+  let source: string;
+  let rawText: string;
+  let customerMode: CustomerMode = "MATCH_ONLY";
+  let organizationMode: OrganizationMode = "RESOLVE_ONLY";
+  let ownerUserId: string | null = null;
+  let createCrmProfile = false;
+  let columnMapping: Record<string, string> | null = null;
+
+  if (ct.includes("multipart/form-data")) {
+    const form = await req.formData();
+    source = (form.get("source") as string | null)?.trim() || "OTHER_IMPORT";
+    customerMode = (form.get("customerMode") as CustomerMode) || "MATCH_ONLY";
+    organizationMode = (form.get("organizationMode") as OrganizationMode) || "RESOLVE_ONLY";
+    ownerUserId = (form.get("ownerUserId") as string)?.trim() || null;
+    createCrmProfile = form.get("createCrmProfile") === "true";
+    const mappingStr = (form.get("columnMapping") as string)?.trim();
+    if (mappingStr) {
+      try { columnMapping = JSON.parse(mappingStr) as Record<string, string>; } catch { /* ignore */ }
+    }
+    const file = form.get("file") as File | null;
+    if (!file) return NextResponse.json({ error: "缺少 file" }, { status: 400 });
+    const buf = Buffer.from(await file.arrayBuffer());
+    if (file.name.endsWith(".xlsx") || file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
+      const csv = tryParseXlsx(buf);
+      if (!csv) return NextResponse.json({ error: "无法解析 .xlsx 文件" }, { status: 422 });
+      rawText = csv;
+    } else {
+      rawText = decodeImportFile(buf);
+    }
+  } else {
+    const body = await req.json().catch(() => null);
+    if (!body) return NextResponse.json({ error: "无效请求体" }, { status: 400 });
+    source = (body.source as string)?.trim() || "OTHER_IMPORT";
+    rawText = (body.rawText as string)?.trim() || "";
+    customerMode = (body.customerMode as CustomerMode) || "MATCH_ONLY";
+    organizationMode = (body.organizationMode as OrganizationMode) || "RESOLVE_ONLY";
+    ownerUserId = typeof body.ownerUserId === "string" ? body.ownerUserId.trim() : null;
+    createCrmProfile = body.createCrmProfile === true;
+    if (body.columnMapping && typeof body.columnMapping === "object") {
+      columnMapping = body.columnMapping as Record<string, string>;
+    }
+    if (!rawText) return NextResponse.json({ error: "缺少 rawText" }, { status: 400 });
+  }
+
+  // Validate modes
+  const validCustomerModes: CustomerMode[] = ["MATCH_ONLY", "CREATE_IF_MISSING", "SKIP"];
+  const validOrgModes: OrganizationMode[] = ["RESOLVE_ONLY", "CREATE_IF_MISSING", "SKIP"];
+  if (!validCustomerModes.includes(customerMode)) customerMode = "MATCH_ONLY";
+  if (!validOrgModes.includes(organizationMode)) organizationMode = "RESOLVE_ONLY";
+  if (createCrmProfile && !ownerUserId) {
+    return NextResponse.json({ error: "createCrmProfile 需要指定 ownerUserId" }, { status: 400 });
+  }
+
+  // Apply AI column mapping: rewrite header row with Chinese names that ORDER_HEADER_MAP recognizes.
+  // AI outputs standard English field names; we reverse-translate to Chinese before handing to the parser.
+  if (columnMapping && Object.keys(columnMapping).length > 0) {
+    const EN_TO_CN: Record<string, string> = {
+      source: "所属平台",
+      platform: "所属平台",
+      externalOrderNo: "订单号",
+      merchantOrderNo: "商户单号",
+      buyerName: "收件人",
+      buyerPhone: "收件人电话",
+      buyerWechat: "下单用户",
+      buyerOrgName: "所属门店",
+      buyerAddress: "收件人地址",
+      productNamesRaw: "全部商品名称",
+      itemCount: "商品总件数",
+      orderAt: "下单时间",
+      paidAt: "付款时间",
+      grossAmount: "商品总额",
+      priceAdjustment: "订单改价",
+      paidAmount: "订单实付金额",
+      shippingFee: "运费",
+      sellerMessage: "卖家留言",
+      merchantRemark: "商家备注",
+      rawExtraJson: "备注/表单",
+      storeName: "所属门店",
+      receiverName: "收件人",
+      receiverPhone: "收件人电话",
+      receiverAddress: "收件人地址",
+      orderUser: "下单用户",
+      itemTypeCount: "商品种类数",
+      formNote: "备注/表单",
+    };
+
+    const lines = rawText.split(/\r?\n/);
+    if (lines.length > 0) {
+      const headerLine = lines[0];
+      const isTsv = headerLine.includes("\t") && !headerLine.includes(",");
+      const delimiter = isTsv ? "\t" : ",";
+      const headers = headerLine.split(delimiter).map((h) => h.trim());
+      const mapped = headers.map((h) => {
+        const english = columnMapping![h];
+        if (!english) return h;
+        // Try Chinese reverse lookup first, fall back to the English name directly
+        return EN_TO_CN[english] || english;
+      });
+      lines[0] = mapped.join(delimiter);
+      rawText = lines.join("\n");
+    }
+  }
+
+  const { rows, errors, format } = parseOrderText(source, rawText);
+  if (rows.length === 0 && errors.length > 0) {
+    return NextResponse.json({ error: errors[0].message, errors, format }, { status: 422 });
+  }
+
+  let created = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    const normalizedSource = normalizeOrderSource(row.source);
+    const refDate = row.orderAt ?? row.paidAt ?? new Date();
+
+    // Resolve org and customer + create order in a single atomic transaction
+    try {
+      const action = await withRetry(async () => {
+        // Dedup check inside retry so concurrent imports see committed records on retry
+        const existingSrc = await prisma.orderSourceRecord.findUnique({
+          where: { source_externalOrderNo: { source: normalizedSource, externalOrderNo: row.externalOrderNo } },
+          select: { orderId: true },
+        });
+        if (existingSrc?.orderId) {
+          const totalAmount = computeOrderAmount(row);
+          await prisma.order.update({
+            where: { id: existingSrc.orderId },
+            data: {
+              totalAmount: totalAmount > 0 ? totalAmount : undefined,
+              buyerNameSnapshot: row.receiverName ?? undefined,
+              buyerPhoneSnapshot: row.receiverPhone ?? undefined,
+              buyerAddressSnapshot: row.receiverAddress ?? undefined,
+              buyerWechatSnapshot: row.orderUser ?? undefined,
+              buyerOrgNameSnapshot: row.storeName ?? undefined,
+              orderedAt: row.orderAt ?? undefined,
+              confirmedAt: row.paidAt ?? undefined,
+              title: row.productNamesRaw ?? undefined,
+            },
+          });
+          return "updated" as const;
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const orgResult = await resolveOrCreateOrganizationForImport(
+            row.storeName, organizationMode, tx,
+          );
+
+          const custInput = {
+            buyerName: row.receiverName,
+            buyerPhone: row.receiverPhone,
+            buyerWechat: row.orderUser,
+            buyerOrgName: row.storeName,
+            buyerAddress: row.receiverAddress,
+          };
+          const custResult = await resolveOrCreateCustomerForImport(
+            custInput, customerMode, orgResult.organizationId, ownerUserId, createCrmProfile, tx,
+          );
+
+          const totalAmount = computeOrderAmount(row);
+          const orderNo = await generateImportOrderNo(tx, refDate);
+          const rawJson = JSON.stringify(row);
+
+          const order = await tx.order.create({
+            data: {
+              orderNo,
+              source: normalizedSource,
+              sourcePlatform: row.platform || source,
+              externalOrderNo: row.externalOrderNo,
+              merchantOrderNo: row.merchantOrderNo,
+              title: row.productNamesRaw || `${row.receiverName || "未知"}的订单`,
+              category: "UNKNOWN",
+              status: "CONFIRMED",
+              deliveryStatus: "DELIVERED",
+              orderedAt: row.orderAt ?? null,
+              confirmedAt: row.paidAt ?? null,
+              deliveredAt: row.paidAt ?? new Date(),
+              buyerNameSnapshot: row.receiverName,
+              buyerPhoneSnapshot: row.receiverPhone,
+              buyerAddressSnapshot: row.receiverAddress,
+              buyerWechatSnapshot: row.orderUser,
+              buyerOrgNameSnapshot: row.storeName,
+              totalAmount,
+              customerId: custResult.customerId,
+              customerMatchStatus: custResult.matchStatus,
+              customerMatchScore: custResult.matchScore,
+              customerMatchReason: custResult.matchReason,
+              createdById: session.user.id,
+            },
+          });
+
+          await tx.orderSourceRecord.create({
+            data: {
+              orderId: order.id,
+              source: normalizedSource,
+              platform: row.platform || source,
+              externalOrderNo: row.externalOrderNo,
+              merchantOrderNo: row.merchantOrderNo,
+              rawJson,
+            },
+          });
+
+          const itemName = row.productNamesRaw || row.externalOrderNo || "导入订单";
+          await tx.orderLine.create({
+            data: {
+              orderId: order.id,
+              itemName: String(itemName).slice(0, 200),
+              amount: totalAmount,
+              category: "UNKNOWN",
+              sortOrder: 0,
+            },
+          });
+        });
+        return "created" as const;
+      });
+      if (action === "updated") updated++;
+      else created++;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "未知错误";
+      errors.push({ row: rows.indexOf(row) + 2, message: `创建失败: ${msg}` });
+    }
+  }
+
+  return NextResponse.json({ created, updated, errors, format }, { status: 201 });
+}

@@ -121,11 +121,15 @@ on_exit() {
   fi
 
   # Restore reminder timer on failure paths only.
-  # On success, [9/8] will re-write and enable --now the timer, so we must NOT
+  # On success, [10/11] will re-write and enable --now the timer, so we must NOT
   # start it here — that would fire a reminder scan immediately after deploy.
   if [[ "${REMINDER_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
     echo "  Restoring reminder timer (deploy failed, exit=${exit_code})..."
     remote_ssh "sudo systemctl start ${REMINDER_TIMER:-task-manager-reminder.timer}" 2>/dev/null || true
+  fi
+  if [[ "${CRM_REVIEW_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
+    echo "  Restoring CRM review timer (deploy failed, exit=${exit_code})..."
+    remote_ssh "sudo systemctl start ${CRM_REVIEW_TIMER:-task-manager-crm-review.timer}" 2>/dev/null || true
   fi
 
   rm -rf "${TMP_DIR}"
@@ -202,18 +206,18 @@ release_lock() {
   fi
 }
 
-# ── [1/8] Build locally ──────────────────────────────────────────────────
+# ── [1/11] Build locally ──────────────────────────────────────────────────
 echo ""
-echo "[1/8] Building production bundle..."
+echo "[1/11] Building production bundle..."
 cd "${REPO_DIR}"
 npm run build
 
-# ── [2/8] Sync database schema ───────────────────────────────────────────
+# ── [2/11] Sync database schema ───────────────────────────────────────────
 # Pull remote DB to local temp, push schema, upload back.
 # Prisma CLI cannot operate on remote paths.
 # Stop service first to get a consistent SQLite copy.
 echo ""
-echo "[2/8] Syncing database schema..."
+echo "[2/11] Syncing database schema..."
 REMOTE_DB_EXISTS=false
 
 # Use set +e to capture ssh exit code explicitly.
@@ -249,7 +253,7 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     remote_ssh "sudo systemctl stop ${REMOTE_SERVICE}"
   fi
 
-  # Also stop reminder timer+service during DB migration to prevent background writes
+  # Also stop timers+services during DB migration to prevent background writes
   REMINDER_SERVICE="task-manager-reminder.service"
   REMINDER_TIMER="task-manager-reminder.timer"
   REMINDER_WAS_ACTIVE=false
@@ -262,6 +266,20 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     REMINDER_WAS_ACTIVE=true
     echo "  Stopping reminder service (oneshot may still be running)..."
     remote_ssh "sudo systemctl stop ${REMINDER_SERVICE}" 2>/dev/null || true
+  fi
+
+  CRM_REVIEW_TIMER="task-manager-crm-review.timer"
+  CRM_REVIEW_SERVICE="task-manager-crm-review.service"
+  CRM_REVIEW_WAS_ACTIVE=false
+  if remote_ssh "sudo systemctl is-active --quiet ${CRM_REVIEW_TIMER}" 2>/dev/null; then
+    CRM_REVIEW_WAS_ACTIVE=true
+    echo "  Stopping CRM review timer during DB migration..."
+    remote_ssh "sudo systemctl stop ${CRM_REVIEW_TIMER}" 2>/dev/null || true
+  fi
+  if remote_ssh "sudo systemctl is-active --quiet ${CRM_REVIEW_SERVICE}" 2>/dev/null; then
+    CRM_REVIEW_WAS_ACTIVE=true
+    echo "  Stopping CRM review service (oneshot may still be running)..."
+    remote_ssh "sudo systemctl stop ${CRM_REVIEW_SERVICE}" 2>/dev/null || true
   fi
 
   # Checkpoint WAL on the remote BEFORE pulling, so dev.db is self-consistent
@@ -378,14 +396,14 @@ else
   exit 1
 fi
 
-# ── [3/8] Create remote directories ──────────────────────────────────────
+# ── [3/11] Create remote directories ──────────────────────────────────────
 echo ""
-echo "[3/8] Creating remote directories..."
+echo "[3/11] Creating remote directories..."
 remote_ssh "mkdir -p ${REMOTE_APP_DIR} ${REMOTE_APP_DIR}/.next/static ${REMOTE_APP_DIR}/public ${REMOTE_DATA_DIR}"
 
-# ── [4/8] Rsync code to remote ───────────────────────────────────────────
+# ── [4/11] Rsync code to remote ───────────────────────────────────────────
 echo ""
-echo "[4/8] Syncing standalone output to remote..."
+echo "[4/11] Syncing standalone output to remote..."
 remote_rsync -a --delete --exclude=".env" --exclude="dev.db" --exclude='public/uploads/***' \
   "${REPO_DIR}/.next/standalone/" "${SSH_TARGET}:${REMOTE_APP_DIR}/"
 remote_rsync -a --delete \
@@ -394,9 +412,9 @@ remote_rsync -a --delete \
 remote_rsync -a --delete --exclude='uploads/***' \
   "${REPO_DIR}/public/" "${SSH_TARGET}:${REMOTE_APP_DIR}/public/"
 
-# ── [4.5/8] Sync Prisma runtime to remote ────────────────────────────────
+# ── [5/11] Sync Prisma runtime to remote ────────────────────────────────
 echo ""
-echo "[4.5/8] Syncing Prisma runtime..."
+echo "[5/11] Syncing Prisma runtime..."
 remote_ssh "mkdir -p ${REMOTE_APP_DIR}/node_modules/@prisma ${REMOTE_APP_DIR}/node_modules/.prisma"
 for PKG_DIR in "@prisma/client" ".prisma"; do
   SRC="${REPO_DIR}/node_modules/${PKG_DIR}"
@@ -416,9 +434,9 @@ for HASH_PKG in ${HASH_PKGS}; do
   fi"
 done
 
-# ── [5/8] Read remote persistent config and generate .env locally ────────
+# ── [6/11] Read remote persistent config and generate .env locally ────────
 echo ""
-echo "[5/8] Reading remote config and generating .env..."
+echo "[6/11] Reading remote config and generating .env..."
 
 # Helper: read a key from a remote conf file.
 # Handles both KEY="value" and KEY=value formats. Strips surrounding double-quotes if present.
@@ -469,6 +487,12 @@ APP_BASE_URL_CONF="$(read_remote_conf "${REMOTE_DATA_DIR}/app.conf" APP_BASE_URL
 REMINDER_CRON_TOKEN_VALUE="${REMINDER_CRON_TOKEN:-$(read_remote_conf "${REMOTE_DATA_DIR}/reminder.conf" REMINDER_CRON_TOKEN)}"
 if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
   REMINDER_CRON_TOKEN_VALUE="$(read_remote_conf "${REMOTE_APP_DIR}/.env" REMINDER_CRON_TOKEN)"
+fi
+
+# CRM review cron token
+CRM_REVIEW_CRON_TOKEN_VALUE="${CRM_REVIEW_CRON_TOKEN:-$(read_remote_conf "${REMOTE_DATA_DIR}/reminder.conf" CRM_REVIEW_CRON_TOKEN)}"
+if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
+  CRM_REVIEW_CRON_TOKEN_VALUE="$(read_remote_conf "${REMOTE_APP_DIR}/.env" CRM_REVIEW_CRON_TOKEN)"
 fi
 
 # Validate before generating .env so we don't overwrite a valid remote token with an empty one
@@ -527,11 +551,14 @@ ENV_FILE="${TMP_DIR}/.env"
     echo "# Internal reminder cron"
     echo "REMINDER_CRON_TOKEN=\"$(dotenv_quote "${REMINDER_CRON_TOKEN_VALUE}")\""
   fi
+  if [[ -n "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
+    echo "CRM_REVIEW_CRON_TOKEN=\"$(dotenv_quote "${CRM_REVIEW_CRON_TOKEN_VALUE}")\""
+  fi
 } > "${ENV_FILE}"
 
-# ── [6/8] Upload .env and write systemd service ──────────────────────────
+# ── [7/11] Upload .env and write systemd service ──────────────────────────
 echo ""
-echo "[6/8] Uploading .env and writing systemd service..."
+echo "[7/11] Uploading .env and writing systemd service..."
 
 # SCP the .env file to remote (safe: file transfer, no shell interpolation)
 remote_scp "${ENV_FILE}" "${SSH_TARGET}:${REMOTE_APP_DIR}/.env"
@@ -555,15 +582,15 @@ RestartSec=5
 WantedBy=multi-user.target
 UNITEOF"
 
-# ── [7/8] Restart service ────────────────────────────────────────────────
+# ── [8/11] Restart service ────────────────────────────────────────────────
 echo ""
-echo "[7/8] Restarting service..."
+echo "[8/11] Restarting service..."
 remote_ssh "sudo systemctl daemon-reload && sudo systemctl enable ${REMOTE_SERVICE} && sudo systemctl restart ${REMOTE_SERVICE}"
 SERVICE_WAS_RUNNING=false  # successfully restarted, EXIT trap should not start again
 
-# ── [8/8] Smoke test ─────────────────────────────────────────────────────
+# ── [9/11] Smoke test ─────────────────────────────────────────────────────
 echo ""
-echo "[8/8] Smoke testing on remote server..."
+echo "[9/11] Smoke testing on remote server..."
 SMOKE_OK=false
 for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 3
@@ -580,9 +607,9 @@ if [[ "${SMOKE_OK}" == "true" ]]; then
   echo "=== Deploy successful! ==="
   echo "  ${NEXTAUTH_URL_VALUE}"
 
-  # ── [9/8] Set up reminder timer ──────────────────────────────────────────
+  # ── [10/11] Set up reminder timer ──────────────────────────────────────────
   echo ""
-  echo "[9/8] Setting up reminder timer..."
+  echo "[10/11] Setting up reminder timer..."
 
   if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
     echo "  Skipping reminder timer (ALLOW_MISSING_REMINDER_TOKEN is set)."
@@ -626,6 +653,52 @@ UNITEOF"
     echo ""
     echo "  Active timers:"
     remote_ssh "sudo systemctl list-timers --no-pager | grep -E 'task-manager|NEXT|LEFT'" || true
+  fi
+
+  # ── [11/11] Set up CRM review timer ──────────────────────────────────────
+  echo ""
+  echo "[11/11] Setting up CRM review timer..."
+
+  CRM_REVIEW_SERVICE="task-manager-crm-review.service"
+  CRM_REVIEW_TIMER="task-manager-crm-review.timer"
+
+  if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
+    echo "  Skipping CRM review timer (CRM_REVIEW_CRON_TOKEN not set, will use reminder token fallback at runtime)."
+    CRM_REVIEW_CRON_TOKEN_VALUE="${REMINDER_CRON_TOKEN_VALUE}"
+  fi
+
+  if [[ -n "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
+    echo "  Writing ${CRM_REVIEW_SERVICE}..."
+    remote_ssh "sudo tee /etc/systemd/system/${CRM_REVIEW_SERVICE} > /dev/null <<'UNITEOF'
+[Unit]
+Description=CRM Application Review Email Runner
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=${REMOTE_APP_DIR}/.env
+ExecStart=/bin/bash -c 'set -a; source ${REMOTE_APP_DIR}/.env; set +a; exec curl -fsS -X POST -H \"Authorization: Bearer \${CRM_REVIEW_CRON_TOKEN:-\${REMINDER_CRON_TOKEN}}\" http://127.0.0.1:${REMOTE_PORT}/api/internal/crm-application-review/run'
+UNITEOF"
+
+    echo "  Writing ${CRM_REVIEW_TIMER}..."
+    remote_ssh "sudo tee /etc/systemd/system/${CRM_REVIEW_TIMER} > /dev/null <<'UNITEOF'
+[Unit]
+Description=CRM Application Review Timer
+Requires=${CRM_REVIEW_SERVICE}
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNITEOF"
+
+    echo "  Enabling and starting CRM review timer..."
+    remote_ssh "sudo systemctl daemon-reload && sudo systemctl enable --now ${CRM_REVIEW_TIMER}"
+  else
+    echo "  Skipping CRM review timer (no token available)."
   fi
 else
   echo ""

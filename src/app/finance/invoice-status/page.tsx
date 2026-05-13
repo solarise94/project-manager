@@ -3,13 +3,12 @@
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 export default function InvoiceStatusPage() {
@@ -23,16 +22,11 @@ export default function InvoiceStatusPage() {
 
 function InvoiceContent() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const initialType = searchParams.get("type") === "uninvoiced" ? "uninvoiced" : "issued_unpaid";
   const [activeTab, setActiveTab] = useState(initialType);
   const search = "";
   const [page, setPage] = useState(1);
-  const [receiptOpen, setReceiptOpen] = useState(false);
-  const [receiptPrefill, setReceiptPrefill] = useState<{
-    customerId?: string; projectId?: string; projectInvoiceId?: string; amount?: number;
-  }>({});
   const isMobile = useMediaQuery("(max-width: 767px)");
 
   const { data, isLoading } = useQuery({
@@ -50,7 +44,7 @@ function InvoiceContent() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">开票与到款状态</h1>
+      <h1 className="text-2xl font-bold">开票与回款状态 (历史口径)</h1>
 
       <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); setPage(1); }}>
         <div className="md:hidden">
@@ -60,13 +54,13 @@ function InvoiceContent() {
             onChange={(e) => { setActiveTab(e.target.value); setPage(1); }}
           >
             <option value="issued_unpaid">已开票未付款</option>
-            <option value="uninvoiced">未开票项目</option>
+            <option value="uninvoiced">未开票 (旧口径)</option>
           </select>
         </div>
         <div className="hidden md:block">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="issued_unpaid">已开票未付款</TabsTrigger>
-            <TabsTrigger value="uninvoiced">未开票项目</TabsTrigger>
+            <TabsTrigger value="uninvoiced">未开票 (旧口径)</TabsTrigger>
           </TabsList>
         </div>
 
@@ -98,17 +92,7 @@ function InvoiceContent() {
                               <span className="text-muted-foreground">已到 {Number(item.receivedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
                             </div>
                             <div className="text-xs text-muted-foreground">开票日期: {new Date(String(item.invoiceDate)).toLocaleDateString("zh-CN")}</div>
-                            <Button size="sm" variant="outline" className="w-full mt-1" onClick={() => {
-                              setReceiptPrefill({
-                                customerId: String(item.customerId || ""),
-                                projectId: String(item.projectId),
-                                projectInvoiceId: String(item.invoiceId),
-                                amount: Number(item.unpaidAmount),
-                              });
-                              setReceiptOpen(true);
-                            }}>
-                              <Plus className="h-3 w-3 mr-1" />登记到款
-                            </Button>
+                            <div className="text-xs text-muted-foreground mt-1">回款请从订单详情页操作</div>
                           </>
                         ) : (
                           <>
@@ -117,8 +101,8 @@ function InvoiceContent() {
                               <span className="text-muted-foreground">已开 {Number(item.invoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
                             </div>
                             <div className="text-xs text-muted-foreground">进度 {Number(item.progress)}%</div>
-                            <Button size="sm" variant="outline" className="w-full mt-1" onClick={() => router.push(`/projects/${item.projectId}`)}>
-                              去项目开票
+                            <Button size="sm" variant="outline" className="w-full mt-1" onClick={() => router.push("/orders")}>
+                              查看订单
                             </Button>
                           </>
                         )}
@@ -168,17 +152,7 @@ function InvoiceContent() {
                               <td className="py-2 px-2 text-right text-red-600 font-medium">{Number(item.unpaidAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
                               <td className="py-2 px-2 text-muted-foreground">{new Date(String(item.invoiceDate)).toLocaleDateString("zh-CN")}</td>
                               <td className="py-2 px-2 text-center">
-                                <Button size="sm" variant="outline" onClick={() => {
-                                  setReceiptPrefill({
-                                    customerId: String(item.customerId || ""),
-                                    projectId: String(item.projectId),
-                                    projectInvoiceId: String(item.invoiceId),
-                                    amount: Number(item.unpaidAmount),
-                                  });
-                                  setReceiptOpen(true);
-                                }}>
-                                  <Plus className="h-3 w-3 mr-1" />登记到款
-                                </Button>
+                                <span className="text-xs text-muted-foreground">请从订单页操作</span>
                               </td>
                             </>
                           ) : (
@@ -188,8 +162,8 @@ function InvoiceContent() {
                               <td className="py-2 px-2 text-right text-red-600 font-medium">{Number(item.uninvoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
                               <td className="py-2 px-2 text-center">{Number(item.progress)}%</td>
                               <td className="py-2 px-2 text-center">
-                                <Button size="sm" variant="outline" onClick={() => router.push(`/projects/${item.projectId}`)}>
-                                  去项目开票
+                                <Button size="sm" variant="outline" onClick={() => router.push("/orders")}>
+                                  查看订单
                                 </Button>
                               </td>
                             </>
@@ -214,15 +188,6 @@ function InvoiceContent() {
         </TabsContent>
       </Tabs>
 
-      <ReceiptFormDialog
-        open={receiptOpen}
-        onOpenChange={setReceiptOpen}
-        defaultCustomerId={receiptPrefill.customerId}
-        defaultProjectId={receiptPrefill.projectId}
-        defaultProjectInvoiceId={receiptPrefill.projectInvoiceId}
-        defaultAmount={receiptPrefill.amount}
-        onCreated={() => queryClient.invalidateQueries({ queryKey: ["finance", "invoice-status"] })}
-      />
     </div>
   );
 }

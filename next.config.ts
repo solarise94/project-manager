@@ -2,6 +2,20 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  async redirects() {
+    return [
+      {
+        source: "/finance/project-receivables",
+        destination: "/finance/order-receivables",
+        permanent: true,
+      },
+      {
+        source: "/orders/import/pingoodmice",
+        destination: "/orders/import?source=PINGOODMICE",
+        permanent: true,
+      },
+    ];
+  },
   serverExternalPackages: ["@prisma/client", "prisma"],
   images: {
     unoptimized: true,

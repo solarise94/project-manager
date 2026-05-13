@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isRepresentative } from "@/lib/permissions";
 import { validateOrg, buildCustomerData, createCustomerWithRetry } from "@/lib/crm/customer-application-review";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isRepresentative(session.user.role)) {
+  // Only ADMIN can batch; REPRESENTATIVE and REGIONAL_MANAGER cannot
+  if (session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -48,6 +48,8 @@ export async function POST(req: NextRequest) {
         select: {
           id: true,
           status: true,
+          autoApproved: true,
+          supervisorReviewStatus: true,
           submittedByUserId: true,
           name: true,
           principal: true,
@@ -67,6 +69,10 @@ export async function POST(req: NextRequest) {
 
       if (!application) {
         skipped.push({ id, reason: "申请不存在" });
+        continue;
+      }
+      if (application.autoApproved || application.supervisorReviewStatus !== "NONE") {
+        skipped.push({ id, reason: "需主管逐条复核，不支持批量操作" });
         continue;
       }
       if (application.status !== "PENDING") {

@@ -43,6 +43,11 @@ model User {
   crmApplicationsSubmitted     CrmCustomerApplication[]      @relation("CrmApplicationsSubmitted")
   crmApplicationsReviewed      CrmCustomerApplication[]      @relation("CrmApplicationsReviewed")
   crmApplicationsAdminReviewed CrmCustomerApplication[]      @relation("CrmApplicationsAdminReviewed")
+  crmApplicationsSupervisorReviewed CrmCustomerApplication[] @relation("CrmApplicationsSupervisorReviewed")
+  repOrgRequested                  RepresentativeOrganization[]  @relation("RepOrgRequestedBy")
+  repOrgReviewed                   RepresentativeOrganization[]  @relation("RepOrgReviewedBy")
+  appSupervisorEmailTracking       CrmApplicationSupervisorNotification[]
+  supervisorReviewDigest            CrmApplicationSupervisorDigest?
   reportDraftsCreated          CrmRepresentativeReportDraft[] @relation("ReportDraftCreatedBy")
   reportDraftsUpdated          CrmRepresentativeReportDraft[] @relation("ReportDraftUpdatedBy")
   RegionManagers               CrmRegionManager[]
@@ -56,6 +61,10 @@ model User {
   orderProjectLinksCreated     OrderProjectLink[]            @relation("OrderProjectLinksCreated")
   orderStatusHistoryCreated    OrderStatusHistory[]          @relation("OrderStatusHistoryCreated")
   orderMergesCreated           OrderMerge[]                  @relation("OrderMergeCreated")
+  orderImportBatches           OrderImportBatch[]            @relation("OrderImportBatchCreatedBy")
+  invoiceDocumentsUploaded     InvoiceDocument[]             @relation("InvoiceDocumentsUploadedBy")
+  advancesCreated              FinanceAdvance[]              @relation("FinanceAdvanceCreatedBy")
+  advanceRefundsCreated        FinanceAdvanceRefund[]        @relation("FinanceAdvanceRefundCreatedBy")
 }
 
 model Representative {
@@ -73,6 +82,7 @@ model Representative {
   regionManagerLinks CrmRegionManagerRepresentative[]
   regionAssignments  RepresentativeRegionAssignment[]
   reportDrafts       CrmRepresentativeReportDraft[]
+  organizationBindings RepresentativeOrganization[]
 }
 
 model ProcurementChannel {
@@ -112,6 +122,7 @@ model Organization {
   reviewTasks                  OrganizationReviewTask[]
   invoicesAsBuyer              ProjectInvoice[]
   externalOrderInvoicesAsBuyer ExternalOrderInvoiceRequest[]
+  representativeBindings        RepresentativeOrganization[]
 }
 
 model OrganizationAlias {
@@ -178,6 +189,7 @@ model Customer {
   crmApplications      CrmCustomerApplication[] @relation("CrmApplicationsCreatedCustomer")
   relationsFrom        CustomerRelation[]       @relation("RelationsFrom")
   relationsTo          CustomerRelation[]       @relation("RelationsTo")
+  advances             FinanceAdvance[]         @relation("FinanceAdvanceCustomer")
   createdAt            DateTime                 @default(now())
   updatedAt            DateTime                 @updatedAt
 }
@@ -211,6 +223,8 @@ model OrganizationReviewTask {
 
   @@index([status])
   @@index([sourceType, sourceId])
+
+  repOrgBindingRequests RepresentativeOrganization[]
 }
 
 model Project {
@@ -256,6 +270,7 @@ model Project {
   orderLinks        OrderProjectLink[]
   receipts          FinanceReceipt[]
   financeCosts      FinanceCost[]
+  advances          FinanceAdvance[]         @relation("FinanceAdvanceProject")
 }
 
 model ProjectMember {
@@ -409,12 +424,15 @@ model ProjectInvoice {
   totalAmount           Float                @default(0)
   status                String               @default("DRAFT") // DRAFT, REQUESTED, ISSUED, CANCELLED
   remark                String?
+  actualInvoiceNo       String?
+  actualIssuedAt        DateTime?
   createdBy             User                 @relation(fields: [createdById], references: [id], onDelete: Cascade)
   createdById           String
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
   items                 ProjectInvoiceItem[]
   receipts              FinanceReceipt[]
+  documents             InvoiceDocument[]
 
   @@index([projectId])
 }
@@ -458,6 +476,24 @@ model ExternalOrderImportBatch {
   createdById String
   createdAt   DateTime        @default(now())
   orders      ExternalOrder[]
+}
+
+model OrderImportBatch {
+  id               String   @id @default(cuid())
+  source           String
+  importMode       String   @default("DIRECT") // DIRECT | AI_NORMALIZED
+  status           String   @default("PREVIEWED") // PREVIEWED | NORMALIZED | IMPORTED | FAILED
+  originalFilename String?
+  originalMimeType String?
+  rawText          String?
+  rawPreviewJson   String?
+  normalizedJson   String?
+  formatJson       String?
+  warningJson      String?
+  createdById      String
+  createdBy        User     @relation("OrderImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model ExternalOrder {
@@ -554,6 +590,8 @@ model ExternalOrderInvoiceRequest {
   totalAmount           Float                          @default(0)
   status                String                         @default("DRAFT")
   remark                String?
+  actualInvoiceNo       String?
+  actualIssuedAt        DateTime?
   createdBy             User                           @relation(fields: [createdById], references: [id], onDelete: Cascade)
   createdById           String
   createdAt             DateTime                       @default(now())
@@ -562,6 +600,7 @@ model ExternalOrderInvoiceRequest {
   receipts              FinanceReceipt[]
   coverage              ExternalOrderInvoiceCoverage[]
   orderCoverage         OrderInvoiceCoverage[]
+  documents             InvoiceDocument[]
 
   @@index([externalOrderId])
 }
@@ -606,6 +645,25 @@ model OrderInvoiceCoverage {
   @@index([invoiceRequestId])
 }
 
+model InvoiceDocument {
+  id                            String                       @id @default(cuid())
+  projectInvoiceId              String?
+  projectInvoice                ProjectInvoice?              @relation(fields: [projectInvoiceId], references: [id], onDelete: Cascade)
+  externalOrderInvoiceRequestId String?
+  externalOrderInvoiceRequest   ExternalOrderInvoiceRequest? @relation(fields: [externalOrderInvoiceRequestId], references: [id], onDelete: Cascade)
+  kind                          String                       @default("ACTUAL_INVOICE") // ACTUAL_INVOICE | RED_INVOICE | OTHER
+  fileName                      String
+  fileUrl                       String
+  fileSize                      Int
+  mimeType                      String
+  uploadedById                  String
+  uploadedBy                    User                         @relation("InvoiceDocumentsUploadedBy", fields: [uploadedById], references: [id], onDelete: Cascade)
+  createdAt                     DateTime                     @default(now())
+
+  @@index([projectInvoiceId])
+  @@index([externalOrderInvoiceRequestId])
+}
+
 model FinanceReceipt {
   id                            String                       @id @default(cuid())
   customerId                    String?
@@ -628,12 +686,57 @@ model FinanceReceipt {
   createdBy                     User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
   createdAt                     DateTime                     @default(now())
   updatedAt                     DateTime                     @updatedAt
+  settledAdvances               FinanceAdvance[]             @relation("AdvanceSettledByReceipt")
+  settledAdvanceRefunds         FinanceAdvanceRefund[]       @relation("AdvanceRefundSettledByReceipt")
 
   @@index([customerId])
   @@index([projectId])
   @@index([externalOrderId])
   @@index([orderId])
   @@index([receivedAt])
+}
+
+model FinanceAdvance {
+  id                  String                 @id @default(cuid())
+  customerId          String?
+  customer            Customer?              @relation("FinanceAdvanceCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  orderId             String?
+  order               Order?                 @relation("FinanceAdvanceOrder", fields: [orderId], references: [id], onDelete: SetNull)
+  projectId           String?
+  project             Project?               @relation("FinanceAdvanceProject", fields: [projectId], references: [id], onDelete: SetNull)
+  amount              Float
+  advancedAt          DateTime               @default(now())
+  status              String                 @default("HELD") // HELD | PARTIAL_REFUNDED | REFUNDED | WRITTEN_OFF
+  settledByReceiptId  String?
+  settledByReceipt    FinanceReceipt?        @relation("AdvanceSettledByReceipt", fields: [settledByReceiptId], references: [id], onDelete: SetNull)
+  remark              String?
+  createdById         String
+  createdBy           User                   @relation("FinanceAdvanceCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  refunds             FinanceAdvanceRefund[]
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([projectId])
+  @@index([status])
+}
+
+model FinanceAdvanceRefund {
+  id                 String          @id @default(cuid())
+  advanceId          String
+  advance            FinanceAdvance  @relation(fields: [advanceId], references: [id], onDelete: Cascade)
+  settledByReceiptId String?
+  settledByReceipt   FinanceReceipt? @relation("AdvanceRefundSettledByReceipt", fields: [settledByReceiptId], references: [id], onDelete: SetNull)
+  amount             Float
+  refundedAt         DateTime        @default(now())
+  remark             String?
+  createdById        String
+  createdBy          User            @relation("FinanceAdvanceRefundCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt          DateTime        @default(now())
+
+  @@index([advanceId])
+  @@index([settledByReceiptId])
 }
 
 // ─── Unified Order Models ────────────────────────────────────
@@ -696,6 +799,7 @@ model Order {
   invoiceCoverage       OrderInvoiceCoverage[]
   invoiceRequests       ExternalOrderInvoiceRequest[]  @relation("OrderInvoiceRequests")
   financeCosts          FinanceCost[]
+  advances              FinanceAdvance[]             @relation("FinanceAdvanceOrder")
 
   @@index([source, externalOrderNo])
   @@index([merchantOrderNo])
@@ -1035,12 +1139,26 @@ model CrmCustomerApplication {
   adminReviewedByUser User?               @relation("CrmApplicationsAdminReviewed", fields: [adminReviewedByUserId], references: [id])
   adminReviewedAt     DateTime?
   adminReviewNote     String?
+  supervisorReviewStatus    String   @default("NONE") // NONE | PENDING | CONFIRMED | REJECTED
+  supervisorReviewReason    String?  // NORMAL | ORG_CONFLICT | CUSTOMER_CONFLICT | DUPLICATE_OVERRIDE | ORG_REQUEST
+  supervisorReviewDetail    String?  // JSON
+  supervisorReviewedByUserId String?
+  supervisorReviewedByUser  User?    @relation("CrmApplicationsSupervisorReviewed", fields: [supervisorReviewedByUserId], references: [id])
+  supervisorReviewedAt      DateTime?
+  supervisorReviewNote      String?
+  duplicateCheckStatus      String   @default("NONE") // NONE | CLEAN | CANDIDATES_FOUND | OVERRIDDEN_NEW
+  duplicateCandidatesJson   String?
+  conflictType              String?  // ORG_CONFLICT | CUSTOMER_CONFLICT | BOTH
+  notifiedSupervisorAt      DateTime?
+  supervisorEmailTrackings  CrmApplicationSupervisorNotification[]
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
   @@index([submittedByUserId])
   @@index([status])
   @@index([adminReviewStatus])
+  @@index([supervisorReviewStatus])
+  @@index([supervisorReviewedByUserId])
 }
 
 model CustomerRelation {
@@ -1085,6 +1203,57 @@ model CrmRegionManagerRepresentative {
 
   @@unique([managerId, representativeId])
   @@index([representativeId])
+}
+
+model RepresentativeOrganization {
+  id                               String                @id @default(cuid())
+  representativeId                 String
+  representative                   Representative        @relation(fields: [representativeId], references: [id], onDelete: Cascade)
+  organizationId                   String?               // null during new-org request flow
+  organization                     Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  requestedOrganizationName        String?
+  requestedOrganizationNormalizedName String?
+  organizationReviewTaskId         String?
+  organizationReviewTask           OrganizationReviewTask? @relation(fields: [organizationReviewTaskId], references: [id], onDelete: SetNull)
+  status                           String                @default("ACTIVE") // ACTIVE | PENDING | REJECTED | ARCHIVED
+  source                           String                @default("MANUAL") // MANUAL | REP_REQUEST
+  requestedByUserId                String?
+  requestedBy                      User?                 @relation("RepOrgRequestedBy", fields: [requestedByUserId], references: [id])
+  reviewedByUserId                 String?
+  reviewedBy                       User?                 @relation("RepOrgReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt                       DateTime?
+  reviewNote                       String?
+  createdAt                        DateTime              @default(now())
+  updatedAt                        DateTime              @updatedAt
+
+  @@unique([representativeId, organizationId])
+  @@unique([representativeId, requestedOrganizationNormalizedName])
+  @@unique([organizationReviewTaskId])
+  @@index([organizationId])
+  @@index([status])
+}
+
+model CrmApplicationSupervisorNotification {
+  id            String                @id @default(cuid())
+  applicationId String
+  application   CrmCustomerApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastEmailedAt DateTime?
+  createdAt     DateTime              @default(now())
+
+  @@unique([applicationId, userId])
+  @@index([userId])
+}
+
+model CrmApplicationSupervisorDigest {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastFingerprint String?
+  lastEmailedAt   DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 model RepresentativeRegion {

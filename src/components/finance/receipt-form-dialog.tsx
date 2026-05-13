@@ -16,22 +16,18 @@ import { toast } from "sonner";
 interface ReceiptFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  defaultCustomerId?: string;
-  defaultProjectId?: string;
-  defaultProjectInvoiceId?: string;
   defaultOrderId?: string;
   defaultAmount?: number;
   onCreated: () => void;
 }
 
-export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defaultProjectId, defaultProjectInvoiceId, defaultOrderId, defaultAmount, onCreated }: ReceiptFormDialogProps) {
+export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultAmount, onCreated }: ReceiptFormDialogProps) {
   const [amount, setAmount] = useState("");
   const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
   const [source, setSource] = useState("MANUAL");
   const [remark, setRemark] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Prefill or reset amount when dialog opens/closes
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       if (open && defaultAmount) {
@@ -47,6 +43,10 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defau
   }, [open, defaultAmount]);
 
   async function handleSubmit() {
+    if (!defaultOrderId) {
+      toast.error("请先从订单详情页进入");
+      return;
+    }
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) {
       toast.error("请输入有效的金额");
@@ -58,17 +58,17 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defau
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          orderId: defaultOrderId,
           amount: amt,
           receivedAt: new Date(receivedAt).toISOString(),
           source,
           remark: remark || null,
-          customerId: defaultCustomerId || null,
-          projectId: defaultProjectId || null,
-          projectInvoiceId: defaultProjectInvoiceId || null,
-          orderId: defaultOrderId || null,
         }),
       });
-      if (!res.ok) throw new Error("创建失败");
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "创建失败");
+      }
       toast.success("回款记录已创建");
       onCreated();
       onOpenChange(false);
@@ -87,49 +87,55 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultCustomerId, defau
         <DialogHeader>
           <DialogTitle>添加回款</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>金额</Label>
-            <Input
-              type="number"
-              step="0.01"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
+        {!defaultOrderId ? (
+          <div className="text-sm text-muted-foreground py-4 text-center">
+            请先从订单详情页进入，回款必须关联订单。
           </div>
-          <div className="space-y-2">
-            <Label>到款日期</Label>
-            <Input
-              type="date"
-              value={receivedAt}
-              onChange={(e) => setReceivedAt(e.target.value)}
-            />
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>金额</Label>
+              <Input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>到款日期</Label>
+              <Input
+                type="date"
+                value={receivedAt}
+                onChange={(e) => setReceivedAt(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>来源</Label>
+              <Select value={source} onValueChange={(v) => v && setSource(v)}>
+                <SelectTrigger><SelectDisplay label="来源" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MANUAL">人工录入</SelectItem>
+                  <SelectItem value="BANK">银行转账</SelectItem>
+                  <SelectItem value="PINGOODMICE_ORDER">拼好鼠订单</SelectItem>
+                  <SelectItem value="OTHER">其他</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>备注</Label>
+              <Input
+                placeholder="备注信息（可选）"
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>来源</Label>
-            <Select value={source} onValueChange={(v) => v && setSource(v)}>
-              <SelectTrigger><SelectDisplay label="来源" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="MANUAL">人工录入</SelectItem>
-                <SelectItem value="BANK">银行转账</SelectItem>
-                <SelectItem value="PINGOODMICE_ORDER">拼好鼠订单</SelectItem>
-                <SelectItem value="OTHER">其他</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>备注</Label>
-            <Input
-              placeholder="备注信息（可选）"
-              value={remark}
-              onChange={(e) => setRemark(e.target.value)}
-            />
-          </div>
-        </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-          <Button onClick={handleSubmit} disabled={submitting}>
+          <Button onClick={handleSubmit} disabled={submitting || !defaultOrderId}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
             确认添加
           </Button>

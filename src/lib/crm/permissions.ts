@@ -24,7 +24,7 @@ export function extractScopedUserIds(scope: Record<string, unknown>): string[] |
  * Resolve the set of userIds a regional manager can see in CRM.
  * Returns null if the manager has no assigned representatives.
  */
-async function getRegionalManagerUserIds(managerUserId: string): Promise<string[] | null> {
+export async function getRegionalManagerUserIds(managerUserId: string): Promise<string[] | null> {
   const manager = await prisma.crmRegionManager.findUnique({
     where: { userId: managerUserId, archived: false },
     include: {

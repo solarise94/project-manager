@@ -6,6 +6,8 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -14,6 +16,7 @@ import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { CustomerMatchDialog } from "@/components/finance/customer-match-dialog";
 import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
 import { CostFormDialog } from "@/components/finance/cost-form-dialog";
+import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
 import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus } from "lucide-react";
 import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
@@ -43,6 +46,86 @@ export default function OrderDetailPage() {
   const [customerMatchOpen, setCustomerMatchOpen] = useState(false);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(urlAction === "invoice");
   const [costDialogOpen, setCostDialogOpen] = useState(urlAction === "cost");
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
+  const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false);
+  const [refundingAdvanceId, setRefundingAdvanceId] = useState<string | null>(null);
+  const [advances, setAdvances] = useState<Array<Record<string, unknown>>>([]);
+  const [advanceForm, setAdvanceForm] = useState({ amount: "", remark: "" });
+  const [refundForm, setRefundForm] = useState({ amount: "", remark: "", receiptId: "" });
+  const [eligibleReceipts, setEligibleReceipts] = useState<Array<Record<string, unknown>>>([]);
+  const [advanceSubmitting, setAdvanceSubmitting] = useState(false);
+
+  // Strip action= param from URL when dialogs close to prevent re-opening on refresh
+  const handleInvoiceOpenChange = (open: boolean) => {
+    setInvoiceDialogOpen(open);
+    if (!open && urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+  };
+  const handleCostOpenChange = (open: boolean) => {
+    setCostDialogOpen(open);
+    if (!open && urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+  };
+
+  const fetchAdvances = useCallback(async () => {
+    if (!id) return;
+    const res = await fetch(`/api/finance/advances?orderId=${id}`);
+    if (res.ok) {
+      const d = await res.json();
+      setAdvances((d.advances || []) as Array<Record<string, unknown>>);
+    }
+  }, [id]);
+
+  const createAdvance = async () => {
+    const amt = parseFloat(advanceForm.amount);
+    if (!amt || amt <= 0) return;
+    setAdvanceSubmitting(true);
+    try {
+      const res = await fetch("/api/finance/advances", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: id, amount: amt, remark: advanceForm.remark || null }),
+      });
+      if (res.ok) { setAdvanceDialogOpen(false); setAdvanceForm({ amount: "", remark: "" }); fetchAdvances(); }
+    } finally { setAdvanceSubmitting(false); }
+  };
+
+  const fetchEligibleReceipts = async (advanceId: string) => {
+    const res = await fetch(`/api/finance/advances/${advanceId}/eligible-receipts`);
+    if (res.ok) {
+      const d = await res.json();
+      setEligibleReceipts((d.eligible || []) as Array<Record<string, unknown>>);
+    }
+  };
+
+  const openRefundDialog = (advanceId: string, maxAmount: number) => {
+    setRefundingAdvanceId(advanceId);
+    setRefundForm({ amount: String(maxAmount), remark: "", receiptId: "" });
+    setEligibleReceipts([]);
+    fetchEligibleReceipts(advanceId);
+  };
+
+  const createRefund = async () => {
+    let amt = parseFloat(refundForm.amount);
+    if (!amt || amt <= 0 || !refundingAdvanceId) return;
+    if (!refundForm.receiptId) { alert("请先选择对应回款记录"); return; }
+    const selected = eligibleReceipts.find((e) => e.id === refundForm.receiptId);
+    if (!selected) { alert("所选回款记录无效"); return; }
+    const maxAvailable = (selected.availableForRefund as number) || 0;
+    if (amt > maxAvailable) {
+      if (!confirm(`退款金额超过该回款可用余额（¥${maxAvailable.toLocaleString()}），已自动调整为上限并继续提交。`)) return;
+      amt = maxAvailable;
+      setRefundForm((prev) => ({ ...prev, amount: String(maxAvailable) }));
+    }
+    setAdvanceSubmitting(true);
+    try {
+      const res = await fetch(`/api/finance/advances/${refundingAdvanceId}/refund`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amt, remark: refundForm.remark || null, settledByReceiptId: refundForm.receiptId }),
+      });
+      if (res.ok) { setRefundingAdvanceId(null); setRefundForm({ amount: "", remark: "", receiptId: "" }); setEligibleReceipts([]); fetchAdvances(); }
+      else { const d = await res.json(); alert(d.error || "退款失败"); }
+    } finally { setAdvanceSubmitting(false); }
+  };
 
   const fetchOrder = useCallback(async () => {
     if (!id) return;
@@ -57,7 +140,8 @@ export default function OrderDetailPage() {
     if (authStatus !== "authenticated" || !id || !canAccessOrders(session?.user?.role)) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchOrder();
-  }, [id, authStatus, fetchOrder, session?.user?.role]);
+    fetchAdvances();
+  }, [id, authStatus, fetchOrder, fetchAdvances, session?.user?.role]);
 
   const isAdmin = session?.user?.role === "ADMIN";
 
@@ -381,6 +465,39 @@ export default function OrderDetailPage() {
             })()}
           </Card>
 
+          {/* Receipts section */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">回款</h3>
+              {(isAdmin || session?.user?.role === "USER") && (
+                <Button size="sm" variant="outline" onClick={() => setReceiptDialogOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" />新增回款
+                </Button>
+              )}
+            </div>
+            {(() => {
+              const receipts = (order.receipts as Array<Record<string, unknown>>) || [];
+              if (receipts.length === 0) return <div className="text-sm text-muted-foreground py-4 text-center">暂无回款记录</div>;
+              return (
+                <div className="space-y-2">
+                  {receipts.map((r: Record<string, unknown>) => (
+                    <div key={r.id as string} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">¥{(r.amount as number || 0).toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground">{(r.source as string) || "人工录入"}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {(r.remark as string) && <span>{(r.remark as string)}</span>}
+                        <span>{(r.receivedAt as string)?.slice(0, 10) || ""}</span>
+                        {Boolean(r.createdBy) && <span>{String(((r.createdBy as Record<string, unknown> | null) || {}).name || "")}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </Card>
+
           {/* Costs section */}
           <Card className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -422,6 +539,56 @@ export default function OrderDetailPage() {
                 </div>
               );
             })()}
+          </Card>
+
+          {/* Advances section */}
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium">客户垫付</h3>
+              {(isAdmin || session?.user?.role === "USER") && (
+                <Button size="sm" variant="outline" onClick={() => setAdvanceDialogOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" />新增垫付
+                </Button>
+              )}
+            </div>
+            {advances.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center">
+                <p>暂无垫付记录</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {advances.map((a: Record<string, unknown>) => {
+                  const refunds = (a.refunds as Array<Record<string, unknown>>) || [];
+                  const totalRefunded = refunds.reduce((s, r) => s + (r.amount as number || 0), 0);
+                  const remaining = (a.amount as number || 0) - totalRefunded;
+                  const statusLabel = { HELD: "未退", PARTIAL_REFUNDED: "部分已退", REFUNDED: "已退", WRITTEN_OFF: "已核销" }[a.status as string] || (a.status as string);
+                  return (
+                    <div key={a.id as string} className="border rounded p-3 text-sm space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">¥{(a.amount as number || 0).toLocaleString()}</span>
+                          <Badge variant="outline" className="text-xs">{statusLabel}</Badge>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{(a.advancedAt as string)?.slice(0, 10) || ""}</span>
+                      </div>
+                      {(a.remark as string) && <div className="text-xs text-muted-foreground">备注: {a.remark as string}</div>}
+                      {refunds.length > 0 && (
+                        <div className="text-xs text-muted-foreground pl-2 border-l-2">
+                          {refunds.map((r: Record<string, unknown>, ri: number) => (
+                            <div key={ri}>退款 ¥{(r.amount as number || 0).toLocaleString()} ({(r.refundedAt as string)?.slice(0, 10) || ""})</div>
+                          ))}
+                        </div>
+                      )}
+                      {remaining > 0 && (isAdmin || session?.user?.role === "USER") && (
+                        <Button size="sm" variant="ghost" className="text-xs h-6" onClick={() => openRefundDialog(a.id as string, remaining)}>
+                          退款 (剩余 ¥{remaining.toLocaleString()})
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           {/* Customer finance link */}
@@ -493,7 +660,7 @@ export default function OrderDetailPage() {
       {/* Invoice dialog */}
       <InvoiceFormDialog
         open={invoiceDialogOpen}
-        onOpenChange={setInvoiceDialogOpen}
+        onOpenChange={handleInvoiceOpenChange}
         editingInvoice={null}
         createUrl="/api/finance/order-invoices"
         patchUrlPrefix="/api/finance/order-invoices"
@@ -522,13 +689,87 @@ export default function OrderDetailPage() {
       {/* Cost dialog */}
       <CostFormDialog
         open={costDialogOpen}
-        onOpenChange={setCostDialogOpen}
+        onOpenChange={handleCostOpenChange}
         defaultOrderId={id}
         defaultCustomerId={(cust?.id as string) || undefined}
         defaultProjectId={projectLinks.length === 1 ? ((projectLinks[0].project as Record<string, unknown>)?.id as string) : undefined}
         defaultAmount={(order.financeAmountOverride ?? order.totalAmount) as number | undefined}
         onCreated={() => fetchOrder()}
       />
+
+      {/* Receipt dialog */}
+      <ReceiptFormDialog
+        open={receiptDialogOpen}
+        onOpenChange={setReceiptDialogOpen}
+        defaultOrderId={id}
+        onCreated={() => { fetchOrder(); fetchAdvances(); }}
+      />
+
+      {/* Advance create dialog */}
+      <Dialog open={advanceDialogOpen} onOpenChange={setAdvanceDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>新增垫付</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>金额</Label>
+              <Input type="number" step="0.01" value={advanceForm.amount} onChange={(e) => setAdvanceForm({ ...advanceForm, amount: e.target.value })} placeholder="0.00" />
+            </div>
+            <div className="space-y-1">
+              <Label>备注</Label>
+              <Input value={advanceForm.remark} onChange={(e) => setAdvanceForm({ ...advanceForm, remark: e.target.value })} placeholder="选填" />
+            </div>
+            <Button className="w-full" onClick={createAdvance} disabled={advanceSubmitting || !advanceForm.amount}>
+              {advanceSubmitting ? "提交中..." : "确认"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Advance refund dialog */}
+      <Dialog open={!!refundingAdvanceId} onOpenChange={(v) => { if (!v) { setRefundingAdvanceId(null); setEligibleReceipts([]); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>登记退款</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            {eligibleReceipts.length === 0 && refundingAdvanceId && (
+              <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                暂无可用回款记录。请先在本订单财务页新增回款。
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label>对应回款</Label>
+              <Select value={refundForm.receiptId} onValueChange={(v) => {
+                const selected = eligibleReceipts.find((e) => e.id === v);
+                const max = selected ? (selected.availableForRefund as number) : parseFloat(refundForm.amount);
+                setRefundForm({ ...refundForm, receiptId: v || "", amount: String(Math.min(parseFloat(refundForm.amount) || max, max)) });
+              }}>
+                <SelectTrigger>
+                  <span>{refundForm.receiptId
+                    ? (() => { const r = eligibleReceipts.find((e) => e.id === refundForm.receiptId); return r ? `¥${(r.amount as number).toLocaleString()} (${(r.receivedAt as string)?.slice(0, 10) || ""})` : "选择回款"; })()
+                    : <span className="text-muted-foreground">请选择回款记录</span>}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {eligibleReceipts.map((r: Record<string, unknown>) => (
+                    <SelectItem key={r.id as string} value={r.id as string}>
+                      ¥{(r.amount as number).toLocaleString()} — {((r as Record<string, unknown>).customerName as string) || (r.orderNo as string) || (r.projectName as string) || ""} — 可退 ¥{(r.availableForRefund as number).toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>退款金额</Label>
+              <Input type="number" step="0.01" value={refundForm.amount} onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })} placeholder="0.00" />
+            </div>
+            <div className="space-y-1">
+              <Label>备注</Label>
+              <Input value={refundForm.remark} onChange={(e) => setRefundForm({ ...refundForm, remark: e.target.value })} placeholder="选填" />
+            </div>
+            <Button className="w-full" onClick={createRefund} disabled={advanceSubmitting || !refundForm.amount || !refundForm.receiptId}>
+              {advanceSubmitting ? "提交中..." : "确认退款"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

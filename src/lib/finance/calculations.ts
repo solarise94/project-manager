@@ -36,14 +36,6 @@ export async function getFinanceSummary(
     ...(projectScope ? { id: projectScope.id } : {}),
   };
 
-  const receiptScopeWhere: Record<string, unknown> = {};
-  if (customerScope || projectScope) {
-    const receiptOr: Record<string, unknown>[] = [];
-    if (customerScope) receiptOr.push({ customerId: { in: customerScope.id.in } });
-    if (projectScope) receiptOr.push({ projectId: { in: projectScope.id.in } });
-    if (receiptOr.length > 0) (receiptScopeWhere as Record<string, unknown>).OR = receiptOr;
-  }
-
   // ── Orders: scope by customer + project-linked ──
   const orderOrConditions: Record<string, unknown>[] = [];
   if (customerScope) {
@@ -59,6 +51,26 @@ export async function getFinanceSummary(
     if (projectOrders.length > 0) {
       orderOrConditions.push({ id: { in: projectOrders.map((l) => l.orderId) } });
     }
+  }
+
+  // Resolve scoped order IDs for receipt filtering
+  let scopedOrderIds: string[] = [];
+  if (customerScope || projectScope) {
+    const orderWhere: Record<string, unknown> = {};
+    if (orderOrConditions.length > 0) orderWhere.OR = orderOrConditions;
+    const scopedOrders = await prisma.order.findMany({
+      where: orderWhere,
+      select: { id: true },
+    });
+    scopedOrderIds = scopedOrders.map((o) => o.id);
+  }
+
+  const receiptScopeWhere: Record<string, unknown> = {};
+  if (scopedOrderIds.length > 0) {
+    receiptScopeWhere.orderId = { in: scopedOrderIds };
+  } else if (customerScope || projectScope) {
+    // No scoped orders found → no receipts
+    receiptScopeWhere.orderId = { in: ["__NO_MATCH__"] };
   }
 
   const orderWhere: Record<string, unknown> = { deleted: false };

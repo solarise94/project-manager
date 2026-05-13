@@ -4,7 +4,6 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ShoppingBag,
   FolderKanban,
   FileText,
   Banknote,
@@ -15,10 +14,9 @@ import {
   Receipt,
   TrendingUp,
   Calendar,
-  AlertCircle,
-  FileWarning,
-  Store,
   Building2,
+  Store,
+  History,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -88,27 +86,25 @@ function FinanceDashboard() {
           description={`项目 ${(data?.totalProjectBudgetAmount ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} + 独立订单 ${(data?.standaloneOnlineOrderAmount ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })}`}
         />
         <StatCard
-          title="项目关联订单额"
-          value={data?.projectLinkedOrderAmount ?? 0}
-          icon={ShoppingBag}
-          description="已并入项目，不重复计入"
+          title="本周进度款"
+          value={data?.weekProgressReceivable ?? 0}
+          icon={TrendingUp}
+          description={`立项30% ${(data?.weekServiceDeposit ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 商品 ${(data?.weekProductReceivable ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })}`}
         />
-        <Link href="/finance/progress-receivables?period=week" className="block">
-          <StatCard
-            title="本周进度款"
-            value={data?.weekProgressReceivable ?? 0}
-            icon={TrendingUp}
-            description={`立项30% ${(data?.weekServiceDeposit ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 结项70% ${(data?.weekServiceFinal ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 商品 ${(data?.weekProductReceivable ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })}`}
-          />
-        </Link>
         <Link href="/finance/progress-receivables?period=month" className="block">
           <StatCard
             title="本月进度款"
             value={data?.monthProgressReceivable ?? 0}
             icon={Calendar}
-            description={`立项30% ${(data?.monthServiceDeposit ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 结项70% ${(data?.monthServiceFinal ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 商品 ${(data?.monthProductReceivable ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })}`}
+            description={`结项70% ${(data?.monthServiceFinal ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })} · 商品 ${(data?.monthProductReceivable ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 0 })}`}
           />
         </Link>
+        <StatCard
+          title="利润 (回款-成本)"
+          value={data?.profitAmount ?? 0}
+          icon={TrendingUp}
+          description={data?.profitRate != null ? `利润率 ${(data.profitRate * 100).toFixed(1)}%` : "暂无回款数据"}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -128,18 +124,18 @@ function FinanceDashboard() {
           title="成本总额"
           value={data?.costAmount ?? 0}
           icon={Receipt}
-          description="所有已登记成本"
         />
         <StatCard
-          title="利润 (回款-成本)"
-          value={data?.profitAmount ?? 0}
-          icon={TrendingUp}
-          description={data?.profitRate != null ? `利润率 ${(data.profitRate * 100).toFixed(1)}%` : "暂无回款数据"}
+          title="客户数"
+          value={data?.customerCount ?? 0}
+          icon={Users}
+          description="有财务记录的客户"
         />
       </div>
 
+      {/* ── Order-centric finance ── */}
       <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">发票与回款</h2>
+        <h2 className="text-sm font-medium text-muted-foreground">订单财务</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <Link href="/finance/order-matching">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
@@ -162,9 +158,9 @@ function FinanceDashboard() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">发票工作台</p>
+                    <p className="font-medium">订单发票工作台</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      统一发票管理：项目开票 + 订单开票
+                      订单开票、合并开票、发票上传、状态跟踪
                     </p>
                   </div>
                   <FileText className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -173,65 +169,17 @@ function FinanceDashboard() {
             </Card>
           </Link>
 
-          <Link href="/finance/project-invoices">
+          <Link href="/finance/order-receivables">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">项目开票</p>
+                    <p className="font-medium">订单应收与回款</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      标准项目开票申请与管理
-                    </p>
-                  </div>
-                  <FileText className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/finance/project-receivables">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">项目应收与回款</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {data?.projectCount ?? 0} 个项目 · 应收管理
+                      订单维度：金额、开票、回款、未回款
                     </p>
                   </div>
                   <CreditCard className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/finance/invoice-status?type=issued_unpaid">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">已开票未付款</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      追踪已开发票的到款情况
-                    </p>
-                  </div>
-                  <AlertCircle className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/finance/invoice-status?type=uninvoiced">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">未开票项目</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      有应收但尚未开票的项目
-                    </p>
-                  </div>
-                  <FileWarning className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </CardContent>
             </Card>
@@ -242,7 +190,7 @@ function FinanceDashboard() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">开票/到款明细</p>
+                    <p className="font-medium">订单回款流水</p>
                     <p className="text-sm text-muted-foreground mt-1">
                       发票与回款流水查询
                     </p>
@@ -260,7 +208,7 @@ function FinanceDashboard() {
                   <div>
                     <p className="font-medium">成本管理</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      登记采购/实验/人工等成本
+                      采购/实验/人工成本
                     </p>
                   </div>
                   <Receipt className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -276,10 +224,48 @@ function FinanceDashboard() {
                   <div>
                     <p className="font-medium">客户财务看板</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {data?.customerCount ?? 0} 个客户 · 查看应收和到款明细
+                      {data?.customerCount ?? 0} 个客户 · 按客户聚合
                     </p>
                   </div>
                   <Users className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      </div>
+
+      {/* ── Legacy / History ── */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground">历史记录 (只读)</h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Link href="/finance/project-invoices">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">历史项目发票</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      仅查看历史项目发票，不再新建
+                    </p>
+                  </div>
+                  <History className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link href="/finance/invoice-status?type=issued_unpaid">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">已开票未回款 (旧)</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      历史口径，请用订单应收与回款
+                    </p>
+                  </div>
+                  <History className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </CardContent>
             </Card>
@@ -297,9 +283,7 @@ function FinanceDashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-medium">开票主体</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        管理开票主体信息
-                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">管理开票主体信息</p>
                     </div>
                     <Building2 className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
                   </div>
@@ -312,9 +296,7 @@ function FinanceDashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-medium">采购渠道</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        管理采购渠道配置
-                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">管理采购渠道配置</p>
                     </div>
                     <Store className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
                   </div>

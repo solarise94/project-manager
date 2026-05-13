@@ -1,123 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import { isFinanceBlocked, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
+import { isFinanceBlocked } from "@/lib/finance/permissions";
+import { getOrderScopeWhere } from "@/lib/orders/permissions";
 import { prisma } from "@/lib/prisma";
 
-async function resolveAndValidate(
+async function resolveOrderAndCheckScope(
   userId: string,
   role: string,
-  customerId?: string | null,
-  projectId?: string | null,
-  externalOrderId?: string | null,
-  orderId?: string | null,
-  projectInvoiceId?: string | null,
-  externalOrderInvoiceRequestId?: string | null,
-  source?: string,
-): Promise<{ valid: boolean; resolvedCustomerId: string | null; resolvedProjectId: string | null }> {
-  let resolvedCustId = customerId || null;
-  let resolvedProjId = projectId || null;
+  orderId: string,
+): Promise<{ valid: boolean; customerId: string | null }> {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, customerId: true },
+  });
+  if (!order) return { valid: false, customerId: null };
 
-  // --- Phase 1: Resolve all entity references (always, including ADMIN) ---
+  if (role === "ADMIN") return { valid: true, customerId: order.customerId };
 
-  if (externalOrderId) {
-    const eo = await prisma.externalOrder.findUnique({
-      where: { id: externalOrderId },
-      select: { customerId: true, projectId: true },
-    });
-    if (!eo) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (!resolvedCustId && eo.customerId) resolvedCustId = eo.customerId;
-    if (!resolvedProjId && eo.projectId) resolvedProjId = eo.projectId;
-    if (customerId && eo.customerId && eo.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (projectId && eo.projectId && eo.projectId !== projectId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-  }
+  const orderScope = await getOrderScopeWhere(userId, role);
+  if (!orderScope) return { valid: false, customerId: null };
+  const inScope = await prisma.order.count({ where: { id: orderId, AND: [orderScope] } });
+  if (inScope === 0) return { valid: false, customerId: null };
 
-  if (orderId) {
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      select: { customerId: true, projectLinks: { select: { projectId: true } } },
-    });
-    if (!order) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (!resolvedCustId && order.customerId) resolvedCustId = order.customerId;
-    if (!resolvedProjId && order.projectLinks.length > 0) resolvedProjId = order.projectLinks[0].projectId;
-    if (customerId && order.customerId && order.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    // If projectId was explicitly provided, it must belong to this order's links
-    if (projectId && order.projectLinks.length > 0) {
-      const belongs = order.projectLinks.some((l) => l.projectId === projectId);
-      if (!belongs) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    }
-  }
-
-  if (projectInvoiceId) {
-    const inv = await prisma.projectInvoice.findUnique({
-      where: { id: projectInvoiceId },
-      select: { projectId: true, project: { select: { customerId: true } } },
-    });
-    if (!inv) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (!resolvedProjId) resolvedProjId = inv.projectId;
-    if (!resolvedCustId && inv.project.customerId) resolvedCustId = inv.project.customerId;
-    if (projectId && inv.projectId !== projectId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (customerId && inv.project.customerId && inv.project.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-  }
-
-  if (externalOrderInvoiceRequestId) {
-    const eoi = await prisma.externalOrderInvoiceRequest.findUnique({
-      where: { id: externalOrderInvoiceRequestId },
-      select: {
-        externalOrder: { select: { customerId: true, projectId: true } },
-        order: { select: { customerId: true } },
-      },
-    });
-    if (!eoi) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    if (eoi.externalOrder) {
-      if (!resolvedCustId && eoi.externalOrder.customerId) resolvedCustId = eoi.externalOrder.customerId;
-      if (!resolvedProjId && eoi.externalOrder.projectId) resolvedProjId = eoi.externalOrder.projectId;
-      if (customerId && eoi.externalOrder.customerId && eoi.externalOrder.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    }
-    if (eoi.order) {
-      if (!resolvedCustId && eoi.order.customerId) resolvedCustId = eoi.order.customerId;
-      if (customerId && eoi.order.customerId && eoi.order.customerId !== customerId) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    }
-  }
-
-  if (!resolvedCustId && resolvedProjId) {
-    const proj = await prisma.project.findUnique({
-      where: { id: resolvedProjId },
-      select: { customerId: true },
-    });
-    if (proj?.customerId) resolvedCustId = proj.customerId;
-  }
-
-  // Cross-validate: if both customerId and projectId are resolved, they must be consistent
-  if (resolvedCustId && resolvedProjId) {
-    const proj = await prisma.project.findUnique({
-      where: { id: resolvedProjId },
-      select: { customerId: true },
-    });
-    if (proj?.customerId && proj.customerId !== resolvedCustId) {
-      return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-    }
-  }
-
-  // PINGOODMICE_ORDER receipts require a resolved customer
-  if (source === "PINGOODMICE_ORDER" && !resolvedCustId) {
-    return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-  }
-
-  // --- Phase 2: Scope validation (non-ADMIN only) ---
-
-  if (role === "ADMIN") return { valid: true, resolvedCustomerId: resolvedCustId, resolvedProjectId: resolvedProjId };
-
-  const [custScope, projScope] = await Promise.all([
-    getFinanceCustomerScopeWhere(userId, role),
-    getFinanceProjectScopeWhere(userId, role),
-  ]);
-
-  if (resolvedCustId && custScope && !custScope.id.in.includes(resolvedCustId)) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-  if (resolvedProjId && projScope && !projScope.id.in.includes(resolvedProjId)) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-  if (!resolvedCustId && !resolvedProjId && custScope) return { valid: false, resolvedCustomerId: null, resolvedProjectId: null };
-
-  return { valid: true, resolvedCustomerId: resolvedCustId, resolvedProjectId: resolvedProjId };
+  return { valid: true, customerId: order.customerId };
 }
 
 export async function GET(req: NextRequest) {
@@ -128,6 +34,7 @@ export async function GET(req: NextRequest) {
   }
 
   const url = req.nextUrl;
+  const orderId = url.searchParams.get("orderId")?.trim();
   const customerId = url.searchParams.get("customerId")?.trim();
   const projectId = url.searchParams.get("projectId")?.trim();
   const source = url.searchParams.get("source")?.trim();
@@ -137,55 +44,72 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
 
-  if (session.user.role !== "ADMIN") {
-    const [custScope, projScopePre] = await Promise.all([
-      getFinanceCustomerScopeWhere(session.user.id, session.user.role),
-      getFinanceProjectScopeWhere(session.user.id, session.user.role),
-    ]);
-    if (custScope && customerId && !custScope.id.in.includes(customerId)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (projScopePre && projectId && !projScopePre.id.in.includes(projectId)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // If projectId is passed, resolve to order IDs via OrderProjectLink
+  let resolvedOrderIds: string[] | null = null;
+  if (projectId) {
+    const links = await prisma.orderProjectLink.findMany({
+      where: { projectId },
+      select: { orderId: true },
+    });
+    resolvedOrderIds = links.map((l) => l.orderId);
+    if (resolvedOrderIds.length === 0) {
+      resolvedOrderIds = ["__NO_MATCH__"];
     }
   }
 
-  const where: Record<string, unknown> = {};
-  if (customerId) where.customerId = customerId;
-  if (projectId) where.projectId = projectId;
-  if (source) where.source = source;
+  if (session.user.role !== "ADMIN") {
+    // Validate specific ID filters against scope
+    if (orderId) {
+      const { valid } = await resolveOrderAndCheckScope(session.user.id, session.user.role, orderId);
+      if (!valid) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  const andConditions: Record<string, unknown>[] = [];
+  if (orderId) andConditions.push({ orderId });
+  if (customerId) andConditions.push({ customerId });
+  if (resolvedOrderIds) andConditions.push({ orderId: { in: resolvedOrderIds } });
+  if (source) andConditions.push({ source });
   if (search) {
-    where.OR = [
-      { customer: { name: { contains: search } } },
-      { project: { name: { contains: search } } },
-      { externalOrder: { externalOrderNo: { contains: search } } },
-    ];
+    andConditions.push({
+      OR: [
+        { customer: { name: { contains: search } } },
+        { order: { orderNo: { contains: search } } },
+        { order: { externalOrderNo: { contains: search } } },
+      ],
+    });
   }
   if (dateFrom || dateTo) {
     const receivedAtFilter: Record<string, Date> = {};
     if (dateFrom) receivedAtFilter.gte = new Date(dateFrom);
     if (dateTo) receivedAtFilter.lte = new Date(dateTo + "T23:59:59.999Z");
-    where.receivedAt = receivedAtFilter;
+    andConditions.push({ receivedAt: receivedAtFilter });
   }
 
+  // Non-ADMIN: scope by order visibility
   if (session.user.role !== "ADMIN") {
-    const [custScope, projScope] = await Promise.all([
-      getFinanceCustomerScopeWhere(session.user.id, session.user.role),
-      getFinanceProjectScopeWhere(session.user.id, session.user.role),
-    ]);
-    const orConditions: Record<string, unknown>[] = [];
-    if (custScope) orConditions.push({ customerId: { in: custScope.id.in } });
-    if (projScope) orConditions.push({ projectId: { in: projScope.id.in } });
-    if (orConditions.length > 0) {
-      // Merge with existing OR from search, if any
-      if (where.OR) {
-        where.AND = [{ OR: orConditions }, { OR: where.OR }];
-        delete where.OR;
-      } else {
-        where.OR = orConditions;
-      }
+    // If a specific orderId is already specified and validated, skip broad scope fetch
+    if (orderId) {
+      // orderId was already validated by resolveOrderAndCheckScope above
+      andConditions.push({ orderId });
+    } else {
+      const orderScope = await getOrderScopeWhere(session.user.id, session.user.role);
+      if (!orderScope) return NextResponse.json({ receipts: [], total: 0, page, pageSize });
+
+      const scopedOrders = await prisma.order.findMany({
+        where: orderScope,
+        select: { id: true },
+      });
+      const scopedOrderIds = scopedOrders.map((o) => o.id);
+      if (scopedOrderIds.length === 0) return NextResponse.json({ receipts: [], total: 0, page, pageSize });
+
+      andConditions.push({ orderId: { in: scopedOrderIds } });
     }
   }
+
+  const where: Record<string, unknown> = andConditions.length === 1
+    ? andConditions[0]
+    : (andConditions.length > 0 ? { AND: andConditions } : {});
 
   const [receipts, total] = await Promise.all([
     prisma.financeReceipt.findMany({
@@ -195,8 +119,7 @@ export async function GET(req: NextRequest) {
       take: pageSize,
       include: {
         customer: { select: { id: true, name: true } },
-        project: { select: { id: true, name: true } },
-        externalOrder: { select: { id: true, externalOrderNo: true } },
+        order: { select: { id: true, orderNo: true, externalOrderNo: true } },
         createdBy: { select: { id: true, name: true } },
       },
     }),
@@ -209,59 +132,38 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isFinanceBlocked(session.user.role)) {
+  if (session.user.role !== "ADMIN" && session.user.role !== "USER") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await req.json();
-  const { customerId, projectId, externalOrderId, orderId, projectInvoiceId, externalOrderInvoiceRequestId, amount, receivedAt, source, remark } = body;
+  const { orderId, amount, receivedAt, source, remark } = body;
 
-  if (!amount || amount <= 0) {
-    return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
+  if (!orderId || typeof orderId !== "string") {
+    return NextResponse.json({ error: "回款必须关联订单" }, { status: 400 });
+  }
+  if (!amount || typeof amount !== "number" || amount <= 0) {
+    return NextResponse.json({ error: "金额必须大于 0" }, { status: 400 });
   }
 
-  const scopeCheck = await resolveAndValidate(
-    session.user.id, session.user.role,
-    customerId, projectId,
-    externalOrderId, orderId, projectInvoiceId, externalOrderInvoiceRequestId,
-    source,
-  );
-  if (!scopeCheck.valid) {
-    return NextResponse.json({ error: "Forbidden: entity outside your scope or inconsistent references" }, { status: 403 });
-  }
-
-  const effectiveCustomerId = customerId || scopeCheck.resolvedCustomerId || null;
-  const effectiveProjectId = projectId || scopeCheck.resolvedProjectId || null;
-
-  // Dedup check: same externalOrderId + source=PINGOODMICE_ORDER can only generate once
-  if (externalOrderId && source === "PINGOODMICE_ORDER") {
-    const existing = await prisma.financeReceipt.findFirst({
-      where: { externalOrderId, source: "PINGOODMICE_ORDER" },
-    });
-    if (existing) {
-      return NextResponse.json({ error: "该拼好鼠订单已生成回款记录" }, { status: 409 });
-    }
-  }
+  const { valid, customerId } = await resolveOrderAndCheckScope(session.user.id, session.user.role, orderId);
+  if (!valid) return NextResponse.json({ error: "Forbidden: 订单不可见或不存在" }, { status: 403 });
 
   const receipt = await prisma.financeReceipt.create({
     data: {
-      customerId: effectiveCustomerId,
-      projectId: effectiveProjectId,
-      externalOrderId: externalOrderId || null,
-      orderId: orderId || null,
-      projectInvoiceId: projectInvoiceId || null,
-      externalOrderInvoiceRequestId: externalOrderInvoiceRequestId || null,
+      orderId,
+      customerId,
       amount,
       receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
       source: source || "MANUAL",
-      remark: remark || null,
+      remark: remark?.trim() || null,
       createdById: session.user.id,
     },
     include: {
       customer: { select: { id: true, name: true } },
-      project: { select: { id: true, name: true } },
+      order: { select: { id: true, orderNo: true } },
     },
   });
 
-  return NextResponse.json(receipt, { status: 201 });
+  return NextResponse.json({ receipt }, { status: 201 });
 }

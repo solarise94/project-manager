@@ -282,6 +282,29 @@ if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
   echo "  Generated REMINDER_CRON_TOKEN for standalone reminder timer"
 fi
 
+# CRM review cron token: shell env > app.conf > existing runtime .env > auto-generate
+CRM_REVIEW_CRON_TOKEN_VALUE="${CRM_REVIEW_CRON_TOKEN:-}"
+if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" && -f "${REMINDER_CONF}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      CRM_REVIEW_CRON_TOKEN) [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]] && CRM_REVIEW_CRON_TOKEN_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^CRM_REVIEW_CRON_TOKEN=' "${REMINDER_CONF}" || true)
+fi
+if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" && -f "${EXISTING_ENV_FILE}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      CRM_REVIEW_CRON_TOKEN) [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]] && CRM_REVIEW_CRON_TOKEN_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^CRM_REVIEW_CRON_TOKEN=' "${EXISTING_ENV_FILE}" || true)
+fi
+if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
+  CRM_REVIEW_CRON_TOKEN_VALUE="$(node -e 'const crypto = require("crypto"); process.stdout.write(crypto.randomUUID() + crypto.randomUUID())')"
+  echo "  Generated CRM_REVIEW_CRON_TOKEN for CRM review timer"
+fi
+
 # Resolve NEXTAUTH_URL: shell NEXTAUTH_URL > APP_BASE_URL (shell > app.conf > .env) > script default > hardcoded
 if [[ -z "${NEXTAUTH_URL_VALUE}" ]]; then
   NEXTAUTH_URL_VALUE="${APP_BASE_URL_VALUE:-${SCRIPT_DEFAULT_URL:-http://localhost:3000}}"
@@ -322,6 +345,7 @@ echo "[6/8] Writing runtime .env..."
   echo "HOSTNAME=\"$(dotenv_quote "${BIND_HOST}")\""
   echo "# Internal reminder cron"
   echo "REMINDER_CRON_TOKEN=\"$(dotenv_quote "${REMINDER_CRON_TOKEN_VALUE}")\""
+  echo "CRM_REVIEW_CRON_TOKEN=\"$(dotenv_quote "${CRM_REVIEW_CRON_TOKEN_VALUE}")\""
 } > "${TARGET_DIR}/.env"
 
 echo "[7/8] Writing ${SERVICE_NAME} unit..."
@@ -376,10 +400,67 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+CRM_REVIEW_SERVICE_NAME="${SERVICE_NAME%.service}-crm-review.service"
+CRM_REVIEW_TIMER_NAME="${SERVICE_NAME%.service}-crm-review.timer"
+CRM_REVIEW_SERVICE_FILE="${HOME}/.config/systemd/user/${CRM_REVIEW_SERVICE_NAME}"
+CRM_REVIEW_TIMER_FILE="${HOME}/.config/systemd/user/${CRM_REVIEW_TIMER_NAME}"
+
+echo "[7.6/8] Writing CRM review timer units..."
+cat > "${CRM_REVIEW_SERVICE_FILE}" <<EOF
+[Unit]
+Description=CRM Application Review Email Runner (${SERVICE_NAME})
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${TARGET_DIR}
+EnvironmentFile=${TARGET_DIR}/.env
+ExecStart=/bin/bash -c 'set -a; source ${TARGET_DIR}/.env; set +a; exec curl -fsS -X POST -H "Authorization: Bearer \${CRM_REVIEW_CRON_TOKEN}" http://127.0.0.1:${PORT}/api/internal/crm-application-review/run'
+EOF
+
+cat > "${CRM_REVIEW_TIMER_FILE}" <<EOF
+[Unit]
+Description=CRM Application Review Timer (${SERVICE_NAME})
+Requires=${CRM_REVIEW_SERVICE_NAME}
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 echo "[8/8] Restarting ${SERVICE_NAME}..."
+# Stop timers during restart to prevent cron runs against partially-deployed state.
+# Save state so we can restore on failure (set -e will exit on error).
+REMINDER_WAS_ACTIVE=false
+CRM_REVIEW_WAS_ACTIVE=false
+systemctl --user is-active --quiet "${REMINDER_TIMER_NAME}" 2>/dev/null && REMINDER_WAS_ACTIVE=true || true
+systemctl --user is-active --quiet "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null && CRM_REVIEW_WAS_ACTIVE=true || true
+systemctl --user stop "${REMINDER_TIMER_NAME}" 2>/dev/null || true
+systemctl --user stop "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null || true
+
+# Trap: restore timers on failure so they aren't left stopped
+restore_timers_on_failure() {
+  local exit_code=$?
+  if [[ ${exit_code} -ne 0 ]]; then
+    echo "  Deploy failed (exit=${exit_code}), restoring timers..."
+    [[ "${REMINDER_WAS_ACTIVE}" == "true" ]] && systemctl --user start "${REMINDER_TIMER_NAME}" 2>/dev/null || true
+    [[ "${CRM_REVIEW_WAS_ACTIVE}" == "true" ]] && systemctl --user start "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null || true
+  fi
+  return ${exit_code}
+}
+trap restore_timers_on_failure EXIT
+
 systemctl --user daemon-reload
 systemctl --user restart "${SERVICE_NAME}"
 systemctl --user enable --now "${REMINDER_TIMER_NAME}"
+systemctl --user enable --now "${CRM_REVIEW_TIMER_NAME}"
+
+# Deploy succeeded — disarm the failure-restore trap
+trap - EXIT
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
 systemctl --user --no-pager --full status "${REMINDER_TIMER_NAME}" | sed -n '1,20p'
 

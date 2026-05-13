@@ -4,14 +4,13 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, Plus, ShoppingBag, FolderKanban, FileText, Banknote } from "lucide-react";
+import { Loader2, ArrowLeft, ShoppingBag, FolderKanban, FileText, Banknote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatCard } from "@/components/finance/stat-card";
-import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
 import type { CustomerFinanceDetail } from "@/lib/finance/types";
 
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -38,9 +37,8 @@ function CustomerFinanceDetail() {
   const router = useRouter();
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [activeTab, setActiveTab] = useState("overview");
-  const [receiptOpen, setReceiptOpen] = useState(false);
 
-  const { data, isLoading, refetch } = useQuery<CustomerFinanceDetail>({
+  const { data, isLoading } = useQuery<CustomerFinanceDetail>({
     queryKey: ["finance", "customer", customerId],
     queryFn: async () => {
       const res = await fetch(`/api/finance/customers/${customerId}`);
@@ -256,9 +254,7 @@ function CustomerFinanceDetail() {
 
         <TabsContent value="receipts" className="mt-4">
           <div className="flex justify-end mb-3">
-            <Button size="sm" onClick={() => setReceiptOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />添加回款
-            </Button>
+            <span className="text-xs text-muted-foreground">回款请从订单详情页操作</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -288,13 +284,6 @@ function CustomerFinanceDetail() {
           </div>
         </TabsContent>
       </Tabs>
-
-      <ReceiptFormDialog
-        open={receiptOpen}
-        onOpenChange={setReceiptOpen}
-        defaultCustomerId={customerId}
-        onCreated={() => refetch()}
-      />
     </div>
   );
 }

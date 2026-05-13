@@ -86,7 +86,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         // Write back to source entity
-        if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+        if (task.sourceType === "REP_ORG_BINDING_REQUEST") {
+          const binding = await tx.representativeOrganization.findUnique({
+            where: { id: task.sourceId },
+          });
+          if (binding) {
+            await tx.representativeOrganization.update({
+              where: { id: task.sourceId },
+              data: { organizationId },
+            });
+            const { notifyBindingReviewers } = await import("@/lib/crm/supervisor");
+            notifyBindingReviewers(binding.id, binding.representativeId, org.canonicalName).catch(() => {});
+          }
+        } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
           const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
           if (!customer || customer.deleted) {
             throw new Error("来源客户已删除");
@@ -225,7 +237,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         // Write back to source entity
-        if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+        if (task.sourceType === "REP_ORG_BINDING_REQUEST") {
+          const binding = await tx.representativeOrganization.findUnique({
+            where: { id: task.sourceId },
+          });
+          if (binding) {
+            await tx.representativeOrganization.update({
+              where: { id: task.sourceId },
+              data: { organizationId: newOrg.id },
+            });
+            const { notifyBindingReviewers } = await import("@/lib/crm/supervisor");
+            notifyBindingReviewers(binding.id, binding.representativeId, newOrg.canonicalName).catch(() => {});
+          }
+        } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
           const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
           if (!customer || customer.deleted) {
             throw new Error("来源客户已删除");

@@ -63,7 +63,7 @@ export async function getOrderScopeWhere(
     return { OR: orConditions };
   }
 
-  // REPRESENTATIVE / REGIONAL_MANAGER: orders linked to representative's projects
+  // REPRESENTATIVE / REGIONAL_MANAGER: project-linked orders + CRM customer orders
   if (role === "REPRESENTATIVE" || role === "REGIONAL_MANAGER") {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -102,8 +102,34 @@ export async function getOrderScopeWhere(
       }
     }
 
-    if (repIds.length === 0) return { id: { in: ["__NO_MATCH__"] } };
+    // ── CRM Customer scope: orders of customers owned by the rep(s) ──
+    // Resolve user IDs for all representatives
+    const repUsers = await prisma.user.findMany({
+      where: { email: { not: "" }, role: { in: ["REPRESENTATIVE", "REGIONAL_MANAGER"] } },
+      select: { id: true, email: true },
+    });
 
+    const repEmails = await prisma.representative.findMany({
+      where: { id: { in: repIds } },
+      select: { email: true },
+    });
+    const repEmailSet = new Set(repEmails.map((r) => r.email));
+    const repUserIds = repUsers.filter((u) => repEmailSet.has(u.email)).map((u) => u.id);
+
+    let crmCustomerIds: string[] = [];
+    if (repUserIds.length > 0) {
+      const profiles = await prisma.crmCustomerProfile.findMany({
+        where: { ownerUserId: { in: repUserIds }, assignmentStatus: "ASSIGNED" },
+        select: { sourceCustomerId: true },
+      });
+      crmCustomerIds = profiles.map((p) => p.sourceCustomerId);
+    }
+
+    if (repIds.length === 0 && crmCustomerIds.length === 0) {
+      return { id: { in: ["__NO_MATCH__"] } };
+    }
+
+    // ── Project-linked scope ──
     // Find projects linked to all collected representatives (by representativeId)
     const byId = await prisma.project.findMany({
       where: { representativeId: { in: repIds }, deleted: false },
@@ -132,18 +158,29 @@ export async function getOrderScopeWhere(
       }
     }
 
-    if (projectIds.size === 0) return { id: { in: ["__NO_MATCH__"] } };
+    let linkedOrderIds: string[] = [];
+    if (projectIds.size > 0) {
+      linkedOrderIds = (await prisma.orderProjectLink.findMany({
+        where: { projectId: { in: [...projectIds] } },
+        select: { orderId: true },
+        distinct: ["orderId"],
+      })).map((l) => l.orderId);
+    }
 
-    const projectIdArr = [...projectIds];
-    const linkedOrderIds = (await prisma.orderProjectLink.findMany({
-      where: { projectId: { in: projectIdArr } },
-      select: { orderId: true },
-      distinct: ["orderId"],
-    })).map((l) => l.orderId);
+    // ── Combine project-linked + CRM customer scope ──
+    const orConditions: Record<string, unknown>[] = [];
 
-    if (linkedOrderIds.length === 0) return { id: { in: ["__NO_MATCH__"] } };
+    if (linkedOrderIds.length > 0) {
+      orConditions.push({ id: { in: linkedOrderIds } });
+    }
 
-    return { id: { in: linkedOrderIds } };
+    if (crmCustomerIds.length > 0) {
+      orConditions.push({ customerId: { in: crmCustomerIds } });
+    }
+
+    if (orConditions.length === 0) return { id: { in: ["__NO_MATCH__"] } };
+
+    return { OR: orConditions };
   }
 
   // Unknown future role — blocked

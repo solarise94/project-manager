@@ -4,7 +4,7 @@ import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, FileText, ShoppingBag, X, Plus } from "lucide-react";
+import { Loader2, X, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,35 +40,10 @@ function InvoicesContent() {
       <div className="flex items-center justify-between">
         <div>
           <Link href="/finance" className="text-sm text-muted-foreground hover:underline">&larr; 返回财务</Link>
-          <h1 className="text-xl font-bold mt-1">发票工作台</h1>
+          <h1 className="text-xl font-bold mt-1">订单发票工作台</h1>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Link href="/finance/project-invoices">
-          <Card className="p-4 hover:bg-muted/50 transition-colors cursor-pointer">
-            <div className="flex items-center gap-3">
-              <FileText className="h-8 w-8 text-primary" />
-              <div>
-                <p className="font-medium">项目开票</p>
-                <p className="text-sm text-muted-foreground">标准项目发票申请与管理</p>
-              </div>
-            </div>
-          </Card>
-        </Link>
-
-        <Link href="/finance/order-matching">
-          <Card className="p-4 hover:bg-muted/50 transition-colors cursor-pointer">
-            <div className="flex items-center gap-3">
-              <ShoppingBag className="h-8 w-8 text-primary" />
-              <div>
-                <p className="font-medium">订单开票</p>
-                <p className="text-sm text-muted-foreground">拼好鼠/外部订单发票处理与合并开票</p>
-              </div>
-            </div>
-          </Card>
-        </Link>
-      </div>
 
       <InvoicesSearchSection search={search} setSearch={setSearch} tab={tab} setTab={setTab} orderId={orderId} />
     </div>
@@ -83,20 +58,13 @@ function InvoicesSearchSection({ search, setSearch, tab, setTab, orderId }: { se
   p.set("pageSize", "50");
   if (orderId) p.set("orderId", orderId);
 
-  const { data: projData, isLoading: projLoading } = useQuery<{ invoices: Array<Record<string, unknown>>; total: number }>({
-    queryKey: ["finance", "all-invoices", "project", search, tab, orderId],
-    queryFn: () => orderId
-      ? { invoices: [], total: 0 }
-      : fetch(`/api/finance/project-invoices?${p.toString()}`).then(r => r.ok ? r.json() : { invoices: [], total: 0 }),
-  });
-  const { data: orderData, isLoading: orderLoading } = useQuery<{ invoices: Array<Record<string, unknown>>; total: number }>({
+  const { data: orderData, isLoading } = useQuery<{ invoices: Array<Record<string, unknown>>; total: number }>({
     queryKey: ["finance", "all-invoices", "order", search, tab, orderId],
     queryFn: () => fetch(`/api/finance/order-invoices?${p.toString()}`).then(r => r.ok ? r.json() : { invoices: [], total: 0 }),
   });
 
-  const invoices = [...(projData?.invoices || []), ...(orderData?.invoices || [])];
-  const total = (projData?.total || 0) + (orderData?.total || 0);
-  const isLoading = projLoading || orderLoading;
+  const invoices = orderData?.invoices || [];
+  const total = orderData?.total || 0;
 
   return (
     <div className="space-y-3">

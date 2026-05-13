@@ -3,7 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
-import { validateOrg, buildCustomerData, createCustomerWithRetry } from "@/lib/crm/customer-application-review";
+import { validateOrg, buildCustomerData, createCustomerWithRetry, findDuplicateCustomers } from "@/lib/crm/customer-application-review";
+import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -12,9 +13,42 @@ const applicationInclude = {
   createdCrmProfile: { select: { id: true, sourceCustomerId: true } },
 };
 
+async function canReviewApplication(
+  userId: string,
+  role: string,
+  application: { submittedByUserId: string },
+): Promise<boolean> {
+  if (role === "ADMIN") return true;
+  if (role === "REGIONAL_MANAGER") {
+    const repUserIds = await getRegionalManagerUserIds(userId);
+    return repUserIds !== null && repUserIds.includes(application.submittedByUserId);
+  }
+  return false;
+}
+
+function pruneCandidate(c: {
+  id: string; name: string; customerCodeLast6: string;
+  organization: string | null; hasCrmProfile: boolean; matchReasons: string[];
+}) {
+  return {
+    id: c.id,
+    name: c.name,
+    customerCodeLast6: c.customerCodeLast6,
+    organization: c.organization,
+    hasCrmProfile: c.hasCrmProfile,
+    matchReasons: c.matchReasons,
+  };
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Allow-list: only ADMIN, REPRESENTATIVE, REGIONAL_MANAGER
+  const allowedRoles = ["ADMIN", "REPRESENTATIVE", "REGIONAL_MANAGER"];
+  if (!allowedRoles.includes(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const { id } = await params;
   const application = await prisma.crmCustomerApplication.findUnique({
@@ -29,58 +63,32 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const candidates = await findCandidateCustomers(application);
-  return NextResponse.json({ application, candidates });
-}
-
-async function findCandidateCustomers(app: {
-  name: string;
-  email: string | null;
-  wechat: string | null;
-  organization: string | null;
-}) {
-  const ors: Record<string, unknown>[] = [{ name: { equals: app.name } }];
-  if (app.email) ors.push({ email: { equals: app.email } });
-  if (app.wechat) ors.push({ wechat: { equals: app.wechat } });
-  if (app.organization) {
-    ors.push({ organization: { equals: app.organization } });
-  }
-
-  const candidates = await prisma.customer.findMany({
-    where: { deleted: false, OR: ors },
-    select: {
-      id: true, name: true, customerCode: true, email: true, wechat: true,
-      organization: true, principal: true, archived: true,
-      crmProfile: { select: { id: true } },
-      _count: { select: { projects: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 10,
+  const { blocking, weak } = await findDuplicateCustomers({
+    name: application.name,
+    email: application.email,
+    wechat: application.wechat,
+    organizationId: application.organizationId,
+    organizationRawInput: application.organizationRawInput,
+    organization: application.organization,
+    principal: application.principal,
   });
+  const allCandidates = [...blocking, ...weak];
 
-  return candidates.map((c) => ({
-    ...c,
-    matchReasons: buildMatchReasons(app, c),
-  }));
-}
+  // Privacy: reviewers get full detail; reps get pruned candidates
+  const isReviewer = await canReviewApplication(session.user.id, session.user.role, application);
+  const responseCandidates = isReviewer ? allCandidates : allCandidates.map(pruneCandidate);
 
-function buildMatchReasons(
-  app: { name: string; email: string | null; wechat: string | null; organization: string | null },
-  c: { name: string; email: string | null; wechat: string | null; organization: string | null }
-): string[] {
-  const reasons: string[] = [];
-  if (c.name === app.name) reasons.push("姓名相同");
-  if (app.email && c.email === app.email) reasons.push("邮箱相同");
-  if (app.wechat && c.wechat === app.wechat) reasons.push("微信相同");
-  if (app.organization && c.organization === app.organization) reasons.push("单位相同");
-  return reasons;
+  return NextResponse.json({ application, candidates: responseCandidates });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentative(session.user.role)) {
+  // Allow-list: only ADMIN and REGIONAL_MANAGER can perform review actions
+  // REPRESENTATIVE and USER are blocked from all mutations
+  const allowedRoles = ["ADMIN", "REGIONAL_MANAGER"];
+  if (!allowedRoles.includes(session.user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -93,9 +101,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "申请不存在" }, { status: 404 });
   }
 
-  // Admin review actions for auto-approved applications (ADMIN only)
+  // ── Supervisor review actions (confirm-review / reject-review) ──
+
   if (action === "confirm-review" || action === "reject-review") {
-    if (session.user.role !== "ADMIN") {
+    if (!(await canReviewApplication(session.user.id, session.user.role, application))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
@@ -104,12 +113,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const reviewNote = body.reviewNote?.trim() || null;
     const claimed = await prisma.$transaction(async (tx) => {
       const result = await tx.crmCustomerApplication.updateMany({
-        where: { id, adminReviewStatus: "PENDING" },
+        where: {
+          id,
+          OR: [
+            { supervisorReviewStatus: "PENDING" },
+            { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
+          ],
+        },
         data: {
+          supervisorReviewStatus: "CONFIRMED",
+          supervisorReviewedByUserId: session.user.id,
+          supervisorReviewedAt: new Date(),
+          supervisorReviewNote: reviewNote,
           adminReviewStatus: "CONFIRMED",
           adminReviewedByUserId: session.user.id,
           adminReviewedAt: new Date(),
           adminReviewNote: reviewNote,
+          reviewedByUserId: session.user.id,
+          reviewedAt: new Date(),
+          reviewNote,
         },
       });
       if (result.count === 0) return { claimed: false, application: null };
@@ -130,20 +152,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (action === "reject-review") {
     const reviewNote = body.reviewNote?.trim() || null;
     const claimed = await prisma.$transaction(async (tx) => {
-      // Atomically claim the review
       const claimResult = await tx.crmCustomerApplication.updateMany({
-        where: { id, adminReviewStatus: "PENDING" },
+        where: {
+          id,
+          OR: [
+            { supervisorReviewStatus: "PENDING" },
+            { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
+          ],
+        },
         data: {
+          supervisorReviewStatus: "REJECTED",
+          supervisorReviewedByUserId: session.user.id,
+          supervisorReviewedAt: new Date(),
+          supervisorReviewNote: reviewNote,
           adminReviewStatus: "REJECTED",
-          status: "REJECTED",
           adminReviewedByUserId: session.user.id,
           adminReviewedAt: new Date(),
           adminReviewNote: reviewNote,
+          reviewedByUserId: session.user.id,
+          reviewedAt: new Date(),
+          reviewNote,
+          status: "REJECTED",
         },
       });
       if (claimResult.count === 0) return { claimed: false };
 
-      // After claiming, clean up the auto-created customer/profile
+      // Clean up auto-created customer/profile
       if (application.createdCrmProfileId) {
         await tx.crmCustomerProfile.deleteMany({
           where: { id: application.createdCrmProfileId },
@@ -177,7 +211,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ success: true });
   }
 
-  // Legacy actions for old PENDING applications
+  // ── Legacy actions for old PENDING applications ──
   if (application.status !== "PENDING") {
     return NextResponse.json({ error: "该申请已处理" }, { status: 400 });
   }
@@ -223,7 +257,6 @@ async function handleApprove(
     }
   }
 
-  // Resolve org: prefer organizationId, fall back to raw input text
   const rawOrgText = application.organizationRawInput || application.organization;
   const orgValidation = await validateOrg(
     application.organizationId,

@@ -45,19 +45,19 @@ interface ApplicationItem {
   adminReviewedByUser: { id: string; name: string } | null;
   adminReviewedAt: string | null;
   adminReviewNote: string | null;
+  supervisorReviewStatus: string;
+  supervisorReviewReason: string | null;
+  conflictType: string | null;
+  duplicateCheckStatus: string;
+  supervisorReviewedByUser: { id: string; name: string } | null;
 }
 
 interface CandidateCustomer {
   id: string;
   name: string;
-  customerCode: string;
-  email: string | null;
-  wechat: string | null;
+  customerCodeLast6: string;
   organization: string | null;
-  principal: string | null;
-  archived: boolean;
-  crmProfile: { id: string } | null;
-  _count: { projects: number };
+  hasCrmProfile: boolean;
   matchReasons: string[];
 }
 
@@ -74,19 +74,30 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge>{status}</Badge>;
 }
 
-function AdminReviewBadge({ status }: { status: string }) {
-  if (status === "PENDING") return <Badge variant="secondary" className="border-amber-200 text-amber-700 dark:text-amber-400">待复核</Badge>;
-  if (status === "CONFIRMED") return <Badge variant="secondary" className="border-green-200 text-green-700 dark:text-green-400">已确认</Badge>;
-  if (status === "REJECTED") return <Badge variant="destructive">已拒绝</Badge>;
+function SupervisorReviewBadge({ app }: { app: ApplicationItem }) {
+  const effectiveStatus = app.supervisorReviewStatus !== "NONE"
+    ? app.supervisorReviewStatus
+    : app.adminReviewStatus;
+  if (effectiveStatus === "PENDING") return <Badge variant="secondary" className="border-amber-200 text-amber-700 dark:text-amber-400">待复核</Badge>;
+  if (effectiveStatus === "CONFIRMED") return <Badge variant="secondary" className="border-green-200 text-green-700 dark:text-green-400">已确认</Badge>;
+  if (effectiveStatus === "REJECTED") return <Badge variant="destructive">已拒绝</Badge>;
   return null;
 }
 
+const CONFLICT_BADGES: Record<string, { label: string; className: string }> = {
+  ORG_CONFLICT: { label: "区域冲突", className: "border-red-200 text-red-700 dark:text-red-400" },
+  CUSTOMER_CONFLICT: { label: "客户冲突", className: "border-orange-200 text-orange-700 dark:text-orange-400" },
+  DUPLICATE_OVERRIDE: { label: "重复强制新建", className: "border-purple-200 text-purple-700 dark:text-purple-400" },
+  ORG_REQUEST: { label: "单位主数据申请", className: "border-blue-200 text-blue-700 dark:text-blue-400" },
+};
+
 export default function CrmCustomerApplicationsPage() {
-  const { status } = useSession();
+  const { status, data: session } = useSession();
   const router = useRouter();
 
   if (status === "unauthenticated") { router.push("/login"); return null; }
   if (status === "loading") return <div className="p-6">加载中...</div>;
+  if (session?.user?.role === "USER") { router.push("/crm"); return null; }
 
   return <ApplicationList />;
 }
@@ -107,7 +118,8 @@ function ApplicationList() {
   const [batchReviewNote, setBatchReviewNote] = useState("");
 
   const isAdmin = session?.user?.role === "ADMIN";
-  const canReviewLegacy = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const isRegionalManager = session?.user?.role === "REGIONAL_MANAGER";
+  const canReview = isAdmin || isRegionalManager;
   const isRep = session?.user?.role === "REPRESENTATIVE";
 
   const [filterMode, setFilterMode] = useState<"review" | "all">(isRep ? "all" : "review");
@@ -120,7 +132,7 @@ function ApplicationList() {
   const { data: assigneesData } = useQuery<{ assignees: AssigneeOption[] }>({
     queryKey: ["crm-assignees"],
     queryFn: () => fetch("/api/crm/assignees").then((r) => r.json()),
-    enabled: canReviewLegacy,
+    enabled: canReview,
   });
 
   const [candidates, setCandidates] = useState<CandidateCustomer[]>([]);
@@ -375,14 +387,14 @@ function ApplicationList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {canReviewLegacy ? "客户申请审核" : "我的客户申请"}
+            {canReview ? "客户申请审核" : "我的客户申请"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {canReviewLegacy
+            {canReview
               ? `待复核 ${reviewCount} 条，待审核 ${pendingCount} 条`
-              : "申请将自动通过并创建客户档案，管理员会进行复核"}
+              : "申请将自动通过并创建客户档案，主管会进行复核"}
           </p>
-          {canReviewLegacy && (
+          {canReview && (
             <div className="flex items-center gap-2 mt-2">
               <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => setFilterMode("review")}>
                 待复核 ({reviewCount})
@@ -392,7 +404,7 @@ function ApplicationList() {
               </Button>
             </div>
           )}
-          {canReviewLegacy && pendingCount > 0 && (
+          {canReview && pendingCount > 0 && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -404,11 +416,11 @@ function ApplicationList() {
             </label>
           )}
         </div>
-        {!canReviewLegacy && <CustomerApplicationFormDialog />}
+        {isRep && <CustomerApplicationFormDialog />}
       </div>
 
       {/* Batch action bar */}
-      {canReviewLegacy && selectedIds.size > 0 && (
+      {canReview && selectedIds.size > 0 && (
         <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-sm font-medium">已选择 {selectedIds.size} 条</span>
@@ -473,7 +485,7 @@ function ApplicationList() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
-                    {canReviewLegacy && app.status === "PENDING" && (
+                    {canReview && app.status === "PENDING" && (
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 shrink-0"
@@ -483,7 +495,17 @@ function ApplicationList() {
                     )}
                     <span className="font-medium text-lg">{app.name}</span>
                     <StatusBadge status={app.status} />
-                    {app.autoApproved && <AdminReviewBadge status={app.adminReviewStatus} />}
+                    {app.autoApproved && <SupervisorReviewBadge app={app} />}
+                    {app.supervisorReviewReason && CONFLICT_BADGES[app.supervisorReviewReason] && (
+                      <Badge variant="secondary" className={`text-xs ${CONFLICT_BADGES[app.supervisorReviewReason].className}`}>
+                        {CONFLICT_BADGES[app.supervisorReviewReason].label}
+                      </Badge>
+                    )}
+                    {app.conflictType && CONFLICT_BADGES[app.conflictType] && (
+                      <Badge variant="secondary" className={`text-xs ${CONFLICT_BADGES[app.conflictType].className}`}>
+                        {CONFLICT_BADGES[app.conflictType].label}
+                      </Badge>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-sm text-muted-foreground">
                     {app.principal && (
@@ -546,7 +568,7 @@ function ApplicationList() {
                     </div>
                   )}
                 </div>
-                {canReviewLegacy && app.status === "PENDING" && (
+                {canReview && app.status === "PENDING" && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       size="sm"
@@ -565,7 +587,10 @@ function ApplicationList() {
                     </Button>
                   </div>
                 )}
-                {isAdmin && app.autoApproved && app.adminReviewStatus === "PENDING" && (
+                {canReview && app.autoApproved && (
+                  (app.supervisorReviewStatus === "PENDING" ||
+                   (app.adminReviewStatus === "PENDING" && app.supervisorReviewStatus === "NONE"))
+                ) && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       size="sm"
@@ -625,22 +650,19 @@ function ApplicationList() {
                             <div className="flex items-center justify-between">
                               <div>
                                 <span className="font-medium">{c.name}</span>
-                                <span className="text-xs text-muted-foreground ml-2">{c.customerCode}</span>
+                                <span className="text-xs text-muted-foreground ml-2">...{c.customerCodeLast6}</span>
                               </div>
-                              {c.archived && <Badge variant="outline" className="text-xs">已归档</Badge>}
+                              {c.hasCrmProfile && <Badge variant="secondary" className="ml-1 text-xs">已有CRM</Badge>}
                             </div>
                             <div className="text-xs text-muted-foreground mt-1">
-                              {c.organization && <span>{c.organization} · </span>}
-                              {c.principal && <span>负责人: {c.principal} · </span>}
-                              <span>{c._count.projects} 项目</span>
-                              {c.crmProfile && <Badge variant="secondary" className="ml-1 text-xs">已有CRM</Badge>}
+                              {c.organization && <span>{c.organization}</span>}
                             </div>
                             <div className="flex flex-wrap gap-1 mt-1">
                               {c.matchReasons.map((r, i) => (
                                 <Badge key={i} variant="secondary" className="text-xs">{r}</Badge>
                               ))}
                             </div>
-                            {!c.crmProfile && (
+                            {!c.hasCrmProfile && (
                               <div className="mt-2">
                                 <Button
                                   size="sm"

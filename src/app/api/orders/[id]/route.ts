@@ -34,7 +34,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       mergeTargets: {
         include: { targetOrder: { select: { id: true, orderNo: true } } },
       },
-      receipts: { select: { id: true, amount: true }, take: 5, orderBy: { createdAt: "desc" } },
+      receipts: { select: { id: true, amount: true, receivedAt: true, source: true, remark: true, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
       financeCosts: { select: { id: true, amount: true, costType: true, remark: true, createdAt: true }, take: 20, orderBy: { createdAt: "desc" } },
       invoiceRequests: { select: { id: true, status: true, totalAmount: true, invoiceType: true, contentSummary: true, createdAt: true }, take: 20, orderBy: { createdAt: "desc" } },
       invoiceCoverage: { select: { invoiceRequest: { select: { id: true, status: true, totalAmount: true, invoiceType: true, contentSummary: true, createdAt: true } } }, take: 10 },
