@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
-import type { InvoiceRecord } from "@/components/invoice-form-dialog";
+import { FinancePageHeader } from "@/components/finance/finance-page-header";
+import { LegacyFinanceBanner } from "@/components/finance/legacy-finance-banner";
 import { InvoiceCard } from "@/components/finance/invoice-card";
+import type { InvoiceRecord } from "@/components/invoice-form-dialog";
 
 const STATUS_OPTIONS: Record<string, string> = {
   "": "全部状态", DRAFT: "草稿", REQUESTED: "已申请", ISSUED: "已开票", CANCELLED: "已取消",
@@ -27,7 +29,11 @@ export default function ProjectInvoicesPage() {
   if (status === "loading") return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
-  return <ProjectInvoicesContent />;
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+      <ProjectInvoicesContent />
+    </Suspense>
+  );
 }
 
 function ProjectInvoicesContent() {
@@ -54,15 +60,13 @@ function ProjectInvoicesContent() {
   const invoices = data?.invoices || [];
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">历史项目发票</h1>
-        </div>
-        <div className="text-sm text-muted-foreground bg-muted/50 rounded p-2">
-          新开票请从订单详情页操作。项目发票仅用于历史数据追溯，不再新建。
-        </div>
-      </div>
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+      <FinancePageHeader
+        title="历史项目发票"
+        backHref="/finance"
+      />
+
+      <LegacyFinanceBanner />
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative max-w-sm min-w-0 w-full">
@@ -80,7 +84,7 @@ function ProjectInvoicesContent() {
             <SelectItem value="">全部状态</SelectItem>
             <SelectItem value="DRAFT">草稿</SelectItem>
             <SelectItem value="REQUESTED">已申请</SelectItem>
-            <SelectItem value="ISSUED">已开票</SelectItem>
+            <SelectItem value="ISSUED">已开具</SelectItem>
             <SelectItem value="CANCELLED">已取消</SelectItem>
           </SelectContent>
         </Select>
@@ -118,8 +122,6 @@ function ProjectInvoicesContent() {
           </div>
         </div>
       )}
-
-
     </div>
   );
 }

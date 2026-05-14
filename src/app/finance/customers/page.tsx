@@ -4,10 +4,15 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Loader2, Eye, ChevronLeft, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { FinancePageHeader } from "@/components/finance/finance-page-header";
+import { FinanceDataTable } from "@/components/finance/finance-data-table";
+import { FinanceMobileCard } from "@/components/finance/finance-mobile-card";
+import { MoneyText } from "@/components/finance/money-text";
+import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import type { FinanceCustomerListResponse } from "@/lib/finance/types";
 
 export default function FinanceCustomersPage() {
@@ -15,7 +20,11 @@ export default function FinanceCustomersPage() {
   const router = useRouter();
 
   if (status === "loading") {
-    return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
   }
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
@@ -27,6 +36,8 @@ function FinanceCustomersList() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 20;
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const router = useRouter();
 
   const { data, isLoading } = useQuery<FinanceCustomerListResponse>({
     queryKey: ["finance", "customers", search, page],
@@ -41,17 +52,19 @@ function FinanceCustomersList() {
     },
   });
 
-  const router = useRouter();
-
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">客户财务看板</h1>
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+      <FinancePageHeader
+        title="客户财务看板"
+        description="按客户聚合的财务数据"
+        backHref="/finance"
+      />
 
-      <div className="relative max-w-sm">
+      <div className="relative max-w-sm min-w-0 w-full">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="搜索客户名称/编号/单位..."
-          className="pl-8"
+          className="pl-8 w-full"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
         />
@@ -61,88 +74,54 @@ function FinanceCustomersList() {
         <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="text-left py-3 px-2">客户</th>
-                  <th className="text-left py-3 px-2 hidden lg:table-cell">单位</th>
-                  <th className="text-right py-3 px-2">独立订单额</th>
-                  <th className="text-right py-3 px-2">项目总额</th>
-                  <th className="text-right py-3 px-2 hidden lg:table-cell">关联订单</th>
-                  <th className="text-right py-3 px-2">应收额</th>
-                  <th className="text-right py-3 px-2">到款额</th>
-                  <th className="text-right py-3 px-2">应收余额</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.customers || []).map((cust) => (
-                  <tr
-                    key={cust.id}
-                    className="border-b hover:bg-muted/50 cursor-pointer"
-                    onClick={() => router.push(`/finance/customers/${cust.id}`)}
-                  >
-                    <td className="py-3 px-2">
-                      <div className="font-medium">{cust.name}</div>
-                      <div className="text-xs text-muted-foreground">{cust.customerCode}</div>
-                    </td>
-                    <td className="py-3 px-2 text-muted-foreground hidden lg:table-cell">{cust.organization || "-"}</td>
-                    <td className="py-3 px-2 text-right">
-                      {cust.standaloneOnlineOrderAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                      <div className="text-xs text-muted-foreground">{cust.onlineOrderCount} 笔</div>
-                    </td>
-                    <td className="py-3 px-2 text-right">
-                      {cust.projectBudgetTotalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                      <div className="text-xs text-muted-foreground">{cust.projectCount} 个</div>
-                    </td>
-                    <td className="py-3 px-2 text-right text-muted-foreground hidden lg:table-cell">
-                      {cust.projectLinkedOrderAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-3 px-2 text-right font-medium">
-                      {cust.receivableAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-3 px-2 text-right">
-                      {cust.totalReceiptAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className={`py-3 px-2 text-right font-medium ${cust.outstandingAmount > 0 ? "text-red-600" : "text-green-600"}`}>
-                      {cust.outstandingAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="md:hidden space-y-3">
-            {(data?.customers || []).map((cust) => (
-              <Card
-                key={cust.id}
-                className="cursor-pointer"
-                onClick={() => router.push(`/finance/customers/${cust.id}`)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <div className="font-medium">{cust.name}</div>
-                      <div className="text-xs text-muted-foreground">{cust.customerCode} · {cust.organization || "无单位"}</div>
-                    </div>
-                    <span className={`text-sm font-bold ${cust.outstandingAmount > 0 ? "text-red-600" : "text-green-600"}`}>
-                      {cust.outstandingAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                    </span>
+          {data?.customers?.length === 0 ? (
+            <FinanceEmptyState title="暂无客户数据" />
+          ) : isMobile ? (
+            <div className="md:hidden space-y-3">
+              {data?.customers.map((cust) => (
+                <FinanceMobileCard
+                  key={cust.id}
+                  title={cust.name}
+                  subtitle={`${cust.customerCode} · ${cust.organization || "无单位"}`}
+                  metrics={[
+                    { label: "订单", value: <MoneyText value={cust.onlineOrderTotalAmount} compact /> },
+                    { label: "项目", value: <MoneyText value={cust.projectBudgetTotalAmount} compact /> },
+                    { label: "应收", value: <MoneyText value={cust.receivableAmount} compact /> },
+                    { label: "到款", value: <MoneyText value={cust.totalReceiptAmount} tone="income" compact /> },
+                  ]}
+                  badge={<MoneyText value={cust.outstandingAmount} tone={cust.outstandingAmount > 0 ? "warning" : "default"} />}
+                  primaryAction={{
+                    label: "查看详情",
+                    onClick: () => router.push(`/finance/customers/${cust.id}`),
+                    icon: <Eye className="h-3.5 w-3.5 mr-1" />,
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <FinanceDataTable
+              columns={[
+                { key: "name", header: "客户", render: (c) => (
+                  <div>
+                    <div className="font-medium">{c.name}</div>
+                    <div className="text-xs text-muted-foreground">{c.customerCode}</div>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                    <div>订单: {cust.onlineOrderTotalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</div>
-                    <div>项目: {cust.projectBudgetTotalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</div>
-                    <div>到款: {cust.totalReceiptAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                )},
+                { key: "organization", header: "单位", render: (c) => c.organization || "-" },
+                { key: "standaloneOnlineOrderAmount", header: "独立订单额", align: "right", money: true },
+                { key: "projectBudgetTotalAmount", header: "项目总额", align: "right", money: true },
+                { key: "receivableAmount", header: "应收额", align: "right", money: true },
+                { key: "totalReceiptAmount", header: "到款额", align: "right", render: (c) => <MoneyText value={c.totalReceiptAmount} tone="income" /> },
+                { key: "outstandingAmount", header: "应收余额", align: "right", render: (c) => (
+                  <MoneyText value={c.outstandingAmount} tone={c.outstandingAmount > 0 ? "warning" : "default"} />
+                )},
+              ]}
+              data={data?.customers || []}
+              keyExtractor={(c) => c.id}
+              onRowClick={(c) => router.push(`/finance/customers/${c.id}`)}
+            />
+          )}
 
-          {/* Pagination */}
           {data && data.total > pageSize && (
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">

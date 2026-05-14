@@ -4,18 +4,21 @@ import { useState, useMemo, Suspense } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Play, Search, Link2, FolderTree, FileText } from "lucide-react";
+import { Loader2, Play, Search, Link2, FolderTree, FileText, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getOrderEffectiveTreatment } from "@/lib/finance/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { OrderMatchBadge } from "@/components/finance/order-match-badge";
+import { MatchStatusBadge } from "@/components/finance/finance-status-badge";
 import { CustomerMatchDialog } from "@/components/finance/customer-match-dialog";
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { InvoiceCard } from "@/components/finance/invoice-card";
 import { InvoiceFormDialog, type InvoiceRecord } from "@/components/invoice-form-dialog";
+import { FinancePageHeader } from "@/components/finance/finance-page-header";
+import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
+import { MoneyText } from "@/components/finance/money-text";
 import type { MatchScanResult } from "@/lib/finance/types";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { toast } from "sonner";
@@ -25,6 +28,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const TREATMENT_LABELS: Record<string, string> = {
   AUTO: "自动",
@@ -162,6 +168,8 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("unmatched");
   const [search, setSearch] = useState(initialSearch);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [matchDialogOrder, setMatchDialogOrder] = useState<OrderItem | null>(null);
   const [projectDialogOrderId, setProjectDialogOrderId] = useState<string | null>(null);
@@ -172,7 +180,7 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
   const [mergeDefaults, setMergeDefaults] = useState<Record<string, unknown>>({});
   const [mergeCreateUrl, setMergeCreateUrl] = useState("");
   const [mergeCoveredOrderIds, setMergeCoveredOrderIds] = useState<string[]>([]);
-  const isMobile = useMediaQuery("(max-width: 768px)");
+  const isMobile = useMediaQuery("(max-width: 767px)");
 
   function clearSelection() { setSelectedIds(new Set()); }
 
@@ -231,12 +239,13 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
   }
 
   const { data: orders, isLoading } = useQuery<{ orders: OrderItem[]; total: number }>({
-    queryKey: ["orders", "matching", activeTab, search],
+    queryKey: ["orders", "matching", activeTab, search, page],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("source", "PINGOODMICE");
       if (search) params.set("search", search);
-      params.set("pageSize", "50");
+      params.set("pageSize", String(pageSize));
+      params.set("page", String(page));
       if (activeTab === "unmatched") params.set("customerMatchStatus", "UNMATCHED");
       else if (activeTab === "matched") params.set("customerMatchStatus", "AUTO_MATCHED");
       else if (activeTab === "conflict") params.set("customerMatchStatus", "CONFLICT");
@@ -381,32 +390,36 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
     { value: "manual", label: "已人工绑定" },
   ], []);
 
-  // Map PATCH field names: financeCategory -> category, financeTreatment -> financeTreatment (same)
   function financeFieldToPatchField(field: string): string {
     if (field === "financeCategory") return "category";
     return field;
   }
 
+  const pageOrders = orders?.orders || [];
+
   return (
-    <div className="space-y-6 max-w-full overflow-x-hidden pb-36">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">拼好鼠订单匹配</h1>
-        {isAdmin && (
-          <Button onClick={() => scanMutation.mutate(undefined)} disabled={scanMutation.isPending} className="w-full sm:w-auto">
-            {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Play className="h-4 w-4 mr-1" />}
-            执行匹配扫描
-          </Button>
-        )}
-      </div>
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6 pb-36">
+      <FinancePageHeader
+        title="拼好鼠订单匹配"
+        backHref="/finance"
+        actions={
+          isAdmin ? (
+            <Button onClick={() => scanMutation.mutate(undefined)} disabled={scanMutation.isPending}>
+              {scanMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Play className="h-4 w-4 mr-1" />}
+              执行匹配扫描
+            </Button>
+          ) : undefined
+        }
+      />
 
       <div className="relative max-w-sm min-w-0 w-full">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="搜索订单号/收件人..." className="pl-8 w-full" value={search} onChange={(e) => { setSearch(e.target.value); clearSelection(); }} />
+        <Input placeholder="搜索订单号/收件人..." className="pl-8 w-full" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); clearSelection(); }} />
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); clearSelection(); }}>
+      <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); setPage(1); clearSelection(); }}>
         {isMobile ? (
-          <Select value={activeTab} onValueChange={(v) => v && (setActiveTab(v), clearSelection())}>
+          <Select value={activeTab} onValueChange={(v) => v && (setActiveTab(v), setPage(1), clearSelection())}>
             <SelectTrigger className="w-full"><SelectDisplay label="状态" valueLabel={tabs.find(t => t.value === activeTab)?.label} placeholder="筛选状态" /></SelectTrigger>
             <SelectContent>
               {tabs.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}
@@ -421,6 +434,8 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
         <TabsContent value={activeTab} className="mt-4">
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+          ) : pageOrders.length === 0 ? (
+            <FinanceEmptyState title="暂无订单" description="当前筛选条件下没有订单。" />
           ) : (
             <>
               {/* Desktop batch action bar */}
@@ -448,34 +463,34 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
               )}
 
               {/* Desktop table */}
-              <div className="hidden md:block overflow-x-auto">
+              <div className="hidden md:block overflow-x-auto rounded-lg border">
                 <table className="w-full text-sm">
-                  <thead>
+                  <thead className="bg-muted/50 sticky top-0">
                     <tr className="border-b text-muted-foreground">
-                      <th className="text-center py-2 px-1 w-8">
-                        <input type="checkbox" className="cursor-pointer" checked={(orders?.orders || []).length > 0 && (orders?.orders || []).every((o) => selectedIds.has(o.id))} onChange={toggleSelectAll} />
+                      <th className="text-center py-2.5 px-1 w-10">
+                        <input type="checkbox" className="cursor-pointer" checked={pageOrders.length > 0 && pageOrders.every((o) => selectedIds.has(o.id))} onChange={toggleSelectAll} />
                       </th>
-                      <th className="text-left py-2 px-2">订单号</th>
-                      <th className="text-left py-2 px-2">收件人</th>
-                      <th className="text-right py-2 px-2">金额</th>
-                      <th className="text-center py-2 px-2">匹配状态</th>
-                      {isAdmin && <th className="text-center py-2 px-2">财务分类</th>}
-                      <th className="text-center py-2 px-2">计入方式</th>
-                      <th className="text-left py-2 px-2">匹配客户</th>
-                      <th className="text-center py-2 px-2">操作</th>
+                      <th className="text-left py-2.5 px-3">订单号</th>
+                      <th className="text-left py-2.5 px-3">收件人</th>
+                      <th className="text-right py-2.5 px-3">金额</th>
+                      <th className="text-center py-2.5 px-3">匹配状态</th>
+                      {isAdmin && <th className="text-center py-2.5 px-3">财务分类</th>}
+                      <th className="text-center py-2.5 px-3">计入方式</th>
+                      <th className="text-left py-2.5 px-3">匹配客户</th>
+                      <th className="text-center py-2.5 px-3">操作</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(orders?.orders || []).map((o) => (
-                      <tr key={o.id} className="border-b">
-                        <td className="py-2 px-1 text-center">
+                    {pageOrders.map((o) => (
+                      <tr key={o.id} className="border-b hover:bg-muted/50">
+                        <td className="py-2.5 px-1 text-center">
                           <input type="checkbox" className="cursor-pointer" checked={selectedIds.has(o.id)} onChange={() => toggleOne(o.id)} />
                         </td>
-                        <td className="py-2 px-2 font-mono text-xs">{o.externalOrderNo}</td>
-                        <td className="py-2 px-2">{o.receiverName || "-"}<br /><span className="text-xs text-muted-foreground">{o.receiverPhone || ""}</span></td>
-                        <td className="py-2 px-2 text-right">{(o.paidAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-2 px-2 text-center">
-                          <OrderMatchBadge status={o.customerMatchStatus} />
+                        <td className="py-2.5 px-3 font-mono text-xs">{o.externalOrderNo}</td>
+                        <td className="py-2.5 px-3">{o.receiverName || "-"}<br /><span className="text-xs text-muted-foreground">{o.receiverPhone || ""}</span></td>
+                        <td className="py-2.5 px-3 text-right"><MoneyText value={o.paidAmount || 0} /></td>
+                        <td className="py-2.5 px-3 text-center">
+                          <MatchStatusBadge status={o.customerMatchStatus} />
                           {o.invoiceStatus !== "NONE" && (
                             <Badge variant={o.invoiceStatus === "ISSUED" ? "outline" : "secondary"} className="text-[10px] mt-1">
                               {o.invoiceStatus === "DRAFT" ? "草稿" : o.invoiceStatus === "REQUESTED" ? "已申请" : o.invoiceStatus === "ISSUED" ? "已开票" : o.invoiceStatus}
@@ -483,11 +498,8 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                           )}
                         </td>
                         {isAdmin && (
-                          <td className="py-2 px-2 text-center">
-                            <Select
-                              value={o.financeCategory}
-                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}
-                            >
+                          <td className="py-2.5 px-3 text-center">
+                            <Select value={o.financeCategory} onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}>
                               <SelectTrigger className="h-7 text-xs w-24">
                                 <SelectDisplay label="分类" valueLabel={o.financeCategory === "UNKNOWN" ? "未分类" : o.financeCategory === "PRODUCT" ? "商品" : "服务"} placeholder="分类" />
                               </SelectTrigger>
@@ -499,28 +511,31 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                             </Select>
                           </td>
                         )}
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2.5 px-3 text-center">
                           <Badge variant="secondary" className="text-xs shrink-0 whitespace-nowrap">
                             {TREATMENT_LABELS[getOrderEffectiveTreatment(o)] || getOrderEffectiveTreatment(o)}
                           </Badge>
                         </td>
-                        <td className="py-2 px-2">
+                        <td className="py-2.5 px-3">
                           {o.customer ? `${o.customer.name} (${o.customer.customerCode})` : "-"}
                           {o.project && <div className="text-xs text-muted-foreground">项目: {o.project.name}</div>}
                         </td>
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2.5 px-3 text-center">
                           {isAdmin ? (
-                            <div className="flex gap-1 justify-center">
-                              <Button size="sm" variant="outline" onClick={() => setMatchDialogOrder(o)}>
-                                <Link2 className="h-3 w-3 mr-1" />客户
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => setProjectDialogOrderId(o.id)}>
-                                <FolderTree className="h-3 w-3 mr-1" />项目
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => setDetailOrderId(o.id)}>
-                                <FileText className="h-3 w-3 mr-1" />开票
-                              </Button>
-                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger render={<Button size="sm" variant="outline">处理 <ChevronDown className="h-3 w-3 ml-1" /></Button>} />
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => setMatchDialogOrder(o)}>
+                                  <Link2 className="h-3 w-3 mr-2" />绑定客户
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setProjectDialogOrderId(o.id)}>
+                                  <FolderTree className="h-3 w-3 mr-2" />关联项目
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setDetailOrderId(o.id)}>
+                                  <FileText className="h-3 w-3 mr-2" />开票
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           ) : (
                             <span className="text-xs text-muted-foreground">仅查看</span>
                           )}
@@ -533,23 +548,18 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
 
               {/* Mobile cards */}
               <div className="md:hidden space-y-3">
-                {(orders?.orders || []).map((o) => {
+                {pageOrders.map((o) => {
                   const treatment = getOrderEffectiveTreatment(o);
                   return (
                     <Card key={o.id} className="relative">
                       <CardContent className="p-4 space-y-2">
                         <div className="flex items-center gap-2 min-w-0">
                           {isAdmin && (
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 rounded border-gray-300 shrink-0"
-                              checked={selectedIds.has(o.id)}
-                              onChange={() => toggleOne(o.id)}
-                            />
+                            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 shrink-0" checked={selectedIds.has(o.id)} onChange={() => toggleOne(o.id)} />
                           )}
                           <span className="font-mono text-xs truncate">{o.externalOrderNo}</span>
                           <div className="ml-auto shrink-0 flex flex-col items-end gap-0.5">
-                            <OrderMatchBadge status={o.customerMatchStatus} />
+                            <MatchStatusBadge status={o.customerMatchStatus} />
                             {o.invoiceStatus !== "NONE" && (
                               <Badge variant={o.invoiceStatus === "ISSUED" ? "outline" : "secondary"} className="text-[10px]">
                                 {o.invoiceStatus === "DRAFT" ? "草稿" : o.invoiceStatus === "REQUESTED" ? "已申请" : o.invoiceStatus === "ISSUED" ? "已开票" : o.invoiceStatus}
@@ -563,16 +573,13 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                             <p className="text-sm font-medium truncate">{o.receiverName || "未知收件人"}</p>
                             <p className="text-xs text-muted-foreground">{o.receiverPhone || ""}</p>
                           </div>
-                          <span className="text-sm font-medium shrink-0">{(o.paidAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
+                          <MoneyText value={o.paidAmount || 0} className="text-sm font-medium shrink-0" />
                         </div>
 
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs text-muted-foreground shrink-0">财务：</span>
                           {isAdmin ? (
-                            <Select
-                              value={o.financeCategory}
-                              onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}
-                            >
+                            <Select value={o.financeCategory} onValueChange={(v) => v && financeMutation.mutate({ orderId: o.id, field: financeFieldToPatchField("financeCategory"), value: v })}>
                               <SelectTrigger className="h-7 text-xs w-24">
                                 <SelectDisplay label="分类" valueLabel={o.financeCategory === "UNKNOWN" ? "未分类" : o.financeCategory === "PRODUCT" ? "商品" : "服务"} placeholder="分类" />
                               </SelectTrigger>
@@ -602,16 +609,21 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                         </div>
 
                         {isAdmin && (
-                          <div className="flex gap-2 pt-1">
-                            <Button size="sm" variant="outline" className="flex-1" onClick={() => setMatchDialogOrder(o)}>
-                              <Link2 className="h-3 w-3 mr-1" />绑定客户
-                            </Button>
-                            <Button size="sm" variant="outline" className="flex-1" onClick={() => setProjectDialogOrderId(o.id)}>
-                              <FolderTree className="h-3 w-3 mr-1" />关联项目
-                            </Button>
-                            <Button size="sm" variant="outline" className="flex-1" onClick={() => setDetailOrderId(o.id)}>
-                              <FileText className="h-3 w-3 mr-1" />开票
-                            </Button>
+                          <div className="pt-1">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger render={<Button size="sm" variant="outline" className="w-full">处理 <ChevronDown className="h-3 w-3 ml-1" /></Button>} />
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem onClick={() => setMatchDialogOrder(o)}>
+                                  <Link2 className="h-3 w-3 mr-2" />绑定客户
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setProjectDialogOrderId(o.id)}>
+                                  <FolderTree className="h-3 w-3 mr-2" />关联项目
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setDetailOrderId(o.id)}>
+                                  <FileText className="h-3 w-3 mr-2" />开票
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         )}
                       </CardContent>
@@ -619,6 +631,16 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                   );
                 })}
               </div>
+
+              {(orders?.total ?? 0) > pageSize && (
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-sm text-muted-foreground">共 {orders?.total} 条</span>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</Button>
+                    <Button variant="outline" size="sm" disabled={page >= Math.ceil((orders?.total ?? 0) / pageSize)} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </TabsContent>
@@ -664,7 +686,7 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                 <div><span className="text-muted-foreground">订单号：</span>{detailData.order.externalOrderNo}</div>
                 {detailData.order.receiverName && <div><span className="text-muted-foreground">收件人：</span>{detailData.order.receiverName}</div>}
                 {detailData.order.receiverPhone && <div><span className="text-muted-foreground">电话：</span>{detailData.order.receiverPhone}</div>}
-                {detailData.order.paidAmount != null && <div><span className="text-muted-foreground">金额：</span>¥{detailData.order.paidAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</div>}
+                {detailData.order.paidAmount != null && <div><span className="text-muted-foreground">金额：</span><MoneyText value={detailData.order.paidAmount} /></div>}
                 {detailData.order.customer && <div><span className="text-muted-foreground">客户：</span>{detailData.order.customer.name}</div>}
                 {detailData.order.project && <div><span className="text-muted-foreground">项目：</span>{detailData.order.project.name}</div>}
               </div>

@@ -4,26 +4,34 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, ArrowLeft, ShoppingBag, FolderKanban, FileText, Banknote } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Loader2, ShoppingBag, FileText, Banknote } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard } from "@/components/finance/stat-card";
+import { FinancePageHeader } from "@/components/finance/finance-page-header";
+import { FinanceKpiCard } from "@/components/finance/finance-kpi-card";
+import { FinanceDataTable } from "@/components/finance/finance-data-table";
+import { MoneyText } from "@/components/finance/money-text";
+import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
+import { LegacyFinanceBanner } from "@/components/finance/legacy-finance-banner";
+import { MatchStatusBadge } from "@/components/finance/finance-status-badge";
 import type { CustomerFinanceDetail } from "@/lib/finance/types";
-
 import { useMediaQuery } from "@/hooks/use-media-query";
 import {
   Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
+import Link from "next/link";
 
 export default function CustomerFinanceDetailPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
   if (status === "loading") {
-    return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
   }
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
@@ -35,8 +43,8 @@ function CustomerFinanceDetail() {
   const params = useParams();
   const customerId = params.customerId as string;
   const router = useRouter();
-  const isMobile = useMediaQuery("(max-width: 768px)");
-  const [activeTab, setActiveTab] = useState("overview");
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const [activeTab, setActiveTab] = useState("orders");
 
   const { data, isLoading } = useQuery<CustomerFinanceDetail>({
     queryKey: ["finance", "customer", customerId],
@@ -47,240 +55,187 @@ function CustomerFinanceDetail() {
     },
   });
 
-
   if (isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 md:grid-cols-3">
-          {Array.from({ length: 4 }).map((_, i) => (<Skeleton key={i} className="h-28 rounded-xl" />))}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 rounded-xl" />
+          ))}
         </div>
       </div>
     );
   }
 
   if (!data) {
-    return <div className="text-center py-12 text-muted-foreground">客户不存在</div>;
+    return (
+      <div className="max-w-7xl mx-auto p-4 md:p-6">
+        <FinanceEmptyState title="客户不存在" />
+      </div>
+    );
   }
 
   const tabs = [
-    { value: "overview", label: "概览" },
-    { value: "projects", label: "项目" },
-    { value: "orders", label: "拼好鼠订单" },
+    { value: "orders", label: "订单" },
     { value: "invoices", label: "开票" },
     { value: "receipts", label: "到款" },
+    { value: "projects", label: "项目" },
   ];
 
+  const outstanding = data.summary.receivableAmount - data.summary.totalReceiptAmount;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={() => router.push("/finance/customers")}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">{data.customer.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            {data.customer.customerCode}{data.customer.organization ? ` · ${data.customer.organization}` : ""}
-          </p>
-        </div>
-      </div>
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+      <FinancePageHeader
+        title={data.customer.name}
+        description={`${data.customer.customerCode}${data.customer.organization ? ` · ${data.customer.organization}` : ""}`}
+        backHref="/finance/customers"
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title="拼好鼠订单额" value={data.summary.onlineOrderTotal} icon={ShoppingBag} />
-        <StatCard title="项目总额" value={data.summary.projectBudgetTotal} icon={FolderKanban} />
-        <StatCard title="已开票" value={data.summary.projectInvoicedAmount + data.summary.orderInvoicedAmount} icon={FileText} />
-        <StatCard
-          title="应收余额"
-          value={data.summary.outstandingAmount}
+        <FinanceKpiCard
+          title="拼好鼠订单额"
+          value={data.summary.onlineOrderTotal}
+          icon={ShoppingBag}
+        />
+        <FinanceKpiCard
+          title="已开票"
+          value={data.summary.projectInvoicedAmount + data.summary.orderInvoicedAmount}
+          icon={FileText}
+        />
+        <FinanceKpiCard
+          title="已回款"
+          value={data.summary.totalReceiptAmount}
           icon={Banknote}
-          variant={data.summary.outstandingAmount > 0 ? "warning" : "default"}
+          variant="success"
+        />
+        <FinanceKpiCard
+          title="应收余额"
+          value={outstanding}
+          icon={ShoppingBag}
+          variant={outstanding > 0 ? "warning" : "default"}
         />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         {isMobile ? (
           <Select value={activeTab} onValueChange={(v) => v && setActiveTab(v)}>
-            <SelectTrigger className="w-full"><SelectDisplay label="标签页" valueLabel={tabs.find(t => t.value === activeTab)?.label} placeholder="选择标签页" /></SelectTrigger>
+            <SelectTrigger className="w-full"><SelectDisplay label="标签页" valueLabel={tabs.find(t => t.value === activeTab)?.label} /></SelectTrigger>
             <SelectContent>
-              {tabs.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}
+              {tabs.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         ) : (
           <TabsList className="w-full sm:w-auto">
-            {tabs.map((t) => (<TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>))}
+            {tabs.map((t) => (
+              <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>
+            ))}
           </TabsList>
         )}
 
-        <TabsContent value="overview" className="space-y-4 mt-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardContent className="p-4">
-                <h3 className="font-medium mb-2">客户信息</h3>
-                <div className="text-sm space-y-1">
-                  <p>姓名：{data.customer.name}</p>
-                  <p>编号：{data.customer.customerCode}</p>
-                  <p>单位：{data.customer.organization || "-"}</p>
-                  <p>微信号：{data.customer.wechat || "-"}</p>
-                  <p>负责人：{data.customer.principal || "-"}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <h3 className="font-medium mb-2">财务汇总</h3>
-                <div className="text-sm space-y-1">
-                  <p>拼好鼠订单：{data.summary.onlineOrderTotal.toLocaleString("zh-CN", { minimumFractionDigits: 2 })} ({data.onlineOrders.length} 笔)</p>
-                  <p>项目预算：{data.summary.projectBudgetTotal.toLocaleString("zh-CN", { minimumFractionDigits: 2 })} ({data.projects.length} 个)</p>
-                  <p>开票总额：{(data.summary.projectInvoicedAmount + data.summary.orderInvoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</p>
-                  <p>到款总额：{data.summary.totalReceiptAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</p>
-                  <p className="font-medium text-red-600">
-                    应收余额：{data.summary.outstandingAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="projects" className="mt-4">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="text-left py-2 px-2">项目名称</th>
-                  <th className="text-right py-2 px-2">预算金额</th>
-                  <th className="text-center py-2 px-2">状态</th>
-                  <th className="text-center py-2 px-2">进度</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.projects.length === 0 ? (
-                  <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">暂无项目</td></tr>
-                ) : (
-                  data.projects.map((p) => (
-                    <tr key={p.id} className="border-b hover:bg-muted/50 cursor-pointer" onClick={() => router.push(`/projects/${p.id}`)}>
-                      <td className="py-2 px-2 font-medium">{p.name}</td>
-                      <td className="py-2 px-2 text-right">{(p.budgetAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                      <td className="py-2 px-2 text-center"><Badge variant="outline">{p.status}</Badge></td>
-                      <td className="py-2 px-2 text-center">{p.progress}%</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </TabsContent>
-
+        {/* Orders tab */}
         <TabsContent value="orders" className="mt-4">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="text-left py-2 px-2">订单号</th>
-                  <th className="text-right py-2 px-2">金额</th>
-                  <th className="text-left py-2 px-2">日期</th>
-                  <th className="text-center py-2 px-2">匹配状态</th>
-                  <th className="text-center py-2 px-2">计入方式</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.onlineOrders.length === 0 ? (
-                  <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">暂无订单</td></tr>
-                ) : (
-                  data.onlineOrders.map((o) => {
-                    const label = o.financeTreatment === "AUTO" ? "自动" : o.financeTreatment === "PROJECT_INCLUDED" ? "并入项目" : o.financeTreatment === "STANDALONE" ? "独立计入" : o.financeTreatment === "EXCLUDED" ? "排除" : o.financeTreatment;
-                    return (
-                    <tr key={o.id} className="border-b">
-                      <td className="py-2 px-2 font-mono text-xs">{o.orderNo}</td>
-                      <td className="py-2 px-2 text-right">{(o.totalAmount || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                      <td className="py-2 px-2 text-muted-foreground">{o.orderedAt ? new Date(o.orderedAt).toLocaleDateString("zh-CN") : "-"}</td>
-                      <td className="py-2 px-2 text-center">
-                        <Badge variant={o.customerMatchStatus === "AUTO_MATCHED" ? "default" : "outline"}>
-                          {o.customerMatchStatus === "AUTO_MATCHED" ? "自动匹配" : o.customerMatchStatus === "MANUAL_MATCHED" ? "人工绑定" : o.customerMatchStatus}
-                        </Badge>
-                      </td>
-                      <td className="py-2 px-2 text-center">
-                        <Badge variant={
-                          o.financeTreatment === "STANDALONE" ? "default" :
-                          o.financeTreatment === "PROJECT_INCLUDED" ? "secondary" :
-                          o.financeTreatment === "EXCLUDED" ? "destructive" : "outline"
-                        }>
-                          {label}
-                        </Badge>
-                      </td>
-                    </tr>
-                  );})
-                )}
-              </tbody>
-            </table>
-          </div>
+          {data.onlineOrders.length === 0 ? (
+            <FinanceEmptyState title="暂无订单" />
+          ) : (
+            <FinanceDataTable
+              columns={[
+                { key: "orderNo", header: "订单号" },
+                { key: "totalAmount", header: "金额", align: "right", money: true },
+                { key: "orderedAt", header: "日期", render: (o) => o.orderedAt ? new Date(o.orderedAt).toLocaleDateString("zh-CN") : "-" },
+                { key: "customerMatchStatus", header: "匹配", align: "center", render: (o) => <MatchStatusBadge status={o.customerMatchStatus} /> },
+                { key: "financeTreatment", header: "计入方式", align: "center", render: (o) => (
+                  <Badge variant={o.financeTreatment === "STANDALONE" ? "default" : o.financeTreatment === "PROJECT_INCLUDED" ? "secondary" : o.financeTreatment === "EXCLUDED" ? "destructive" : "outline"}>
+                    {o.financeTreatment === "AUTO" ? "自动" : o.financeTreatment === "STANDALONE" ? "独立计入" : o.financeTreatment === "PROJECT_INCLUDED" ? "并入项目" : o.financeTreatment === "EXCLUDED" ? "排除" : o.financeTreatment}
+                  </Badge>
+                )},
+                {
+                  key: "actions",
+                  header: "操作",
+                  align: "center",
+                  render: (o) => (
+                    <Link href={`/orders/${o.id}?tab=finance`} className="text-primary hover:underline text-xs">
+                      查看
+                    </Link>
+                  ),
+                },
+              ]}
+              data={data.onlineOrders}
+              keyExtractor={(o) => o.id}
+              onRowClick={(o) => router.push(`/orders/${o.id}?tab=finance`)}
+            />
+          )}
         </TabsContent>
 
+        {/* Invoices tab */}
         <TabsContent value="invoices" className="mt-4">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="text-left py-2 px-2">类型</th>
-                  <th className="text-right py-2 px-2">金额</th>
-                  <th className="text-center py-2 px-2">状态</th>
-                  <th className="text-left py-2 px-2">日期</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...data.projectInvoices, ...data.orderInvoices].length === 0 ? (
-                  <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">暂无开票记录</td></tr>
-                ) : (
-                  [...data.projectInvoices.map((i) => ({ ...i, type: "项目发票" })),
-                   ...data.orderInvoices.map((i) => ({ ...i, type: "订单发票" }))]
-                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                    .map((inv) => (
-                      <tr key={inv.id} className="border-b">
-                        <td className="py-2 px-2">{inv.type}</td>
-                        <td className="py-2 px-2 text-right">{inv.totalAmount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                        <td className="py-2 px-2 text-center">
-                          <Badge variant={inv.status === "ISSUED" ? "default" : inv.status === "CANCELLED" ? "destructive" : "outline"}>
-                            {inv.status === "ISSUED" ? "已开票" : inv.status === "DRAFT" ? "草稿" : inv.status === "REQUESTED" ? "已申请" : inv.status}
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-2 text-muted-foreground">{new Date(inv.createdAt).toLocaleDateString("zh-CN")}</td>
-                      </tr>
-                    ))
-                )}
-              </tbody>
-            </table>
+          <div className="space-y-4">
+            <LegacyFinanceBanner message="历史项目发票已停用新建。新开票请从订单详情页操作。" />
+            {[...data.projectInvoices, ...data.orderInvoices].length === 0 ? (
+              <FinanceEmptyState title="暂无开票记录" />
+            ) : (
+              <FinanceDataTable
+                columns={[
+                  { key: "type", header: "类型", render: (_i, idx) => idx < data.projectInvoices.length ? "项目发票" : "订单发票" },
+                  { key: "totalAmount", header: "金额", align: "right", money: true },
+                  {
+                    key: "status",
+                    header: "状态",
+                    align: "center",
+                    render: (inv) => (
+                      <Badge variant={inv.status === "ISSUED" ? "default" : inv.status === "CANCELLED" ? "destructive" : "outline"}>
+                        {inv.status === "ISSUED" ? "已开票" : inv.status === "DRAFT" ? "草稿" : inv.status === "REQUESTED" ? "已申请" : inv.status}
+                      </Badge>
+                    ),
+                  },
+                  { key: "createdAt", header: "日期", render: (inv) => new Date(inv.createdAt).toLocaleDateString("zh-CN") },
+                ]}
+                data={[...data.projectInvoices, ...data.orderInvoices]}
+                keyExtractor={(inv) => inv.id}
+              />
+            )}
           </div>
         </TabsContent>
 
+        {/* Receipts tab */}
         <TabsContent value="receipts" className="mt-4">
-          <div className="flex justify-end mb-3">
-            <span className="text-xs text-muted-foreground">回款请从订单详情页操作</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-muted-foreground">
-                  <th className="text-right py-2 px-2">金额</th>
-                  <th className="text-left py-2 px-2">到款日期</th>
-                  <th className="text-center py-2 px-2">来源</th>
-                  <th className="text-left py-2 px-2">备注</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.receipts.length === 0 ? (
-                  <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">暂无到款记录</td></tr>
-                ) : (
-                  data.receipts.map((r) => (
-                    <tr key={r.id} className="border-b">
-                      <td className="py-2 px-2 text-right font-medium">{r.amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                      <td className="py-2 px-2 text-muted-foreground">{new Date(r.receivedAt).toLocaleDateString("zh-CN")}</td>
-                      <td className="py-2 px-2 text-center"><Badge variant="outline">{r.source}</Badge></td>
-                      <td className="py-2 px-2 text-muted-foreground">{r.remark || "-"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          {data.receipts.length === 0 ? (
+            <FinanceEmptyState title="暂无到款记录" />
+          ) : (
+            <FinanceDataTable
+              columns={[
+                { key: "amount", header: "金额", align: "right", render: (r) => <MoneyText value={r.amount} tone="income" /> },
+                { key: "receivedAt", header: "到款日期", render: (r) => new Date(r.receivedAt).toLocaleDateString("zh-CN") },
+                { key: "source", header: "来源", align: "center", render: (r) => <Badge variant="outline">{r.source}</Badge> },
+                { key: "remark", header: "备注", render: (r) => r.remark || "-" },
+              ]}
+              data={data.receipts}
+              keyExtractor={(r) => r.id}
+            />
+          )}
+        </TabsContent>
+
+        {/* Projects tab */}
+        <TabsContent value="projects" className="mt-4">
+          <div className="space-y-4">
+            <LegacyFinanceBanner message="项目相关财务已迁移到订单维度。项目信息仅做参考。" />
+            {data.projects.length === 0 ? (
+              <FinanceEmptyState title="暂无项目" />
+            ) : (
+              <FinanceDataTable
+                columns={[
+                  { key: "name", header: "项目名称" },
+                  { key: "budgetAmount", header: "预算金额", align: "right", render: (p) => <MoneyText value={p.budgetAmount || 0} /> },
+                  { key: "status", header: "状态", align: "center", render: (p) => <Badge variant="outline">{p.status}</Badge> },
+                  { key: "progress", header: "进度", align: "center", render: (p) => `${p.progress}%` },
+                ]}
+                data={data.projects}
+                keyExtractor={(p) => p.id}
+                onRowClick={(p) => router.push(`/projects/${p.id}`)}
+              />
+            )}
           </div>
         </TabsContent>
       </Tabs>

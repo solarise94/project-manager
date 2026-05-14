@@ -1,14 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FinancePageHeader } from "@/components/finance/finance-page-header";
+import { LegacyFinanceBanner } from "@/components/finance/legacy-finance-banner";
+import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
+import { MoneyText } from "@/components/finance/money-text";
+import { FinanceMobileCard } from "@/components/finance/finance-mobile-card";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 export default function InvoiceStatusPage() {
@@ -17,11 +21,14 @@ export default function InvoiceStatusPage() {
   if (status === "loading") return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>;
   if (!session) { router.push("/login"); return null; }
   if (session.user.role === "REPRESENTATIVE") { router.push("/dashboard"); return null; }
-  return <InvoiceContent />;
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+      <InvoiceContent />
+    </Suspense>
+  );
 }
 
 function InvoiceContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const initialType = searchParams.get("type") === "uninvoiced" ? "uninvoiced" : "issued_unpaid";
   const [activeTab, setActiveTab] = useState(initialType);
@@ -42,9 +49,17 @@ function InvoiceContent() {
     },
   });
 
+  const items = data?.items || [];
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">开票与回款状态 (历史口径)</h1>
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+      <FinancePageHeader
+        title="开票与回款状态 (历史口径)"
+        description="历史项目口径数据，仅做参考"
+        backHref="/finance"
+      />
+
+      <LegacyFinanceBanner />
 
       <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); setPage(1); }}>
         <div className="md:hidden">
@@ -67,127 +82,97 @@ function InvoiceContent() {
         <TabsContent value={activeTab} className="mt-4">
           {isLoading ? (
             <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+          ) : items.length === 0 ? (
+            <FinanceEmptyState title="暂无数据" description="历史口径下暂无记录。" />
+          ) : isMobile ? (
+            <div className="md:hidden space-y-3">
+              {items.map((item, i) => (
+                <FinanceMobileCard
+                  key={i}
+                  title={String(item.projectName)}
+                  subtitle={String(item.customerName || "-")}
+                  badge={
+                    activeTab === "issued_unpaid" ? (
+                      <Badge variant="destructive">未到款 <MoneyText value={Number(item.unpaidAmount)} compact /></Badge>
+                    ) : (
+                      <Badge variant="destructive">未开票 <MoneyText value={Number(item.uninvoicedAmount)} compact /></Badge>
+                    )
+                  }
+                  metrics={
+                    activeTab === "issued_unpaid" ? [
+                      { label: "发票", value: <MoneyText value={Number(item.invoiceAmount)} compact /> },
+                      { label: "已到", value: <MoneyText value={Number(item.receivedAmount)} compact /> },
+                    ] : [
+                      { label: "应收", value: <MoneyText value={Number(item.receivableAmount)} compact /> },
+                      { label: "已开", value: <MoneyText value={Number(item.invoicedAmount)} compact /> },
+                    ]
+                  }
+                />
+              ))}
+            </div>
           ) : (
-            <>
-              {isMobile ? (
-                <div className="md:hidden space-y-3">
-                  {(data?.items || []).length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-4 text-center">暂无数据</p>
-                  ) : (data?.items || []).map((item, i) => (
-                    <Card key={i}>
-                      <CardContent className="p-4 space-y-2">
-                        <div className="flex items-center justify-between gap-2 min-w-0">
-                          <span className="text-sm font-medium truncate">{String(item.projectName)}</span>
-                          {activeTab === "issued_unpaid" ? (
-                            <Badge variant="destructive" className="shrink-0 whitespace-nowrap">未到款 {Number(item.unpaidAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</Badge>
-                          ) : (
-                            <Badge variant="destructive" className="shrink-0 whitespace-nowrap">未开票 {Number(item.uninvoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</Badge>
-                          )}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">{String(item.customerName || "-")}</div>
-                        {activeTab === "issued_unpaid" ? (
-                          <>
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="text-muted-foreground">发票 {Number(item.invoiceAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
-                              <span className="text-muted-foreground">已到 {Number(item.receivedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">开票日期: {new Date(String(item.invoiceDate)).toLocaleDateString("zh-CN")}</div>
-                            <div className="text-xs text-muted-foreground mt-1">回款请从订单详情页操作</div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="text-muted-foreground">应收 {Number(item.receivableAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
-                              <span className="text-muted-foreground">已开 {Number(item.invoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</span>
-                            </div>
-                            <div className="text-xs text-muted-foreground">进度 {Number(item.progress)}%</div>
-                            <Button size="sm" variant="outline" className="w-full mt-1" onClick={() => router.push("/orders")}>
-                              查看订单
-                            </Button>
-                          </>
-                        )}
-                      </CardContent>
-                    </Card>
+            <div className="hidden md:block overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr className="border-b text-muted-foreground">
+                    {activeTab === "issued_unpaid" ? (
+                      <>
+                        <th className="text-left py-2.5 px-3">项目</th>
+                        <th className="text-left py-2.5 px-3">客户</th>
+                        <th className="text-right py-2.5 px-3">发票金额</th>
+                        <th className="text-right py-2.5 px-3">已到款</th>
+                        <th className="text-right py-2.5 px-3">未到款</th>
+                        <th className="text-left py-2.5 px-3">开票日期</th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="text-left py-2.5 px-3">项目</th>
+                        <th className="text-left py-2.5 px-3">客户</th>
+                        <th className="text-right py-2.5 px-3">应收额</th>
+                        <th className="text-right py-2.5 px-3">已开票</th>
+                        <th className="text-right py-2.5 px-3">未开票</th>
+                        <th className="text-center py-2.5 px-3">进度</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, i) => (
+                    <tr key={i} className="border-b hover:bg-muted/50">
+                      <td className="py-2.5 px-3 font-medium">{String(item.projectName)}</td>
+                      <td className="py-2.5 px-3 text-muted-foreground">{String(item.customerName || "-")}</td>
+                      {activeTab === "issued_unpaid" ? (
+                        <>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.invoiceAmount)} /></td>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.receivedAmount)} /></td>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.unpaidAmount)} tone="warning" /></td>
+                          <td className="py-2.5 px-3 text-muted-foreground">{new Date(String(item.invoiceDate)).toLocaleDateString("zh-CN")}</td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.receivableAmount)} /></td>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.invoicedAmount)} /></td>
+                          <td className="py-2.5 px-3 text-right"><MoneyText value={Number(item.uninvoicedAmount)} tone="warning" /></td>
+                          <td className="py-2.5 px-3 text-center">{Number(item.progress)}%</td>
+                        </>
+                      )}
+                    </tr>
                   ))}
-                </div>
-              ) : (
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b text-muted-foreground">
-                        {activeTab === "issued_unpaid" ? (
-                          <>
-                            <th className="text-left py-2 px-2">项目</th>
-                            <th className="text-left py-2 px-2">客户</th>
-                            <th className="text-right py-2 px-2">发票金额</th>
-                            <th className="text-right py-2 px-2">已到款</th>
-                            <th className="text-right py-2 px-2">未到款</th>
-                            <th className="text-left py-2 px-2">开票日期</th>
-                            <th className="text-center py-2 px-2">操作</th>
-                          </>
-                        ) : (
-                          <>
-                            <th className="text-left py-2 px-2">项目</th>
-                            <th className="text-left py-2 px-2">客户</th>
-                            <th className="text-right py-2 px-2">应收额</th>
-                            <th className="text-right py-2 px-2">已开票</th>
-                            <th className="text-right py-2 px-2">未开票</th>
-                            <th className="text-center py-2 px-2">进度</th>
-                            <th className="text-center py-2 px-2">操作</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(data?.items || []).length === 0 ? (
-                        <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">暂无数据</td></tr>
-                      ) : (data?.items || []).map((item, i) => (
-                        <tr key={i} className="border-b">
-                          <td className="py-2 px-2 font-medium">{String(item.projectName)}</td>
-                          <td className="py-2 px-2 text-muted-foreground">{String(item.customerName || "-")}</td>
-                          {activeTab === "issued_unpaid" ? (
-                            <>
-                              <td className="py-2 px-2 text-right">{Number(item.invoiceAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-right">{Number(item.receivedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-right text-red-600 font-medium">{Number(item.unpaidAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-muted-foreground">{new Date(String(item.invoiceDate)).toLocaleDateString("zh-CN")}</td>
-                              <td className="py-2 px-2 text-center">
-                                <span className="text-xs text-muted-foreground">请从订单页操作</span>
-                              </td>
-                            </>
-                          ) : (
-                            <>
-                              <td className="py-2 px-2 text-right">{Number(item.receivableAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-right">{Number(item.invoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-right text-red-600 font-medium">{Number(item.uninvoicedAmount).toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</td>
-                              <td className="py-2 px-2 text-center">{Number(item.progress)}%</td>
-                              <td className="py-2 px-2 text-center">
-                                <Button size="sm" variant="outline" onClick={() => router.push("/orders")}>
-                                  查看订单
-                                </Button>
-                              </td>
-                            </>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {data && data.totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <span className="text-sm text-muted-foreground">共 {data.total} 条</span>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</Button>
-                    <Button variant="outline" size="sm" disabled={page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>下一页</Button>
-                  </div>
-                </div>
-              )}
-            </>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data && data.totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <span className="text-sm text-muted-foreground">共 {data.total} 条</span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</Button>
+                <Button variant="outline" size="sm" disabled={page >= data.totalPages} onClick={() => setPage((p) => p + 1)}>下一页</Button>
+              </div>
+            </div>
           )}
         </TabsContent>
       </Tabs>
-
     </div>
   );
 }
