@@ -140,7 +140,9 @@ export async function POST(req: NextRequest) {
 
   let created = 0;
   let updated = 0;
+  let skipped = 0;
 
+  let rowIndex = 0;
   for (const row of rows) {
     const normalizedSource = normalizeOrderSource(row.source);
     const refDate = row.orderAt ?? row.paidAt ?? new Date();
@@ -151,9 +153,20 @@ export async function POST(req: NextRequest) {
         // Dedup check inside retry so concurrent imports see committed records on retry
         const existingSrc = await prisma.orderSourceRecord.findUnique({
           where: { source_externalOrderNo: { source: normalizedSource, externalOrderNo: row.externalOrderNo } },
-          select: { id: true, orderId: true },
+          select: {
+            id: true,
+            orderId: true,
+            order: { select: { deleted: true, mergeTargets: { select: { id: true }, take: 1 } } },
+          },
         });
         if (existingSrc?.orderId) {
+          // Skip merge targets — source records were moved here during merge,
+          // updating would corrupt the consolidated target order.
+          if (existingSrc.order && existingSrc.order.mergeTargets.length > 0) {
+            return "skipped" as const;
+          }
+
+          const isDeleted = existingSrc.order?.deleted;
           const totalAmount = computeOrderAmount(row);
           await prisma.order.update({
             where: { id: existingSrc.orderId },
@@ -168,6 +181,8 @@ export async function POST(req: NextRequest) {
               orderedAt: row.orderAt ?? undefined,
               confirmedAt: row.paidAt ?? undefined,
               title: row.productNamesRaw ?? undefined,
+              // Re-import restores soft-deleted orders only
+              ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
           });
           if (sourceRemark !== undefined) {
@@ -254,12 +269,14 @@ export async function POST(req: NextRequest) {
         return "created" as const;
       });
       if (action === "updated") updated++;
-      else created++;
+      else if (action === "created") created++;
+      else if (action === "skipped") skipped++;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "未知错误";
-      errors.push({ row: rows.indexOf(row) + 2, message: `创建失败: ${msg}` });
+      errors.push({ row: rowIndex + 1, externalOrderNo: row.externalOrderNo, message: `创建失败: ${msg}` });
     }
+    rowIndex++;
   }
 
-  return NextResponse.json({ created, updated, errors, format }, { status: 201 });
+  return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });
 }

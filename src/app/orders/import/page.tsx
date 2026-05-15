@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -9,8 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 
 const DEFAULT_SOURCE = "OTHER_IMPORT";
+const BATCH_SIZE = 20;
 
 const CUSTOMER_MODES = [
   { value: "MATCH_ONLY", label: "仅匹配" },
@@ -48,12 +50,23 @@ function ImportContent() {
   const [customerMode, setCustomerMode] = useState("MATCH_ONLY");
   const [organizationMode, setOrganizationMode] = useState("RESOLVE_ONLY");
 
-  const [step, setStep] = useState<"input" | "preview" | "result">("input");
+  const [step, setStep] = useState<"input" | "preview" | "importing" | "result">("input");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [columnMapping, setColumnMapping] = useState<Record<string, string> | null>(null);
+
+  // Batch import progress state
+  const [progress, setProgress] = useState(0);
+  const [processedRows, setProcessedRows] = useState(0);
+  const [createdCount, setCreatedCount] = useState(0);
+  const [updatedCount, setUpdatedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
+  const [importErrors, setImportErrors] = useState<Array<{ row: number; externalOrderNo?: string; message: string }>>([]);
+  const [currentBatch, setCurrentBatch] = useState(0);
+  const cancelRef = useRef(false);
+  const [importCancelled, setImportCancelled] = useState(false);
 
   if (status === "loading") return <div className="text-muted-foreground">加载中...</div>;
   if (status === "unauthenticated") { router.push("/login"); return null; }
@@ -125,38 +138,109 @@ function ImportContent() {
   };
 
   const handleCommit = async () => {
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
-      let payload: FormData | Record<string, unknown>;
-      if (mode === "file" && file) {
-        const form = new FormData();
-        form.set("source", source);
-        if (sourceRemark) form.set("sourceRemark", sourceRemark);
-        form.set("file", file);
-        form.set("customerMode", customerMode);
-        form.set("organizationMode", organizationMode);
-        if (columnMapping) form.set("columnMapping", JSON.stringify(columnMapping));
-        payload = form;
-      } else {
-        payload = { source: source, rawText, customerMode, organizationMode };
-        if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
-        if (columnMapping) (payload as Record<string, unknown>).columnMapping = columnMapping;
-      }
-      const res = await fetch("/api/orders/import/commit", {
-        method: "POST",
-        ...(isFormData(payload) ? { body: payload } : {
+    // Get full rows from preview response, or fall back to the old single-request path
+    const rows = preview?.rows as Array<Record<string, unknown>> | undefined;
+    if (!rows || rows.length === 0) {
+      setError("预览数据已过期，请返回重新预览");
+      return;
+    }
+
+    setStep("importing");
+    setProgress(0);
+    setProcessedRows(0);
+    setCreatedCount(0);
+    setUpdatedCount(0);
+    setSkippedCount(0);
+    setImportErrors([]);
+    setCurrentBatch(0);
+    cancelRef.current = false;
+
+    const batches: Array<Record<string, unknown>>[] = [];
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      batches.push(rows.slice(i, i + BATCH_SIZE));
+    }
+    const totalBatches = batches.length;
+    const totalRows = rows.length;
+
+    let createdTotal = 0;
+    let updatedTotal = 0;
+    let skippedTotal = 0;
+    const errorsTotal: Array<{ row: number; externalOrderNo?: string; message: string }> = [];
+
+    let cancelled = false;
+    for (let i = 0; i < batches.length; i++) {
+      if (cancelRef.current) { cancelled = true; break; }
+
+      setCurrentBatch(i + 1);
+
+      try {
+        const res = await fetch("/api/orders/import/commit-batch", {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }),
-      });
-      const d = await res.json();
-      if (res.ok) { setResult(d); setStep("result"); }
-      else setError(d.error || "导入失败");
-    } catch (e) {
-      setError(`请求失败: ${e instanceof Error ? e.message : String(e)}`);
-    } finally { setLoading(false); }
+          body: JSON.stringify({
+            source,
+            sourceRemark: sourceRemark || undefined,
+            rows: batches[i],
+            customerMode,
+            organizationMode,
+            batchIndex: i,
+            totalBatches,
+          }),
+        });
+
+        const d = await res.json();
+        if (res.ok) {
+          createdTotal += (d.created as number) || 0;
+          updatedTotal += (d.updated as number) || 0;
+          skippedTotal += (d.skipped as number) || 0;
+          const batchErrors = d.errors as Array<{ row: number; externalOrderNo?: string; message: string }> | undefined;
+          if (batchErrors?.length) {
+            // Offset error row numbers by the batch start position
+            const offset = i * BATCH_SIZE;
+            for (const e of batchErrors) {
+              errorsTotal.push({ ...e, row: e.row + offset });
+            }
+          }
+        } else {
+          // Whole batch failed: mark all rows as errors with correct indices
+          const batchRows = batches[i];
+          for (let j = 0; j < batchRows.length; j++) {
+            errorsTotal.push({
+              row: i * BATCH_SIZE + j + 1,
+              externalOrderNo: batchRows[j].externalOrderNo as string | undefined,
+              message: d.error || "批次导入失败",
+            });
+          }
+        }
+      } catch (e) {
+        const batchRows = batches[i];
+        for (let j = 0; j < batchRows.length; j++) {
+          errorsTotal.push({
+            row: i * BATCH_SIZE + j + 1,
+            externalOrderNo: batchRows[j].externalOrderNo as string | undefined,
+            message: `网络错误: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      }
+
+      setCreatedCount(createdTotal);
+      setUpdatedCount(updatedTotal);
+      setSkippedCount(skippedTotal);
+      setImportErrors([...errorsTotal]);
+      const processed = Math.min((i + 1) * BATCH_SIZE, totalRows);
+      setProcessedRows(processed);
+      setProgress(Math.round((processed / totalRows) * 100));
+    }
+
+    setImportCancelled(cancelled);
+    setResult({
+      created: createdTotal,
+      updated: updatedTotal,
+      skipped: skippedTotal,
+      errors: errorsTotal,
+      totalRows,
+    });
+    setStep("result");
   };
 
   const handleDownloadTemplate = async () => {
@@ -180,6 +264,14 @@ function ImportContent() {
     setAiResult(null);
     setColumnMapping(null);
     setError("");
+    setProgress(0);
+    setProcessedRows(0);
+    setCreatedCount(0);
+    setUpdatedCount(0);
+    setSkippedCount(0);
+    setImportErrors([]);
+    setCurrentBatch(0);
+    cancelRef.current = false;
   };
 
   return (
@@ -347,13 +439,107 @@ function ImportContent() {
         </Card>
       )}
 
+      {step === "importing" && (
+        <Card className="p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-medium">正在导入订单</h2>
+            <Button variant="outline" size="sm" onClick={() => { cancelRef.current = true; }}>
+              取消导入
+            </Button>
+          </div>
+
+          <Progress value={progress}>
+            <ProgressLabel>导入进度</ProgressLabel>
+            <ProgressValue>{() => `${progress}%`}</ProgressValue>
+          </Progress>
+
+          <div className="text-sm text-muted-foreground grid grid-cols-2 gap-2">
+            <div>已处理: <span className="font-medium text-foreground">{processedRows} / {preview?.rowCount as number}</span> 条</div>
+            <div>当前批次: <span className="font-medium text-foreground">{currentBatch} / {Math.ceil((preview?.rowCount as number || 1) / BATCH_SIZE)}</span></div>
+          </div>
+
+          <div className="text-sm grid grid-cols-4 gap-2">
+            <div className="bg-green-50 rounded p-2 text-center">
+              <div className="text-xs text-muted-foreground">新增</div>
+              <div className="font-bold text-green-700 text-lg">{createdCount}</div>
+            </div>
+            <div className="bg-blue-50 rounded p-2 text-center">
+              <div className="text-xs text-muted-foreground">更新</div>
+              <div className="font-bold text-blue-700 text-lg">{updatedCount}</div>
+            </div>
+            <div className="bg-amber-50 rounded p-2 text-center">
+              <div className="text-xs text-muted-foreground">已跳过</div>
+              <div className="font-bold text-amber-700 text-lg">{skippedCount}</div>
+            </div>
+            <div className="bg-red-50 rounded p-2 text-center">
+              <div className="text-xs text-muted-foreground">错误</div>
+              <div className="font-bold text-red-700 text-lg">{importErrors.length}</div>
+            </div>
+          </div>
+
+          {importErrors.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground">错误明细 ({importErrors.length})</summary>
+              <div className="max-h-48 overflow-y-auto space-y-1 mt-2">
+                {importErrors.slice(0, 50).map((e, i) => (
+                  <div key={i} className="text-red-700 bg-red-50 rounded p-1">
+                    #{e.row} {e.externalOrderNo ? `(${e.externalOrderNo})` : ""} — {e.message}
+                  </div>
+                ))}
+                {importErrors.length > 50 && <div className="text-muted-foreground">...还有 {importErrors.length - 50} 条</div>}
+              </div>
+            </details>
+          )}
+        </Card>
+      )}
+
       {step === "result" && result && (
-        <Card className="p-3 text-sm space-y-1 bg-green-50 border-green-200">
-          <div className="font-medium text-green-800">导入完成</div>
-          <div>新增: {(result.created as number) || 0} 条</div>
-          <div>更新: {(result.updated as number) || 0} 条</div>
-          <div>错误: {(result.errors as Array<unknown>)?.length || 0} 条</div>
-          <Button variant="outline" size="sm" className="mt-2" onClick={resetForm}>继续导入</Button>
+        <Card className={`p-4 text-sm space-y-3 border-2 ${importCancelled ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"}`}>
+          <div className={`font-medium text-lg ${importCancelled ? "text-amber-800" : "text-green-800"}`}>
+            {importCancelled ? "导入已取消" : "导入完成"}
+          </div>
+          {importCancelled && (
+            <div className="text-sm text-amber-700">
+              导入在批次 {currentBatch} / {Math.ceil((preview?.rowCount as number || 1) / BATCH_SIZE)} 时被取消。
+              已处理的 {processedRows} 条数据已保存，剩余 {((preview?.rowCount as number) || 0) - processedRows} 条未处理。
+            </div>
+          )}
+          <div className="grid grid-cols-4 gap-3">
+            <div className="bg-white rounded p-2 text-center border">
+              <div className="text-xs text-muted-foreground">总行数</div>
+              <div className="font-bold text-lg">{(result.totalRows as number) || 0}</div>
+            </div>
+            <div className="bg-white rounded p-2 text-center border border-green-200">
+              <div className="text-xs text-muted-foreground">新增</div>
+              <div className="font-bold text-green-700 text-lg">{(result.created as number) || 0}</div>
+            </div>
+            <div className="bg-white rounded p-2 text-center border border-blue-200">
+              <div className="text-xs text-muted-foreground">更新</div>
+              <div className="font-bold text-blue-700 text-lg">{(result.updated as number) || 0}</div>
+            </div>
+            <div className="bg-white rounded p-2 text-center border border-amber-200">
+              <div className="text-xs text-muted-foreground">已跳过</div>
+              <div className="font-bold text-amber-700 text-lg">{(result.skipped as number) || 0}</div>
+            </div>
+          </div>
+          {(result.skipped as number) > 0 && (
+            <div className="text-xs text-amber-700 bg-amber-50 rounded p-2">
+              已跳过 {(result.skipped as number)} 条：这些订单的源记录已通过合并操作归属到另一个订单，重导时自动跳过以避免覆盖合并结果。
+            </div>
+          )}
+          {(result.errors as Array<unknown>)?.length > 0 && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-red-700 font-medium">错误: {(result.errors as Array<unknown>).length} 条</summary>
+              <div className="max-h-48 overflow-y-auto space-y-1 mt-2">
+                {(result.errors as Array<{ row: number; externalOrderNo?: string; message: string }>).slice(0, 20).map((e, i) => (
+                  <div key={i} className="text-red-700 bg-red-50 rounded p-1">
+                    #{e.row} {e.externalOrderNo ? `(${e.externalOrderNo})` : ""} — {e.message}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          <Button variant="outline" size="sm" onClick={resetForm}>继续导入</Button>
         </Card>
       )}
 

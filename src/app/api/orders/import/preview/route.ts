@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     directImportable,
     suggestedMode,
     previewRows,
+    rows,
     errors: errors.slice(0, 20),
     sourceRemark,
   });

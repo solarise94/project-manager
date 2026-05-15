@@ -1,49 +1,59 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource } from "@/lib/orders/constants";
 import { generateImportOrderNo, computeOrderAmount, withRetry } from "@/lib/orders/import-commit";
+import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
+import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
+import type { NormalizedOrderRow } from "@/lib/external-order";
 
-async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string } | { error: string }> {
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("multipart/form-data")) {
-    const form = await req.formData();
-    const source = (form.get("source") as string | null)?.trim();
-    const sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
-    const file = form.get("file") as File | null;
-    if (!source || !file) return { error: "缺少 source 或 file" };
-    const buf = Buffer.from(await file.arrayBuffer());
-    return { source, rawText: decodeImportFile(buf), sourceRemark };
-  }
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body.source !== "string" || typeof body.rawText !== "string") {
-    return { error: "缺少 source 或 rawText" };
-  }
-  const source = body.source.trim();
-  const sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
-  const rawText = body.rawText.trim();
-  if (!source || !rawText) return { error: "source 和 rawText 不能为空" };
-  return { source, rawText, sourceRemark };
+export interface ImportBatchInput {
+  source: string;
+  sourceRemark?: string;
+  rows: NormalizedOrderRow[];
+  userId: string;
+  customerMode?: CustomerMode;
+  organizationMode?: OrganizationMode;
+  ownerUserId?: string | null;
+  createCrmProfile?: boolean;
 }
 
-export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+export interface ImportBatchResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ row: number; externalOrderNo?: string; message: string }>;
+}
+
+export interface ImportRowError {
+  row: number;
+  externalOrderNo?: string;
+  message: string;
+}
+
+export const BATCH_SIZE = 20;
+
+/**
+ * Process a batch of normalized import rows.
+ *
+ * Each row is handled independently with its own dedup check and transaction.
+ * Row-level failures are collected and do not block the rest of the batch.
+ */
+export async function processImportRows(input: ImportBatchInput): Promise<ImportBatchResult> {
+  const {
+    source,
+    sourceRemark,
+    rows,
+    userId,
+    customerMode = "MATCH_ONLY",
+    organizationMode = "RESOLVE_ONLY",
+    ownerUserId = null,
+    createCrmProfile = false,
+  } = input;
+
+  if (rows.length > BATCH_SIZE) {
+    throw new Error(`每批最多 ${BATCH_SIZE} 条，收到 ${rows.length} 条`);
   }
 
-  const input = await extractInput(req);
-  if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 });
-
-  const { source, rawText, sourceRemark } = input;
-  const { rows, errors, format } = parseOrderText(source, rawText);
-  if (rows.length === 0 && errors.length > 0) {
-    return NextResponse.json({ error: errors[0].message, errors, format }, { status: 422 });
-  }
-
+  const errors: ImportRowError[] = [];
   let created = 0;
   let updated = 0;
   let skipped = 0;
@@ -56,7 +66,12 @@ export async function POST(req: NextRequest) {
     try {
       const action = await withRetry(async () => {
         const existingSrc = await prisma.orderSourceRecord.findUnique({
-          where: { source_externalOrderNo: { source: normalizedSource, externalOrderNo: row.externalOrderNo } },
+          where: {
+            source_externalOrderNo: {
+              source: normalizedSource,
+              externalOrderNo: row.externalOrderNo,
+            },
+          },
           select: {
             id: true,
             orderId: true,
@@ -65,6 +80,9 @@ export async function POST(req: NextRequest) {
         });
 
         if (existingSrc?.orderId) {
+          // If the linked order is a merge target (source records were moved here
+          // during a previous merge), skip — updating would corrupt the target order
+          // with the source's original import data.
           if (existingSrc.order && existingSrc.order.mergeTargets.length > 0) {
             return "skipped" as const;
           }
@@ -84,6 +102,7 @@ export async function POST(req: NextRequest) {
               orderedAt: row.orderAt ?? undefined,
               confirmedAt: row.paidAt ?? undefined,
               title: row.productNamesRaw ?? undefined,
+              // Re-import restores soft-deleted orders only
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
           });
@@ -97,6 +116,28 @@ export async function POST(req: NextRequest) {
         }
 
         await prisma.$transaction(async (tx) => {
+          const orgResult = await resolveOrCreateOrganizationForImport(
+            row.storeName,
+            organizationMode,
+            tx,
+          );
+
+          const custInput = {
+            buyerName: row.receiverName,
+            buyerPhone: row.receiverPhone,
+            buyerWechat: row.orderUser,
+            buyerOrgName: row.storeName,
+            buyerAddress: row.receiverAddress,
+          };
+          const custResult = await resolveOrCreateCustomerForImport(
+            custInput,
+            customerMode,
+            orgResult.organizationId,
+            ownerUserId,
+            createCrmProfile,
+            tx,
+          );
+
           const totalAmount = computeOrderAmount(row);
           const orderNo = await generateImportOrderNo(tx, refDate);
           const rawJson = JSON.stringify(row);
@@ -109,7 +150,7 @@ export async function POST(req: NextRequest) {
               sourceRemark,
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
-              title: row.productNamesRaw || `${row.receiverName || "未知"}的平台订单`,
+              title: row.productNamesRaw || `${row.receiverName || "未知"}的订单`,
               category: "UNKNOWN",
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
@@ -122,7 +163,11 @@ export async function POST(req: NextRequest) {
               buyerWechatSnapshot: row.orderUser,
               buyerOrgNameSnapshot: row.storeName,
               totalAmount,
-              createdById: session.user.id,
+              customerId: custResult.customerId,
+              customerMatchStatus: custResult.matchStatus,
+              customerMatchScore: custResult.matchScore,
+              customerMatchReason: custResult.matchReason,
+              createdById: userId,
             },
           });
 
@@ -138,7 +183,7 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          const itemName = row.productNamesRaw || row.externalOrderNo || "平台订单";
+          const itemName = row.productNamesRaw || row.externalOrderNo || "导入订单";
           await tx.orderLine.create({
             data: {
               orderId: order.id,
@@ -157,9 +202,13 @@ export async function POST(req: NextRequest) {
       else if (action === "skipped") skipped++;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "未知错误";
-      errors.push({ row: i + 1, externalOrderNo: row.externalOrderNo, message: `创建失败: ${msg}` });
+      errors.push({
+        row: i + 1,
+        externalOrderNo: row.externalOrderNo,
+        message: `创建失败: ${msg}`,
+      });
     }
   }
 
-  return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });
+  return { created, updated, skipped, errors };
 }
