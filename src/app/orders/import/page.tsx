@@ -28,7 +28,7 @@ const ORG_MODES = [
 
 export default function OrderImportPage() {
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
       <Suspense fallback={<div className="text-muted-foreground">加载中...</div>}>
         <ImportContent />
       </Suspense>

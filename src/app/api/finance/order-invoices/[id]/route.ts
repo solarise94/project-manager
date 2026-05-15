@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { syncOrderInvoiceStatus } from "@/lib/external-order";
+import { findBlockingInvoicesForOrder } from "@/lib/finance/order-invoices";
+import { resolveInvoiceTouchedOrderIds, assertOrderInvoiceReadable } from "@/lib/finance/order-invoice-access";
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   DRAFT: ["REQUESTED", "CANCELLED"],
@@ -27,6 +29,70 @@ async function syncAllCoveredOrders(invoiceId: string) {
     // Always sync new path for OrderInvoiceCoverage
     await syncOrderInvoiceStatus(prisma, cov.orderId, cov.orderId);
   }
+}
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.user.role !== "ADMIN" && session.user.role !== "USER" && session.user.role !== "REGIONAL_MANAGER") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+
+  const invoice = await prisma.externalOrderInvoiceRequest.findUnique({
+    where: { id },
+    include: {
+      items: { orderBy: { sortOrder: "asc" } },
+      createdBy: { select: { id: true, name: true } },
+      order: { select: { id: true, orderNo: true, customerId: true } },
+      externalOrder: { select: { id: true, externalOrderNo: true } },
+      orderCoverage: { include: { order: { select: { id: true, orderNo: true } } } },
+      coverage: { include: { externalOrder: { select: { id: true, externalOrderNo: true } } } },
+      documents: { include: { uploadedBy: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } },
+      receipts: { select: { id: true, amount: true, receivedAt: true } },
+    },
+  });
+
+  if (!invoice) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Scope check: verify user can access at least one order linked to this invoice
+  try {
+    await assertOrderInvoiceReadable(id, session.user.id, session.user.role);
+  } catch (err: unknown) {
+    const e = err as { status: number; body: Record<string, unknown> };
+    return NextResponse.json(e.body, { status: e.status });
+  }
+
+  // Check if any covered order has other blocking invoices (for "duplicate" warnings)
+  const otherBlockers: Array<{ orderId: string; orderNo: string; invoices: Awaited<ReturnType<typeof findBlockingInvoicesForOrder>> }> = [];
+  const touchedOrderIds = await resolveInvoiceTouchedOrderIds(id);
+  for (const oid of touchedOrderIds) {
+    const blockers = await findBlockingInvoicesForOrder(oid);
+    const other = blockers.filter((b) => b.id !== id);
+    if (other.length > 0) {
+      const o = await prisma.order.findUnique({ where: { id: oid }, select: { orderNo: true } });
+      if (o) otherBlockers.push({ orderId: oid, orderNo: o.orderNo, invoices: other });
+    }
+  }
+
+  return NextResponse.json({
+    invoice: {
+      ...invoice,
+      createdAt: invoice.createdAt.toISOString(),
+      updatedAt: invoice.updatedAt.toISOString(),
+      actualIssuedAt: invoice.actualIssuedAt?.toISOString() ?? null,
+      receipts: invoice.receipts.map((r) => ({
+        ...r,
+        receivedAt: r.receivedAt?.toISOString() ?? null,
+      })),
+      documents: invoice.documents.map((d) => ({
+        ...d,
+        createdAt: d.createdAt.toISOString(),
+      })),
+    },
+    otherBlockers,
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

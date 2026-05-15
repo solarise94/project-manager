@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isFinanceBlocked, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
-import { getOrderScopeWhere } from "@/lib/orders/permissions";
+import { assertOrderInvoiceReadable } from "@/lib/finance/order-invoice-access";
 import fs from "fs/promises";
 import path from "path";
 
@@ -44,57 +44,12 @@ async function checkInvoiceAccess(
   }
 
   if (externalOrderInvoiceRequestId) {
-    // Must match at least one of: direct orderId, OrderInvoiceCoverage, or legacy externalOrderId
-    const orderScope = await getOrderScopeWhere(userId, role);
-    if (!orderScope) { /* would only happen for sentinel role, but keep safe */ }
-
-    const inv = await prisma.externalOrderInvoiceRequest.findUnique({
-      where: { id: externalOrderInvoiceRequestId },
-      select: {
-        orderId: true,
-        externalOrderId: true,
-        orderCoverage: { select: { orderId: true } },
-      },
-    });
-    if (!inv) return false;
-
-    // Collect all order IDs this invoice touches
-    const touchedOrderIds = [
-      ...(inv.orderId ? [inv.orderId] : []),
-      ...inv.orderCoverage.map((c) => c.orderId),
-    ];
-    const legacyExtIds = inv.externalOrderId ? [inv.externalOrderId] : [];
-
-    // If no order links at all and no legacy ID, deny (orphan invoice)
-    if (touchedOrderIds.length === 0 && legacyExtIds.length === 0) return false;
-
-    // Check scoped access through Order model
-    if (orderScope && touchedOrderIds.length > 0) {
-      const scopedCount = await prisma.order.count({
-        where: { AND: [{ id: { in: touchedOrderIds } }, orderScope] },
-      });
-      if (scopedCount > 0) return true;
+    try {
+      await assertOrderInvoiceReadable(externalOrderInvoiceRequestId, userId, role);
+      return true;
+    } catch {
+      return false;
     }
-
-    // Check legacy external order access — match the order-invoices list API pattern:
-    // resolve scoped orders → collect their legacyExternalOrderIds → check against those
-    if (legacyExtIds.length > 0 && orderScope) {
-      const scopedOrderIds = await prisma.order.findMany({
-        where: orderScope,
-        select: { id: true },
-      }).then((rows) => rows.map((r) => r.id));
-
-      if (scopedOrderIds.length > 0) {
-        const scopedLegacyIds = await prisma.order.findMany({
-          where: { id: { in: scopedOrderIds }, legacyExternalOrderId: { not: null } },
-          select: { legacyExternalOrderId: true },
-        }).then((rows) => rows.map((r) => r.legacyExternalOrderId!).filter(Boolean));
-
-        if (legacyExtIds.some((id) => scopedLegacyIds.includes(id))) return true;
-      }
-    }
-
-    return false;
   }
 
   return false;
@@ -173,6 +128,36 @@ export async function POST(req: NextRequest) {
   );
   if (!hasAccess) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  // Status gate: only REQUESTED (or ISSUED without documents) can accept uploads
+  let invoiceStatus: string | null = null;
+  if (externalOrderInvoiceRequestId) {
+    const invoice = await prisma.externalOrderInvoiceRequest.findUnique({
+      where: { id: externalOrderInvoiceRequestId },
+      select: {
+        status: true,
+        adjustmentsAsOriginal: { select: { kind: true } },
+        _count: { select: { documents: true } },
+      },
+    });
+    if (!invoice) return NextResponse.json({ error: "发票不存在" }, { status: 404 });
+    invoiceStatus = invoice.status;
+    if (invoice.status === "DRAFT") {
+      return NextResponse.json({ error: "草稿状态的发票不能登记已开票，请先提交" }, { status: 400 });
+    }
+    if (invoice.status === "CANCELLED") {
+      return NextResponse.json({ error: "已取消的发票不能登记已开票" }, { status: 400 });
+    }
+    if (invoice.adjustmentsAsOriginal.some((a) => a.kind === "RED")) {
+      return NextResponse.json({ error: "已冲红的发票不能登记附件" }, { status: 400 });
+    }
+    if (invoice.status === "ISSUED" && invoice._count.documents > 0) {
+      return NextResponse.json({ error: "该发票已登记过附件" }, { status: 400 });
+    }
+    if (invoice.status !== "REQUESTED" && invoice.status !== "ISSUED") {
+      return NextResponse.json({ error: "只有待开票状态的发票才能登记已开票" }, { status: 400 });
+    }
+  }
+
   const invoiceId = projectInvoiceId || externalOrderInvoiceRequestId!;
   const invoiceType = projectInvoiceId ? "project" : "order";
   const uploadDir = path.join(process.cwd(), "public/uploads/invoices", invoiceType, invoiceId);
@@ -206,8 +191,7 @@ export async function POST(req: NextRequest) {
   if (actualIssuedAt) updateData.actualIssuedAt = new Date(actualIssuedAt);
 
   if (externalOrderInvoiceRequestId) {
-    const invoice = await prisma.externalOrderInvoiceRequest.findUnique({ where: { id: externalOrderInvoiceRequestId }, select: { status: true } });
-    if (invoice?.status === "REQUESTED") updateData.status = "ISSUED";
+    if (invoiceStatus === "REQUESTED") updateData.status = "ISSUED";
     if (Object.keys(updateData).length > 0) {
       await prisma.externalOrderInvoiceRequest.update({ where: { id: externalOrderInvoiceRequestId }, data: updateData });
     }

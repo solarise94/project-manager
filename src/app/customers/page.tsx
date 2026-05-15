@@ -258,7 +258,7 @@ export default function CustomersPage() {
                       <Link href="/crm/customers" onClick={(e) => e.stopPropagation()}>
                         <Button variant="outline" size="sm">
                           <ExternalLink className="h-3 w-3 mr-1" />
-                          去 CRM 客户池
+                          去客户档案库
                         </Button>
                       </Link>
                     ) : null}
@@ -368,7 +368,7 @@ export default function CustomersPage() {
                         <Link href="/crm/customers">
                           <Button variant="outline" size="sm">
                             <ExternalLink className="h-3 w-3 mr-1" />
-                            去 CRM 客户池
+                            去客户档案库
                           </Button>
                         </Link>
                       ) : null}

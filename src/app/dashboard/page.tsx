@@ -77,8 +77,8 @@ function getWorkbenchGroups(role: string | undefined): WorkbenchGroup[] {
   groups.push({
     title: "CRM 增长",
     items: [
-      { label: "CRM 客户池", href: "/crm/customers", icon: Users, description: "管理客户销售档案" },
-      { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: role === "REPRESENTATIVE" ? "提交或查看客户准入申请" : "处理新客户申请" },
+      { label: "客户档案库", href: "/crm/customers", icon: Users, description: "管理客户销售档案" },
+      { label: "客户申请", href: "/crm/customer-applications", icon: UserPlus, description: role === "REPRESENTATIVE" ? "提交或查看客户准入申请" : "客户申请与主管复核" },
       { label: "跟进任务", href: "/crm/follow-ups", icon: ClipboardList, description: "待办跟进任务" },
     ],
   });

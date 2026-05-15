@@ -7,7 +7,6 @@ import {
   FolderKanban,
   FileText,
   Banknote,
-  CreditCard,
   Loader2,
   Users,
   Link2,
@@ -19,6 +18,7 @@ import {
   History,
   Upload,
   AlertCircle,
+  CreditCard,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -102,18 +102,6 @@ function FinanceDashboard() {
               导入订单
             </Button>
           </Link>
-          <Link href="/finance/order-receivables">
-            <Button size="sm" variant="outline">
-              <CreditCard className="h-4 w-4 mr-1" />
-              订单应收
-            </Button>
-          </Link>
-          <Link href="/finance/invoices">
-            <Button size="sm" variant="outline">
-              <FileText className="h-4 w-4 mr-1" />
-              发票工作台
-            </Button>
-          </Link>
         </div>
       </div>
 
@@ -169,10 +157,10 @@ function FinanceDashboard() {
         />
       </div>
 
-      {/* Pending queues */}
+      {/* Pending queues — compact status cards */}
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-muted-foreground">
-          待处理事项
+          待处理队列
         </h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           <Link href="/finance/order-matching?tab=unmatched">
@@ -182,9 +170,9 @@ function FinanceDashboard() {
                   <div>
                     <p className="font-medium">待匹配订单</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      未匹配{" "}
+                      {summary?.unmatchedOrderCount ?? 0} 笔 ·{" "}
                       <MoneyText
-                        value={summary?.unmatchedOnlineOrderAmount ?? 0}
+                        value={summary?.unmatchedOrderAmount ?? 0}
                         compact
                       />
                     </p>
@@ -195,14 +183,18 @@ function FinanceDashboard() {
             </Card>
           </Link>
 
-          <Link href="/finance/order-receivables">
+          <Link href="/finance/order-receivables?view=uninvoiced">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-blue-500">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">待申请开票</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      查看未开票订单
+                      {summary?.uninvoicedOrderCount ?? 0} 笔 ·{" "}
+                      <MoneyText
+                        value={summary?.uninvoicedOrderAmount ?? 0}
+                        compact
+                      />
                     </p>
                   </div>
                   <FileText className="h-6 w-6 text-muted-foreground" />
@@ -211,14 +203,18 @@ function FinanceDashboard() {
             </Card>
           </Link>
 
-          <Link href="/finance/order-receivables">
+          <Link href="/finance/order-receivables?view=invoiced_unpaid">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer border-l-4 border-l-red-500">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">已开票未回款</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      跟踪未到账款项
+                      {summary?.invoicedUnpaidOrderCount ?? 0} 笔 ·{" "}
+                      <MoneyText
+                        value={summary?.invoicedUnpaidOrderAmount ?? 0}
+                        compact
+                      />
                     </p>
                   </div>
                   <AlertCircle className="h-6 w-6 text-muted-foreground" />
@@ -238,7 +234,7 @@ function FinanceDashboard() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">订单应收与回款</p>
+                    <p className="font-medium">应收回款工作台</p>
                     <p className="text-sm text-muted-foreground mt-1">
                       订单维度：金额、开票、回款、未回款
                     </p>
@@ -254,33 +250,12 @@ function FinanceDashboard() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium">订单发票工作台</p>
+                    <p className="font-medium">发票工作台</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      订单开票、合并开票、发票上传、状态跟踪
+                      查看发票申请、开票状态、真实发票与附件
                     </p>
                   </div>
                   <FileText className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/finance/order-matching">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">订单匹配与开票辅助</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      未匹配{" "}
-                      <MoneyText
-                        value={summary?.unmatchedOnlineOrderAmount ?? 0}
-                        compact
-                      />{" "}
-                      · 扫描绑定客户
-                    </p>
-                  </div>
-                  <Link2 className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </CardContent>
             </Card>
@@ -320,12 +295,12 @@ function FinanceDashboard() {
         </div>
       </div>
 
-      {/* Secondary entries */}
+      {/* Query tools — lower contrast */}
       <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">查询</h2>
+        <h2 className="text-sm font-medium text-muted-foreground">查询工具</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <Link href="/finance/invoice-receipt-detail">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group bg-muted/20">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -334,14 +309,14 @@ function FinanceDashboard() {
                       发票与回款流水查询
                     </p>
                   </div>
-                  <Banknote className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
+                  <Banknote className="h-8 w-8 text-muted-foreground/60 group-hover:text-muted-foreground transition-colors" />
                 </div>
               </CardContent>
             </Card>
           </Link>
 
           <Link href="/finance/progress-receivables">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group bg-muted/20">
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -359,51 +334,7 @@ function FinanceDashboard() {
                       />
                     </p>
                   </div>
-                  <Calendar className="h-8 w-8 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
-      </div>
-
-      {/* Legacy / Archive */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          历史归档 (只读)
-        </h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Link href="/finance/project-invoices">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed border-muted-foreground/30 bg-muted/10">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-muted-foreground">
-                      历史项目发票
-                    </p>
-                    <p className="text-sm text-muted-foreground/70 mt-1">
-                      仅查看历史项目发票，不再新建
-                    </p>
-                  </div>
-                  <History className="h-8 w-8 text-muted-foreground/50" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-
-          <Link href="/finance/invoice-status?type=issued_unpaid">
-            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed border-muted-foreground/30 bg-muted/10">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-muted-foreground">
-                      已开票未回款 (旧)
-                    </p>
-                    <p className="text-sm text-muted-foreground/70 mt-1">
-                      历史口径，请用订单应收与回款
-                    </p>
-                  </div>
-                  <History className="h-8 w-8 text-muted-foreground/50" />
+                  <Calendar className="h-8 w-8 text-muted-foreground/60 group-hover:text-muted-foreground transition-colors" />
                 </div>
               </CardContent>
             </Card>
@@ -449,6 +380,50 @@ function FinanceDashboard() {
           </div>
         </div>
       )}
+
+      {/* Legacy / Archive — always last */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          历史归档 (只读)
+        </h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Link href="/finance/project-invoices">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed border-muted-foreground/30 bg-muted/10">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-muted-foreground">
+                      历史项目发票
+                    </p>
+                    <p className="text-sm text-muted-foreground/70 mt-1">
+                      仅查看历史项目发票，不再新建
+                    </p>
+                  </div>
+                  <History className="h-8 w-8 text-muted-foreground/50" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link href="/finance/invoice-status?type=issued_unpaid">
+            <Card className="hover:bg-muted/50 transition-colors cursor-pointer group border-dashed border-muted-foreground/30 bg-muted/10">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-muted-foreground">
+                      已开票未回款 (旧)
+                    </p>
+                    <p className="text-sm text-muted-foreground/70 mt-1">
+                      历史口径，请用应收回款工作台
+                    </p>
+                  </div>
+                  <History className="h-8 w-8 text-muted-foreground/50" />
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

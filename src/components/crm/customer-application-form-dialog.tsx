@@ -477,7 +477,7 @@ export function CustomerApplicationFormDialog() {
                     setForm({ ...emptyForm });
                   }}
                 >
-                  取消，去客户池查看
+                  取消，去客户档案库查看
                 </Button>
                 <Button
                   type="button"

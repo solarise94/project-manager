@@ -63,6 +63,7 @@ model User {
   orderMergesCreated           OrderMerge[]                  @relation("OrderMergeCreated")
   orderImportBatches           OrderImportBatch[]            @relation("OrderImportBatchCreatedBy")
   invoiceDocumentsUploaded     InvoiceDocument[]             @relation("InvoiceDocumentsUploadedBy")
+  invoiceAdjustmentsCreated    InvoiceAdjustment[]           @relation("InvoiceAdjustmentCreatedBy")
   advancesCreated              FinanceAdvance[]              @relation("FinanceAdvanceCreatedBy")
   advanceRefundsCreated        FinanceAdvanceRefund[]        @relation("FinanceAdvanceRefundCreatedBy")
 }
@@ -601,8 +602,28 @@ model ExternalOrderInvoiceRequest {
   coverage              ExternalOrderInvoiceCoverage[]
   orderCoverage         OrderInvoiceCoverage[]
   documents             InvoiceDocument[]
+  adjustmentsAsOriginal InvoiceAdjustment[]       @relation("OriginalInvoice")
+  adjustmentsAsNew      InvoiceAdjustment[]       @relation("NewInvoice")
 
   @@index([externalOrderId])
+}
+
+model InvoiceAdjustment {
+  id                String                      @id @default(cuid())
+  kind              String                      // RED | REISSUE
+  reason            String?
+  originalInvoice   ExternalOrderInvoiceRequest @relation("OriginalInvoice", fields: [originalInvoiceId], references: [id], onDelete: Cascade)
+  originalInvoiceId String
+  newInvoice        ExternalOrderInvoiceRequest? @relation("NewInvoice", fields: [newInvoiceId], references: [id], onDelete: SetNull)
+  newInvoiceId      String?
+  createdBy         User                        @relation("InvoiceAdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdById       String
+  createdAt         DateTime                    @default(now())
+
+  @@unique([originalInvoiceId])
+  @@index([originalInvoiceId])
+  @@index([newInvoiceId])
+  @@index([createdById])
 }
 
 model ExternalOrderInvoiceItem {
@@ -1296,9 +1317,27 @@ model CrmRepresentativeReportDraft {
   updatedByUser    User?          @relation("ReportDraftUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
+  lines            CrmRepresentativeReportLine[]
 
   @@unique([representativeId, periodType, periodKey])
   @@index([periodType, periodKey])
+}
+
+model CrmRepresentativeReportLine {
+  id            String   @id @default(cuid())
+  reportDraftId String
+  reportDraft   CrmRepresentativeReportDraft @relation(fields: [reportDraftId], references: [id], onDelete: Cascade)
+  customerId    String
+  customerName  String   @default("")
+  organization  String?
+  demand        String   @default("")
+  note          String   @default("")
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([reportDraftId, sortOrder])
+  @@index([customerId])
 }
 
 model CrmCustomerAssignmentLog {

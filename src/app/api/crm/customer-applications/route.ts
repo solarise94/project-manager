@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const status = searchParams.get("status") || "";
   const review = searchParams.get("review") || "";
+  const view = searchParams.get("view") || "";
 
   const where: Record<string, unknown> = {};
 
@@ -57,6 +58,15 @@ export async function GET(req: NextRequest) {
 
   if (status) where.status = status;
   if (review === "PENDING") {
+    where.status = "APPROVED";
+    where.OR = [
+      { supervisorReviewStatus: "PENDING" },
+      { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
+    ];
+  }
+  if (view === "pending") {
+    where.status = "PENDING";
+  } else if (view === "review") {
     where.status = "APPROVED";
     where.OR = [
       { supervisorReviewStatus: "PENDING" },

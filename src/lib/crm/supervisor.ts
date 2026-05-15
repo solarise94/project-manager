@@ -138,7 +138,7 @@ export async function notifyApplicationSupervisors(
           type: "CRM_SUPERVISOR_REVIEW",
           title: "客户申请待复核",
           content: `${application.name}（${application.organization || "-"}）提交了客户申请，原因：${reasonLabel}`,
-          link: `/crm/customer-applications?review=PENDING`,
+          link: `/crm/customer-applications?view=review`,
           dedupeKey: `crm-supervisor-review:${applicationId}:${supervisor.id}`,
         },
       });

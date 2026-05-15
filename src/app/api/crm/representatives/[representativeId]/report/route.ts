@@ -23,6 +23,36 @@ function fmtDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** Shared permission checker for read access */
+async function assertReportReadable(session: { user: { id: string; role: string } }, representativeId: string) {
+  const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
+  if (!rep) return { ok: false, status: 404, error: "Representative not found" } as const;
+
+  if (session.user.role === "REPRESENTATIVE") {
+    const linkedUser = await prisma.user.findFirst({
+      where: { email: rep.email, id: session.user.id },
+    });
+    if (!linkedUser) return { ok: false, status: 403, error: "Forbidden" } as const;
+  } else if (isRegionalManagerRole(session.user.role)) {
+    const manager = await prisma.crmRegionManager.findUnique({
+      where: { userId: session.user.id, archived: false },
+      include: { reps: { where: { representativeId }, select: { id: true } } },
+    });
+    if (!manager || manager.reps.length === 0) {
+      return { ok: false, status: 403, error: "Forbidden" } as const;
+    }
+  } else if (session.user.role !== "ADMIN") {
+    return { ok: false, status: 403, error: "Forbidden" } as const;
+  }
+  return { ok: true, rep } as const;
+}
+
+/** Get linked userId for a representative */
+async function getLinkedUserId(repEmail: string) {
+  const user = await prisma.user.findFirst({ where: { email: repEmail }, select: { id: true } });
+  return user?.id ?? null;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ representativeId: string }> }
@@ -31,36 +61,14 @@ export async function GET(
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { representativeId } = await params;
-  const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
-  if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
-
-  // Permission: ADMIN/USER/REGIONAL_MANAGER can view any; REPRESENTATIVE only self
-  if (session.user.role === "REPRESENTATIVE") {
-    const linkedUser = await prisma.user.findFirst({
-      where: { email: rep.email, id: session.user.id },
-    });
-    if (!linkedUser) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (isRegionalManagerRole(session.user.role)) {
-    const manager = await prisma.crmRegionManager.findUnique({
-      where: { userId: session.user.id, archived: false },
-      include: { reps: { where: { representativeId }, select: { id: true } } },
-    });
-    if (!manager || manager.reps.length === 0) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
+  const perm = await assertReportReadable(session, representativeId);
+  if (!perm.ok) return NextResponse.json({ error: perm.error }, { status: perm.status });
+  const rep = perm.rep;
 
   const { start: periodStart, end: periodEnd } = getWeekWindow();
   const periodKey = fmtDate(periodStart);
 
-  // Find linked user
-  const linkedUser = await prisma.user.findFirst({
-    where: { email: rep.email },
-    select: { id: true },
-  });
-  const userId = linkedUser?.id;
+  const userId = await getLinkedUserId(rep.email);
 
   if (!userId) {
     return NextResponse.json({
@@ -69,6 +77,7 @@ export async function GET(
       periodEnd: periodEnd.toISOString(),
       summary: { visitCheckinCount: 0, newCustomerCount: 0, reservedOrderCount: 0, communicatedCustomerCount: 0 },
       customers: [],
+      lines: [],
       draftNote: null,
     });
   }
@@ -263,7 +272,7 @@ export async function GET(
     };
   });
 
-  // Draft note
+  // Draft with lines
   const draft = await prisma.crmRepresentativeReportDraft.findUnique({
     where: {
       representativeId_periodType_periodKey: {
@@ -272,7 +281,87 @@ export async function GET(
         periodKey,
       },
     },
-    select: { note: true },
+    include: {
+      lines: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+
+  // Check which line customers still exist
+  const lineCustomerIds = draft?.lines.map((l) => l.customerId) ?? [];
+  const existingCustomers = lineCustomerIds.length > 0
+    ? await prisma.customer.findMany({
+        where: { id: { in: lineCustomerIds } },
+        select: { id: true },
+      })
+    : [];
+  const existingCustomerIds = new Set(existingCustomers.map((c) => c.id));
+
+  // Supplement detail queries for line customers not in this week's active list
+  const extraCustomerIds = lineCustomerIds.filter((id) => !allCustomerIds.includes(id));
+  if (extraCustomerIds.length > 0) {
+    const extraProfiles = await prisma.crmCustomerProfile.findMany({
+      where: { sourceCustomerId: { in: extraCustomerIds } },
+      include: {
+        sourceCustomer: {
+          select: { id: true, name: true, customerCode: true, organization: true },
+        },
+      },
+    });
+    for (const p of extraProfiles) {
+      profileMap.set(p.sourceCustomerId, p);
+    }
+
+    const extraVisitCounts = await Promise.all(
+      extraCustomerIds.map(async (cid) => {
+        const count = await prisma.crmVisitCheckin.count({
+          where: {
+            userId,
+            status: "COMPLETED",
+            createdAt: { gte: periodStart, lt: periodEnd },
+            profile: { sourceCustomerId: cid },
+          },
+        });
+        return { customerId: cid, count };
+      })
+    );
+    for (const v of extraVisitCounts) {
+      visitCountMap.set(v.customerId, v.count);
+    }
+
+    const extraLastVisits = await Promise.all(
+      extraCustomerIds.map(async (cid) => {
+        const v = await prisma.crmVisitCheckin.findFirst({
+          where: { userId, status: "COMPLETED", profile: { sourceCustomerId: cid } },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        });
+        return { customerId: cid, lastVisitAt: v?.createdAt?.toISOString() ?? null };
+      })
+    );
+    for (const v of extraLastVisits) {
+      lastVisitMap.set(v.customerId, v.lastVisitAt);
+    }
+  }
+
+  const lines = (draft?.lines ?? []).map((l) => {
+    const profile = profileMap.get(l.customerId);
+    const sc = profile?.sourceCustomer;
+    return {
+      id: l.id,
+      customerId: l.customerId,
+      customerName: l.customerName,
+      customerCode: sc?.customerCode || "",
+      organization: l.organization,
+      demand: l.demand,
+      note: l.note,
+      sortOrder: l.sortOrder,
+      customerExists: existingCustomerIds.has(l.customerId),
+      stage: profile?.stage || "",
+      importance: profile?.importance || "",
+      weeklyVisitCount: visitCountMap.get(l.customerId) || 0,
+      lastVisitAt: lastVisitMap.get(l.customerId) || null,
+      hasOrderThisWeek: orderCustomerIds.includes(l.customerId),
+    };
   });
 
   return NextResponse.json({
@@ -281,7 +370,8 @@ export async function GET(
     periodEnd: periodEnd.toISOString(),
     summary: { visitCheckinCount, newCustomerCount, reservedOrderCount, communicatedCustomerCount: communicatedCount },
     customers,
-    draftNote: draft?.note || null,
+    lines,
+    draftNote: draft?.note ?? null,
   });
 }
 
@@ -296,49 +386,155 @@ export async function PATCH(
   const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
   if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
 
-  // Only the rep themselves (or ADMIN) can save draft
-  if (session.user.role === "REPRESENTATIVE") {
-    const linkedUser = await prisma.user.findFirst({
-      where: { email: rep.email, id: session.user.id },
-    });
-    if (!linkedUser) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (session.user.role !== "ADMIN") {
+  // Write permission: only the rep themselves
+  if (session.user.role !== "REPRESENTATIVE") {
+    return NextResponse.json({ error: "Forbidden: only representative can edit their own report" }, { status: 403 });
+  }
+  const linkedUser = await prisma.user.findFirst({
+    where: { email: rep.email, id: session.user.id },
+  });
+  if (!linkedUser) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await req.json();
-  const { periodType, periodKey, note } = body;
+  const { periodType, periodKey, note, lines: rawLines } = body;
 
   if (!periodType || !periodKey) {
     return NextResponse.json({ error: "periodType and periodKey are required" }, { status: 400 });
   }
 
-  const draft = await prisma.crmRepresentativeReportDraft.upsert({
-    where: {
-      representativeId_periodType_periodKey: {
+  // Validate lines if provided
+  let normalizedLines: Array<{
+    customerId: string;
+    customerName: string;
+    organization: string | null;
+    demand: string;
+    note: string;
+  }> | undefined;
+
+  if (rawLines !== undefined) {
+    if (!Array.isArray(rawLines)) {
+      return NextResponse.json({ error: "lines must be an array" }, { status: 400 });
+    }
+    if (rawLines.length > 50) {
+      return NextResponse.json({ error: "lines exceeds maximum of 50" }, { status: 400 });
+    }
+
+    const MAX_LEN = 2000;
+    for (let i = 0; i < rawLines.length; i++) {
+      const l = rawLines[i];
+      if (!l || typeof l !== "object") {
+        return NextResponse.json({ error: `lines[${i}] is not an object` }, { status: 400 });
+      }
+      if (!l.customerId || typeof l.customerId !== "string") {
+        return NextResponse.json({ error: `lines[${i}].customerId is required` }, { status: 400 });
+      }
+      if (typeof l.customerName !== "string" || l.customerName.length > MAX_LEN) {
+        return NextResponse.json({ error: `lines[${i}].customerName too long` }, { status: 400 });
+      }
+      if (l.organization && typeof l.organization !== "string") {
+        return NextResponse.json({ error: `lines[${i}].organization must be a string` }, { status: 400 });
+      }
+      if (typeof l.demand !== "string" || l.demand.length > MAX_LEN) {
+        return NextResponse.json({ error: `lines[${i}].demand too long` }, { status: 400 });
+      }
+      if (typeof l.note !== "string" || l.note.length > MAX_LEN) {
+        return NextResponse.json({ error: `lines[${i}].note too long` }, { status: 400 });
+      }
+    }
+
+    normalizedLines = rawLines.map((l: Record<string, unknown>) => ({
+      customerId: String(l.customerId),
+      customerName: String(l.customerName || "").slice(0, MAX_LEN),
+      organization: l.organization ? String(l.organization).slice(0, MAX_LEN) : null,
+      demand: String(l.demand || "").slice(0, MAX_LEN),
+      note: String(l.note || "").slice(0, MAX_LEN),
+    }));
+
+    // Ownership validation: each customerId must belong to this rep
+    const customerIds = normalizedLines.map((l) => l.customerId);
+    if (customerIds.length > 0) {
+      const profiles = await prisma.crmCustomerProfile.findMany({
+        where: { sourceCustomerId: { in: customerIds } },
+        select: { sourceCustomerId: true, ownerUserId: true },
+      });
+      const profileOwnerMap = new Map(profiles.map((p) => [p.sourceCustomerId, p.ownerUserId]));
+      for (let i = 0; i < customerIds.length; i++) {
+        const ownerId = profileOwnerMap.get(customerIds[i]);
+        if (ownerId !== linkedUser.id) {
+          return NextResponse.json(
+            { error: `lines[${i}].customerId does not belong to you` },
+            { status: 403 }
+          );
+        }
+      }
+    }
+  }
+
+  // Transactional save
+  const result = await prisma.$transaction(async (tx) => {
+    const draft = await tx.crmRepresentativeReportDraft.upsert({
+      where: {
+        representativeId_periodType_periodKey: {
+          representativeId,
+          periodType,
+          periodKey,
+        },
+      },
+      create: {
         representativeId,
         periodType,
         periodKey,
+        note: note !== undefined ? (note?.trim() || "") : "",
+        createdByUserId: session.user.id,
       },
-    },
-    create: {
-      representativeId,
-      periodType,
-      periodKey,
-      note: note?.trim() || "",
-      createdByUserId: session.user.id,
-    },
-    update: {
-      note: note?.trim() || "",
-      updatedByUserId: session.user.id,
-    },
+      update: {
+        ...(note !== undefined ? { note: note?.trim() || "" } : {}),
+        updatedByUserId: session.user.id,
+      },
+    });
+
+    if (normalizedLines !== undefined) {
+      await tx.crmRepresentativeReportLine.deleteMany({
+        where: { reportDraftId: draft.id },
+      });
+      if (normalizedLines.length > 0) {
+        await tx.crmRepresentativeReportLine.createMany({
+          data: normalizedLines.map((l, i) => ({
+            reportDraftId: draft.id,
+            customerId: l.customerId,
+            customerName: l.customerName,
+            organization: l.organization,
+            demand: l.demand,
+            note: l.note,
+            sortOrder: i,
+          })),
+        });
+      }
+    }
+
+    const updatedLines = await tx.crmRepresentativeReportLine.findMany({
+      where: { reportDraftId: draft.id },
+      orderBy: { sortOrder: "asc" },
+    });
+
+    return {
+      draftNote: draft.note,
+      lines: updatedLines.map((l) => ({
+        id: l.id,
+        customerId: l.customerId,
+        customerName: l.customerName,
+        organization: l.organization,
+        demand: l.demand,
+        note: l.note,
+        sortOrder: l.sortOrder,
+      })),
+    };
   });
 
-  return NextResponse.json({ draft });
+  return NextResponse.json(result);
 }
 
-// POST alias for sendBeacon (browser unload only supports POST)
+// POST alias retained for backward compatibility (browser unload sendBeacon)
 export { PATCH as POST };
-

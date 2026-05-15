@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isFinanceBlocked } from "@/lib/finance/permissions";
 import { getOrderScopeWhere } from "@/lib/orders/permissions";
 import { syncOrderInvoiceStatus } from "@/lib/external-order";
+import { findBlockingInvoicesForOrder } from "@/lib/finance/order-invoices";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const search = url.searchParams.get("search")?.trim() || "";
   const status = url.searchParams.get("status")?.trim() || "";
+  const hasRedAdjustment = url.searchParams.get("hasRedAdjustment")?.trim() || "";
   const orderId = url.searchParams.get("orderId")?.trim() || "";
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
@@ -38,20 +40,36 @@ export async function GET(req: NextRequest) {
         { orderId: { in: scopedIds } },
         { orderCoverage: { some: { orderId: { in: scopedIds } } } },
         ...(legacyIds.length > 0 ? [{ externalOrderId: { in: legacyIds } }] : []),
+        ...(legacyIds.length > 0 ? [{ coverage: { some: { externalOrderId: { in: legacyIds } } } }] : []),
       ],
     });
   }
 
+  let legacyExtId: string | null = null;
   if (orderId) {
-    andConditions.push({
-      OR: [
-        { orderId },
-        { orderCoverage: { some: { orderId } } },
-      ],
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { legacyExternalOrderId: true },
     });
+    legacyExtId = order?.legacyExternalOrderId ?? null;
+    const orConditions: Record<string, unknown>[] = [
+      { orderId },
+      { orderCoverage: { some: { orderId } } },
+    ];
+    if (legacyExtId) {
+      orConditions.push({ externalOrderId: legacyExtId });
+      orConditions.push({ coverage: { some: { externalOrderId: legacyExtId } } });
+    }
+    andConditions.push({ OR: orConditions });
   }
 
   if (status) andConditions.push({ status });
+
+  if (hasRedAdjustment === "true") {
+    andConditions.push({ adjustmentsAsOriginal: { some: { kind: "RED" } } });
+  } else if (hasRedAdjustment === "false") {
+    andConditions.push({ adjustmentsAsOriginal: { none: { kind: "RED" } } });
+  }
 
   if (search) {
     andConditions.push({
@@ -73,6 +91,8 @@ export async function GET(req: NextRequest) {
         createdBy: { select: { id: true, name: true } },
         order: { select: { id: true, orderNo: true } },
         orderCoverage: { include: { order: { select: { id: true, orderNo: true } } } },
+        documents: { select: { id: true } },
+        adjustmentsAsOriginal: { select: { id: true, kind: true } },
       },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -140,43 +160,14 @@ export async function POST(req: NextRequest) {
     });
     if (!co) return NextResponse.json({ error: `订单 ${cid.slice(-6)} 不存在` }, { status: 400 });
 
-    // Check for existing active invoice via OrderInvoiceCoverage
-    const existingCov = await prisma.orderInvoiceCoverage.findFirst({
-      where: { orderId: cid, invoiceRequest: { status: { not: "CANCELLED" } } },
-    });
-    if (existingCov) {
-      return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票，不能重复开票` }, { status: 400 });
-    }
-
-    // Check direct orderId on ExternalOrderInvoiceRequest (without OrderInvoiceCoverage)
-    const directOrderInvoice = await prisma.externalOrderInvoiceRequest.findFirst({
-      where: { orderId: cid, status: { not: "CANCELLED" } },
-    });
-    if (directOrderInvoice) {
-      return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票(direct)，不能重复开票` }, { status: 400 });
-    }
-
-    // Also check legacy: via Order.legacyExternalOrderId → ExternalOrder
-    const orderWithLegacy = await prisma.order.findUnique({
-      where: { id: cid },
-      select: { legacyExternalOrderId: true },
-    });
-    const legacyExtId = orderWithLegacy?.legacyExternalOrderId ?? null;
-    if (legacyExtId) {
-      // Direct legacy invoice
-      const legacyDirect = await prisma.externalOrderInvoiceRequest.findFirst({
-        where: { externalOrderId: legacyExtId, status: { not: "CANCELLED" } },
-      });
-      if (legacyDirect) {
-        return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票(legacy direct)，不能重复开票` }, { status: 400 });
-      }
-      // Legacy merge coverage
-      const legacyCov = await prisma.externalOrderInvoiceCoverage.findFirst({
-        where: { externalOrderId: legacyExtId, invoiceRequest: { status: { not: "CANCELLED" } } },
-      });
-      if (legacyCov) {
-        return NextResponse.json({ error: `订单 ${cid.slice(-6)} 已有有效开票(legacy coverage)，不能重复开票` }, { status: 400 });
-      }
+    const blockers = await findBlockingInvoicesForOrder(cid);
+    if (blockers.length > 0) {
+      const b = blockers[0];
+      return NextResponse.json({
+        error: `订单 ${cid.slice(-6)} 已有${b.status === "ISSUED" ? "已开票" : b.status === "REQUESTED" ? "待开票" : "草稿"}记录，不能重复开票`,
+        blockingInvoiceId: b.id,
+        blockingInvoiceStatus: b.status,
+      }, { status: 400 });
     }
   }
 

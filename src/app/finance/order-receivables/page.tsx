@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Search, ShoppingBag, FileText, Banknote, AlertCircle, Eye } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FinancePageHeader } from "@/components/finance/finance-page-header";
 import { FinanceKpiCard } from "@/components/finance/finance-kpi-card";
 import { FinanceDataTable } from "@/components/finance/finance-data-table";
@@ -29,7 +30,35 @@ interface OrderReceivable {
   orderedAt: string | null;
 }
 
+type ViewFilter = "all" | "uninvoiced" | "invoiced_unpaid" | "paid";
+
+const VIEW_LABELS: Record<ViewFilter, string> = {
+  all: "全部",
+  uninvoiced: "待申请开票",
+  invoiced_unpaid: "已开票未回款",
+  paid: "已回款",
+};
+
+const VIEW_EMPTY: Record<ViewFilter, { title: string; description: string }> = {
+  all: { title: "暂无订单记录", description: "没有符合条件的订单。" },
+  uninvoiced: { title: "暂无待申请开票的订单", description: "所有订单均已开票或暂无订单。" },
+  invoiced_unpaid: { title: "暂无已开票未回款的订单", description: "所有已开票订单均已回款或暂无订单。" },
+  paid: { title: "暂无已回款的订单", description: "暂无已完成回款的订单。" },
+};
+
 export default function OrderReceivablesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    }>
+      <OrderReceivablesInner />
+    </Suspense>
+  );
+}
+
+function OrderReceivablesInner() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
@@ -49,11 +78,28 @@ export default function OrderReceivablesPage() {
 }
 
 function OrderReceivablesContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const isMobile = useMediaQuery("(max-width: 767px)");
-  const router = useRouter();
+
+  const VALID_VIEWS: ViewFilter[] = ["all", "uninvoiced", "invoiced_unpaid", "paid"];
+  const rawView = searchParams.get("view") as ViewFilter | null;
+  const view: ViewFilter = rawView && VALID_VIEWS.includes(rawView) ? rawView : "all";
+
+  const setView = (v: ViewFilter) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (v === "all") {
+      params.delete("view");
+    } else {
+      params.set("view", v);
+    }
+    params.delete("page");
+    router.push(`/finance/order-receivables?${params.toString()}`);
+    setPage(1);
+  };
 
   const { data: orders, isLoading } = useQuery<{
     orders: OrderReceivable[];
@@ -66,10 +112,11 @@ function OrderReceivablesContent() {
       unpaidTotal: number;
     };
   }>({
-    queryKey: ["order-receivables", search, page],
+    queryKey: ["order-receivables", search, page, view],
     queryFn: async () => {
       const params = new URLSearchParams({ pageSize: String(pageSize), page: String(page) });
       if (search) params.set("search", search);
+      if (view !== "all") params.set("view", view);
       const res = await fetch(`/api/finance/order-receivables?${params}`);
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
@@ -93,7 +140,7 @@ function OrderReceivablesContent() {
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
       <FinancePageHeader
-        title="订单应收与回款"
+        title="应收回款工作台"
         description="订单维度管理金额、开票、回款与未回款"
         backHref="/finance"
       />
@@ -115,14 +162,26 @@ function OrderReceivablesContent() {
         />
       </div>
 
-      <div className="relative max-w-sm min-w-0 w-full">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="搜索订单号..."
-          className="pl-8 w-full"
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-        />
+      <div className="space-y-3">
+        <div className="relative max-w-sm min-w-0 w-full">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="搜索订单号..."
+            className="pl-8 w-full"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          />
+        </div>
+
+        <Tabs value={view} onValueChange={(v) => setView(v as ViewFilter)}>
+          <TabsList>
+            {(Object.keys(VIEW_LABELS) as ViewFilter[]).map((v) => (
+              <TabsTrigger key={v} value={v}>
+                {VIEW_LABELS[v]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
 
       {isLoading ? (
@@ -133,8 +192,8 @@ function OrderReceivablesContent() {
         <>
           {list.length === 0 ? (
             <FinanceEmptyState
-              title="暂无订单记录"
-              description="没有符合条件的订单。"
+              title={VIEW_EMPTY[view].title}
+              description={VIEW_EMPTY[view].description}
             />
           ) : isMobile ? (
             <div className="md:hidden space-y-3">

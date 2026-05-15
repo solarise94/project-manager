@@ -257,7 +257,7 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
   return (
     <div className="p-6 space-y-4 pb-20 max-w-full overflow-x-hidden">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">CRM 客户池</h1>
+        <h1 className="text-2xl font-bold">客户档案库</h1>
         <div className="flex items-center gap-2 flex-wrap">
           <CustomerApplicationFormDialog />
           {!isRep && <ActivateProfileDialog />}

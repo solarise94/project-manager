@@ -24,6 +24,14 @@ export interface FinanceSummary {
   costAmount: number;
   profitAmount: number;
   profitRate: number | null;
+  unmatchedOrderCount: number;
+  unmatchedOrderAmount: number;
+  uninvoicedOrderCount: number;
+  uninvoicedOrderAmount: number;
+  invoicedUnpaidOrderCount: number;
+  invoicedUnpaidOrderAmount: number;
+  advanceRefundPendingCount: number;
+  advanceRefundPendingAmount: number;
 }
 
 export interface CustomerFinanceItem {

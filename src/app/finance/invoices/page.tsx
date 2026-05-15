@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2, X, Plus, Search, Eye } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, X, Plus, Search, Eye, Upload, RotateCcw, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,8 @@ import { FinanceMobileCard } from "@/components/finance/finance-mobile-card";
 import { MoneyText } from "@/components/finance/money-text";
 import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
 import { InvoiceStatusBadge } from "@/components/finance/finance-status-badge";
+import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
+import type { InvoiceRecord } from "@/components/invoice-form-dialog";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import Link from "next/link";
 
@@ -23,12 +25,28 @@ interface InvoiceItem {
   buyerOrganizationName: string | null;
   orderId: string | null;
   order: { orderNo: string } | null;
-  project: { name: string } | null;
   totalAmount: number;
   invoiceType: string;
   actualInvoiceNo: string | null;
+  actualIssuedAt: string | null;
   createdAt: string;
+  documents: Array<{ id: string }>;
+  orderCoverage: Array<{ order: { id: string; orderNo: string } | null }>;
+  adjustmentsAsOriginal: Array<{ id: string; kind: string }>;
 }
+
+type InvoiceTab = "all" | "draft" | "requested" | "issued" | "red" | "cancelled";
+
+const TAB_LABELS: Record<InvoiceTab, string> = {
+  all: "全部",
+  draft: "草稿",
+  requested: "待开票",
+  issued: "已开票",
+  red: "已冲红",
+  cancelled: "已取消",
+};
+
+const VALID_TABS: InvoiceTab[] = ["all", "draft", "requested", "issued", "red", "cancelled"];
 
 export default function InvoicesPage() {
   return (
@@ -48,16 +66,50 @@ function InvoicesContent() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState("all");
+  const [tab, setTab] = useState<InvoiceTab>("all");
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const orderId = searchParams.get("orderId");
+  const editInvoiceId = searchParams.get("edit");
   const isMobile = useMediaQuery("(max-width: 767px)");
+  const isAdmin = session?.user?.role === "ADMIN";
+
+  const { data: editingInvoice, error: editError } = useQuery<InvoiceRecord>({
+    queryKey: ["finance", "order-invoice", editInvoiceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/finance/order-invoices/${editInvoiceId}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `加载失败 (${res.status})`);
+      }
+      const d = await res.json();
+      return d.invoice;
+    },
+    enabled: !!editInvoiceId,
+    retry: false,
+  });
+
+  // When editing invoice detail fails to load, close dialog and alert user
+  useEffect(() => {
+    if (!editError || !editInvoiceId) return;
+    alert(editError.message || "发票详情加载失败");
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    router.push(`/finance/invoices?${params.toString()}`);
+  }, [editError, editInvoiceId, router, searchParams]);
 
   const p = new URLSearchParams();
   if (search) p.set("search", search);
-  if (tab !== "all") p.set("status", tab.toUpperCase());
+  if (tab === "red") {
+    p.set("hasRedAdjustment", "true");
+  } else if (tab === "issued") {
+    p.set("status", "ISSUED");
+    p.set("hasRedAdjustment", "false");
+  } else if (tab !== "all") {
+    p.set("status", tab.toUpperCase());
+  }
   p.set("pageSize", String(pageSize));
   p.set("page", String(page));
   if (orderId) p.set("orderId", orderId);
@@ -66,7 +118,7 @@ function InvoicesContent() {
     invoices: InvoiceItem[];
     total: number;
   }>({
-    queryKey: ["finance", "all-invoices", "order", search, tab, orderId, page],
+    queryKey: ["finance", "all-invoices", search, tab, orderId, page],
     queryFn: () =>
       fetch(`/api/finance/order-invoices?${p.toString()}`).then((r) =>
         r.ok ? r.json() : { invoices: [], total: 0 }
@@ -90,13 +142,94 @@ function InvoicesContent() {
 
   const invoices = orderData?.invoices || [];
 
-  const isHistorical = (inv: InvoiceItem) => !inv.orderId && inv.project;
+  const isHistorical = (inv: InvoiceItem) => {
+    // An invoice is historical if it has no orderId and no orderCoverage
+    const hasOrder = inv.orderId || inv.orderCoverage.length > 0;
+    return !hasOrder;
+  };
+
+  const handleCancelInvoice = async (invoiceId: string) => {
+    if (!confirm("确定要取消这张发票申请吗？")) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "CANCELLED" }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["finance", "all-invoices"] });
+      if (orderId) queryClient.invalidateQueries({ queryKey: ["order", orderId] });
+    } else {
+      const d = await res.json();
+      alert(d.error || "取消失败");
+    }
+  };
+
+  const handleSubmitInvoice = async (invoiceId: string) => {
+    if (!confirm("确定要提交这张发票申请吗？")) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "REQUESTED" }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["finance", "all-invoices"] });
+      if (orderId) queryClient.invalidateQueries({ queryKey: ["order", orderId] });
+    } else {
+      const d = await res.json();
+      alert(d.error || "提交失败");
+    }
+  };
+
+  const handleRedInvoice = async (invoiceId: string) => {
+    const reason = prompt("请输入冲红原因：");
+    if (!reason) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}/red`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["finance", "all-invoices"] });
+      if (orderId) queryClient.invalidateQueries({ queryKey: ["order", orderId] });
+    } else {
+      const d = await res.json();
+      alert(d.error || "冲红失败");
+    }
+  };
+
+  const getActions = (inv: InvoiceItem) => {
+    const actions: Array<{ label: string; icon: React.ReactNode; onClick: () => void; variant?: "destructive" | "default" }> = [];
+    const hasRed = inv.adjustmentsAsOriginal?.some((a) => a.kind === "RED");
+    if (!isAdmin) return actions;
+    if (inv.status === "DRAFT") {
+      actions.push({ label: "前往订单处理", icon: <Eye className="h-3 w-3" />, onClick: () => {
+        if (inv.orderId) router.push(`/orders/${inv.orderId}?tab=finance`);
+      } });
+      actions.push({ label: "提交", icon: <Upload className="h-3 w-3" />, onClick: () => handleSubmitInvoice(inv.id) });
+      actions.push({ label: "取消", icon: <Ban className="h-3 w-3" />, onClick: () => handleCancelInvoice(inv.id), variant: "destructive" });
+    } else if (inv.status === "REQUESTED") {
+      if (inv.orderId) {
+        actions.push({ label: "上传发票", icon: <Upload className="h-3 w-3" />, onClick: () => {
+          router.push(`/orders/${inv.orderId}?tab=finance&action=issue&invoiceId=${inv.id}`);
+        } });
+      }
+      actions.push({ label: "取消", icon: <Ban className="h-3 w-3" />, onClick: () => handleCancelInvoice(inv.id), variant: "destructive" });
+    } else if (inv.status === "ISSUED" && !hasRed) {
+      if (inv.orderId && (inv.documents?.length || 0) === 0) {
+        actions.push({ label: "上传发票", icon: <Upload className="h-3 w-3" />, onClick: () => {
+          router.push(`/orders/${inv.orderId}?tab=finance&action=issue&invoiceId=${inv.id}`);
+        } });
+      }
+      actions.push({ label: "冲红", icon: <RotateCcw className="h-3 w-3" />, onClick: () => handleRedInvoice(inv.id), variant: "destructive" });
+    }
+    return actions;
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
       <FinancePageHeader
-        title="订单发票工作台"
-        description="查询和处理订单发票"
+        title="发票工作台"
+        description="发票队列与状态台账 — 查看发票申请、开票状态、真实发票与附件"
         backHref="/finance"
       />
 
@@ -125,12 +258,13 @@ function InvoicesContent() {
             className="pl-8"
           />
         </div>
-        <Tabs value={tab} onValueChange={(v) => { setTab(v); setPage(1); }}>
-          <TabsList>
-            <TabsTrigger value="all">全部</TabsTrigger>
-            <TabsTrigger value="draft">草稿</TabsTrigger>
-            <TabsTrigger value="requested">已申请</TabsTrigger>
-            <TabsTrigger value="issued">已开具</TabsTrigger>
+        <Tabs value={tab} onValueChange={(v) => { setTab(v as InvoiceTab); setPage(1); }}>
+          <TabsList className="flex-wrap h-auto">
+            {VALID_TABS.map((t) => (
+              <TabsTrigger key={t} value={t}>
+                {TAB_LABELS[t]}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </Tabs>
       </div>
@@ -156,56 +290,69 @@ function InvoicesContent() {
         />
       ) : isMobile ? (
         <div className="md:hidden space-y-3">
-          {invoices.map((inv) => (
-            <FinanceMobileCard
-              key={inv.id}
-              title={
-                inv.buyerOrganizationName ||
-                inv.order?.orderNo ||
-                "未命名"
-              }
-              badge={
-                <div className="flex items-center gap-1">
-                  <InvoiceStatusBadge status={inv.status} />
-                  {isHistorical(inv) && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted-foreground/30 text-muted-foreground">
-                      历史
-                    </span>
-                  )}
-                </div>
-              }
-              metrics={[
-                {
-                  label: "金额",
-                  value: <MoneyText value={inv.totalAmount} />,
-                },
-                {
-                  label: "类型",
-                  value: inv.invoiceType === "SPECIAL" ? "专票" : "普票",
-                },
-              ]}
-              subtitle={
-                <div className="space-y-0.5">
-                  {inv.order?.orderNo && (
-                    <p>订单：{inv.order.orderNo}</p>
-                  )}
-                  <p>
-                    {new Date(inv.createdAt).toLocaleDateString("zh-CN")}
-                  </p>
-                </div>
-              }
-              primaryAction={
-                inv.orderId
-                  ? {
-                      label: "查看订单",
-                      onClick: () =>
-                        router.push(`/orders/${inv.orderId}?tab=finance`),
-                      icon: <Eye className="h-3.5 w-3.5 mr-1" />,
-                    }
-                  : undefined
-              }
-            />
-          ))}
+          {invoices.map((inv) => {
+            const actions = getActions(inv);
+            return (
+              <FinanceMobileCard
+                key={inv.id}
+                title={
+                  inv.buyerOrganizationName ||
+                  inv.order?.orderNo ||
+                  "未命名"
+                }
+                badge={
+                  <div className="flex items-center gap-1">
+                    <InvoiceStatusBadge status={inv.status} />
+                    {inv.adjustmentsAsOriginal?.some((a) => a.kind === "RED") && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-destructive/40 text-destructive">
+                        已冲红
+                      </span>
+                    )}
+                    {isHistorical(inv) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted-foreground/30 text-muted-foreground">
+                        历史
+                      </span>
+                    )}
+                  </div>
+                }
+                metrics={[
+                  {
+                    label: "金额",
+                    value: <MoneyText value={inv.totalAmount} />,
+                  },
+                  {
+                    label: "类型",
+                    value: inv.invoiceType === "SPECIAL" ? "专票" : "普票",
+                  },
+                  {
+                    label: "附件",
+                    value: `${inv.documents?.length || 0} 个`,
+                  },
+                ]}
+                subtitle={
+                  <div className="space-y-0.5">
+                    {inv.order?.orderNo && <p>订单：{inv.order.orderNo}</p>}
+                    <p>{new Date(inv.createdAt).toLocaleDateString("zh-CN")}</p>
+                  </div>
+                }
+                primaryAction={
+                  inv.orderId
+                    ? {
+                        label: "查看订单",
+                        onClick: () =>
+                          router.push(`/orders/${inv.orderId}?tab=finance`),
+                        icon: <Eye className="h-3.5 w-3.5 mr-1" />,
+                      }
+                    : undefined
+                }
+                moreActions={actions.slice(0, 3).map((a) => ({
+                  label: a.label,
+                  onClick: a.onClick,
+                  destructive: a.variant === "destructive",
+                }))}
+              />
+            );
+          })}
         </div>
       ) : (
         <FinanceDataTable
@@ -214,9 +361,14 @@ function InvoicesContent() {
               key: "status",
               header: "状态",
               align: "center",
-              render: (inv) => (
+              render: (inv: InvoiceItem) => (
                 <div className="flex items-center justify-center gap-1">
                   <InvoiceStatusBadge status={inv.status} />
+                  {inv.adjustmentsAsOriginal?.some((a) => a.kind === "RED") && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border border-destructive/40 text-destructive">
+                      已冲红
+                    </span>
+                  )}
                   {isHistorical(inv) && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded border border-muted-foreground/30 text-muted-foreground">
                       历史
@@ -228,13 +380,13 @@ function InvoicesContent() {
             {
               key: "buyerOrganizationName",
               header: "购方单位",
-              render: (inv) =>
+              render: (inv: InvoiceItem) =>
                 inv.buyerOrganizationName || "-",
             },
             {
               key: "orderNo",
               header: "订单号",
-              render: (inv) => inv.order?.orderNo || "-",
+              render: (inv: InvoiceItem) => inv.order?.orderNo || "-",
             },
             {
               key: "totalAmount",
@@ -246,35 +398,59 @@ function InvoicesContent() {
               key: "invoiceType",
               header: "发票类型",
               align: "center",
-              render: (inv) =>
+              render: (inv: InvoiceItem) =>
                 inv.invoiceType === "SPECIAL" ? "专票" : "普票",
             },
             {
               key: "actualInvoiceNo",
               header: "实际发票号",
-              render: (inv) => inv.actualInvoiceNo || "-",
+              render: (inv: InvoiceItem) => inv.actualInvoiceNo || "-",
             },
             {
               key: "createdAt",
               header: "创建时间",
-              render: (inv) =>
+              render: (inv: InvoiceItem) =>
                 new Date(inv.createdAt).toLocaleDateString("zh-CN"),
+            },
+            {
+              key: "attachments",
+              header: "附件",
+              align: "center",
+              render: (inv: InvoiceItem) => inv.documents?.length || 0,
             },
             {
               key: "actions",
               header: "操作",
               align: "center",
-              render: (inv) =>
-                inv.orderId ? (
-                  <Link
-                    href={`/orders/${inv.orderId}?tab=finance`}
-                    className="text-primary hover:underline text-xs"
-                  >
-                    查看订单
-                  </Link>
-                ) : (
-                  <span className="text-xs text-muted-foreground">-</span>
-                ),
+              render: (inv: InvoiceItem) => {
+                const actions = getActions(inv);
+                return (
+                  <div className="flex items-center gap-1 justify-center">
+                    {inv.orderId && (
+                      <Link
+                        href={`/orders/${inv.orderId}?tab=finance`}
+                        className="text-primary hover:underline text-xs"
+                      >
+                        查看
+                      </Link>
+                    )}
+                    {actions.map((a) => (
+                      <Button
+                        key={a.label}
+                        size="sm"
+                        variant={a.variant === "destructive" ? "ghost" : "ghost"}
+                        className={`h-6 text-xs ${a.variant === "destructive" ? "text-destructive hover:text-destructive" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          a.onClick();
+                        }}
+                      >
+                        {a.label}
+                      </Button>
+                    ))}
+                  </div>
+                );
+              },
             },
           ]}
           data={invoices}
@@ -291,6 +467,26 @@ function InvoicesContent() {
           </div>
         </div>
       )}
+
+      <InvoiceFormDialog
+        open={!!editInvoiceId}
+        onOpenChange={(open) => {
+          if (!open) {
+            const params = new URLSearchParams(searchParams.toString());
+            params.delete("edit");
+            router.push(`/finance/invoices?${params.toString()}`);
+          }
+        }}
+        editingInvoice={editingInvoice || null}
+        editingInvoiceId={editInvoiceId}
+        mode={editInvoiceId ? "edit" : "create"}
+        createUrl="/api/finance/order-invoices"
+        patchUrlPrefix="/api/finance/order-invoices"
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["finance", "all-invoices"] });
+          if (orderId) queryClient.invalidateQueries({ queryKey: ["order", orderId] });
+        }}
+      />
     </div>
   );
 }

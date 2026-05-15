@@ -472,7 +472,7 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6">
       <Button variant="ghost" size="sm" className="-ml-2" onClick={() => router.push("/projects")}>
         <ArrowLeft className="mr-1 h-4 w-4" />
         返回项目列表

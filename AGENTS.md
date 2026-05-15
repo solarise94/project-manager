@@ -83,7 +83,7 @@ src/
     permissions.ts        # 项目级权限守卫
     role-guards.ts        # Client-safe 角色判断（isAdmin/isInternalStaff/canAccessOrders）
     orders/               # 统一订单系统（constants, permissions, types）
-    finance/              # 财务模块（progress, calculations, costs, pingoodmice-match, types）
+    finance/              # 财务模块（progress, calculations, costs, order-invoices, order-invoice-access, order-receivables, ledger, payment-status, pingoodmice-match, types, permissions）
     crm/                  # CRM 业务逻辑、常量、Query Keys、权限
     draft/                # AI 草稿工作流
       form-schemas/       # 表单 Schema（project.create, project.edit, customer.create, ticket.create）
@@ -184,6 +184,8 @@ Prisma + SQLite（`prisma/schema.prisma`）。核心实体：
 - **ExternalOrder / ExternalOrderImportBatch**：Legacy 外部订单表，只读追溯，所有写操作已迁移到 Order 模型。
 - **ExternalOrderInvoiceRequest**：发票申请（项目发票和订单发票共用）。`orderId`（可选）直接关联 Order，`externalOrderId`（可选）关联 legacy ExternalOrder。两套 coverage 模型并存。
 - **OrganizationReviewTask**：AI 辅助机构去重审核工作流。
+- **InvoiceAdjustment**：发票调整记录（冲红 RED / 重开 REISSUE），`originalInvoiceId` 有唯一约束，每张原发票最多一条 adjustment。P2002 冲突时返回 409。
+- **InvoiceDocument**：上传的真实发票附件（PDF/图片），存储于 `public/uploads/invoices/`。
 - **DevLog**：应用内版本更新日志。
 - **FailedLoginAttempt**：暴力破解锁定跟踪。
 
@@ -299,6 +301,16 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 - **ProjectInvoice**：项目发票申请，支持多行项目明细，可导出 PDF（`html-to-image` → `jsPDF`）。
 - **ExternalOrderInvoiceRequest**：基于外部订单的开票申请，可自动预填收货人信息。
 - **导出格式**：PDF（A4 打印）+ 飞书多维表格制表符分隔文本（`src/lib/feishu-export.ts`）。
+- **发票状态生命周期**：`DRAFT` → `REQUESTED` → `ISSUED`。ISSUED 后可冲红（RED）或重开（REISSUE）。`InvoiceAdjustment` 表 `originalInvoiceId` 有唯一约束，同一原发票只能有一条 adjustment。
+- **重开流程**：用户点击"重开"→ 弹出原因输入 → 打开编辑框（mode="edit"，预填原发票数据）→ 用户审查修改后点"创建"→ POST `/api/finance/order-invoices/[id]/reissue` 在事务内创建新 DRAFT + REISSUE adjustment。不再像旧流程那样先落库再审查。
+- **登记已开票**：`POST /api/finance/invoice-documents` 上传真实发票附件。仅 REQUESTED 或 ISSUED 无附件时可上传；DRAFT/CANCELLED/已有附件/已冲红 返回 400。上传时自动 REQUESTED → ISSUED。
+- **订单发票 API**：
+  - `GET /api/finance/order-invoices` — 列表（支持 orderId/status/hasRedAdjustment 筛选，含 AND-composition scope）
+  - `POST /api/finance/order-invoices` — 创建 DRAFT，含 coveredOrderIds、blocking invoice 检查
+  - `PATCH /api/finance/order-invoices/[id]` — 更新（含 status 变更）
+  - `POST /api/finance/order-invoices/[id]/red` — 冲红（需 ISSUED 状态、未调整；P2002 → 409）
+  - `POST /api/finance/order-invoices/[id]/reissue` — 重开（需 ISSUED 状态、未调整；接受完整表单数据；P2002 → 409）
+  - `GET /api/finance/order-receivables` — 订单回款统计
 
 ### 统一订单系统 (Order Model)
 
@@ -325,8 +337,13 @@ PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
 - `progress.ts` — `getOrderEffectiveTreatment()`（AUTO 时检查 OrderProjectLink 决定 STANDALONE/PROJECT_INCLUDED）、`computeAllProgressReceivables(projects, orders)`
 - `calculations.ts` — `getFinanceSummary()`（含 cost/profit 聚合）、`getCustomerFinanceList()`（含 bulk `buildOrderProjectLinkMap`）
 - `costs.ts` — `resolveAndValidateCostRefs()` 校验 customer/order/project 一致性
+- `order-invoices.ts` — `getInvoicesForOrder()`（四路合并：direct + coverage + legacy direct + legacy coverage，返回 `UnifiedOrderInvoice[]`）、`findBlockingInvoicesForOrder()`
+- `order-invoice-access.ts` — `assertOrderInvoiceReadable()`，订单发票读取权限校验
+- `order-receivables.ts` — 订单回款统计与口径
 - `pingoodmice-match.ts` — 自动客户匹配扫描（微信/电话/姓名+机构/姓名+地址 四层匹配）
-- `types.ts` — `MatchResult`、`MatchScanResult`、`FinanceTreatment` 等类型
+- `ledger.ts` — 财务台账汇总
+- `payment-status.ts` — 回款核销状态
+- `types.ts` — `MatchResult`、`MatchScanResult`、`FinanceTreatment`、`UnifiedOrderInvoice` 等类型
 - `permissions.ts` — 财务模块权限
 
 **Legacy 接口状态**：7 个旧 ExternalOrder 写 API（`/api/external-orders/import`、`/api/external-orders/batch-delete`、`/api/external-orders/[id]/merge` 等）返回 410 Gone。`/api/finance/pingoodmice/[orderId]/bind-customer`、`bind-project`、`finance-settings` 返回 410，已迁移至 `/api/orders`。
@@ -409,8 +426,13 @@ PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
 | 外部订单导入 (Legacy) | `src/lib/external-order.ts` |
 | 财务计算/汇总 | `src/lib/finance/calculations.ts` |
 | 财务进度/口径 | `src/lib/finance/progress.ts` |
+| 订单发票查询 | `src/lib/finance/order-invoices.ts` |
+| 订单发票权限 | `src/lib/finance/order-invoice-access.ts` |
+| 订单回款 | `src/lib/finance/order-receivables.ts` |
 | 自动客户匹配 | `src/lib/finance/pingoodmice-match.ts` |
 | 成本校验 | `src/lib/finance/costs.ts` |
+| 财务台账 | `src/lib/finance/ledger.ts` |
+| 回款核销 | `src/lib/finance/payment-status.ts` |
 | 发票 PDF | `src/lib/export-invoice-pdf.tsx` |
 | 飞书导出 | `src/lib/feishu-export.ts` |
 | 智能填写 | `src/lib/smart-fill.ts` |

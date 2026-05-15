@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, CardContent } from "@/components/ui/card";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeOpsItem } from "@/lib/crm/types";
 import Link from "next/link";
@@ -305,12 +306,14 @@ function RepOpsList() {
 
 function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; color?: string }) {
   return (
-    <div className="border rounded-lg p-4 flex items-center gap-3">
-      <Icon className="h-5 w-5 text-muted-foreground" />
-      <div>
-        <div className={`text-2xl font-bold ${color || ""}`}>{value}</div>
-        <div className="text-xs text-muted-foreground">{label}</div>
-      </div>
-    </div>
+    <Card>
+      <CardContent className="pt-3 pb-2 px-3">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          <span className="text-[11px] text-muted-foreground">{label}</span>
+        </div>
+        <p className={`text-xl font-bold ${color || ""}`}>{value}</p>
+      </CardContent>
+    </Card>
   );
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,9 +16,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from 
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { CustomerMatchDialog } from "@/components/finance/customer-match-dialog";
 import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
+import type { InvoiceRecord } from "@/components/invoice-form-dialog";
 import { CostFormDialog } from "@/components/finance/cost-form-dialog";
 import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
-import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus } from "lucide-react";
+import { UploadIssuedInvoiceDialog } from "@/components/finance/upload-issued-invoice-dialog";
+import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus, Upload, RotateCcw, Ban, Eye } from "lucide-react";
 import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
@@ -32,9 +35,11 @@ const RELATION_LABELS: Record<string, string> = { GENERATED: "生成", LINKED: "
 
 export default function OrderDetailPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { id } = useParams<{ id: string }>();
   const { status: authStatus, data: session } = useSession();
   const [order, setOrder] = useState<Record<string, unknown> | null>(null);
+  const [invoices, setInvoices] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const searchParams = useSearchParams();
@@ -55,6 +60,39 @@ export default function OrderDetailPage() {
   const [eligibleReceipts, setEligibleReceipts] = useState<Array<Record<string, unknown>>>([]);
   const [advanceSubmitting, setAdvanceSubmitting] = useState(false);
 
+  // Edit invoice state (for DRAFT edit and reissue → review)
+  const editFromUrl = urlAction === "edit-invoice" ? searchParams.get("invoiceId") : null;
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(editFromUrl);
+  const [reissueFromInvoiceId, setReissueFromInvoiceId] = useState<string | null>(null);
+  const [reissueReason, setReissueReason] = useState<string | null>(null);
+  const { data: editingInvoice, error: editError } = useQuery<InvoiceRecord>({
+    queryKey: ["order", "invoice", editingInvoiceId],
+    queryFn: async () => {
+      const res = await fetch(`/api/finance/order-invoices/${editingInvoiceId}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `加载失败 (${res.status})`);
+      }
+      return (await res.json()).invoice;
+    },
+    enabled: !!editingInvoiceId,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!editError || !editingInvoiceId) return;
+    alert(editError.message || "发票详情加载失败");
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setEditingInvoiceId(null);
+    setReissueFromInvoiceId(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    if (urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editError, editingInvoiceId]);
+
+  // Issue invoice state (for REQUESTED → ISSUED upload)
+  const issueFromUrl = urlAction === "issue" ? searchParams.get("invoiceId") : null;
+  const [issueInvoiceId, setIssueInvoiceId] = useState<string | null>(issueFromUrl);
+
   // Strip action= param from URL when dialogs close to prevent re-opening on refresh
   const handleInvoiceOpenChange = (open: boolean) => {
     setInvoiceDialogOpen(open);
@@ -63,6 +101,20 @@ export default function OrderDetailPage() {
   const handleCostOpenChange = (open: boolean) => {
     setCostDialogOpen(open);
     if (!open && urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+  };
+  const handleEditInvoiceOpenChange = (open: boolean) => {
+    if (!open) {
+      setEditingInvoiceId(null);
+      setReissueFromInvoiceId(null);
+      setReissueReason(null);
+      if (urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+    }
+  };
+  const handleIssueInvoiceOpenChange = (open: boolean) => {
+    if (!open) {
+      setIssueInvoiceId(null);
+      if (urlAction) router.replace(`/orders/${id}?tab=${urlTab || "overview"}`, { scroll: false });
+    }
   };
 
   const fetchAdvances = useCallback(async () => {
@@ -132,9 +184,66 @@ export default function OrderDetailPage() {
     const res = await fetch(`/api/orders/${id}`);
     if (res.status === 401) { router.push("/login"); return; }
     if (res.status === 403) { router.push("/dashboard"); return; }
-    if (res.ok) { const d = await res.json(); setOrder(d?.order || null); }
+    if (res.ok) { const d = await res.json(); setOrder(d?.order || null); setInvoices((d?.invoices || []) as Array<Record<string, unknown>>); }
     setLoading(false);
   }, [id, router]);
+
+  const handleCancelInvoice = async (invoiceId: string) => {
+    if (!confirm("确定要取消这张发票申请吗？")) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "CANCELLED" }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      fetchOrder();
+    } else {
+      const d = await res.json();
+      alert(d.error || "取消失败");
+    }
+  };
+
+  const handleSubmitInvoice = async (invoiceId: string) => {
+    if (!confirm("确定要提交这张发票申请吗？")) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "REQUESTED" }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      fetchOrder();
+    } else {
+      const d = await res.json();
+      alert(d.error || "提交失败");
+    }
+  };
+
+  const handleRedInvoice = async (invoiceId: string) => {
+    const reason = prompt("请输入冲红原因：");
+    if (!reason) return;
+    const res = await fetch(`/api/finance/order-invoices/${invoiceId}/red`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["order", id] });
+      fetchOrder();
+    } else {
+      const d = await res.json();
+      alert(d.error || "冲红失败");
+    }
+  };
+
+  const handleReissueInvoice = async (invoiceId: string) => {
+    const reason = prompt("请输入重开原因（可选）：");
+    if (reason === null) return; // user cancelled the prompt
+    setReissueFromInvoiceId(invoiceId);
+    setReissueReason(reason || null);
+    setEditingInvoiceId(invoiceId);
+  };
 
   useEffect(() => {
     if (authStatus !== "authenticated" || !id || !canAccessOrders(session?.user?.role)) return;
@@ -180,7 +289,7 @@ export default function OrderDetailPage() {
     : cust?.name ? `/crm/customers?search=${encodeURIComponent(cust.name as string)}` : null;
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <Link href="/orders" className="text-sm text-muted-foreground hover:underline">&larr; 返回订单列表</Link>
@@ -228,7 +337,7 @@ export default function OrderDetailPage() {
         {crmHref ? (
           <Link href={crmHref}><Button size="sm" variant="outline"><UserRound className="h-3 w-3 mr-1" />CRM 档案</Button></Link>
         ) : (
-          <Link href="/crm/customers"><Button size="sm" variant="outline"><UserRound className="h-3 w-3 mr-1" />CRM 客户池</Button></Link>
+          <Link href="/crm/customers"><Button size="sm" variant="outline"><UserRound className="h-3 w-3 mr-1" />客户档案库</Button></Link>
         )}
         {(order.source as string) === "PINGOODMICE" && (order.externalOrderNo as string) && (
           <Link href={`/finance/order-matching?search=${encodeURIComponent(order.externalOrderNo as string)}`}>
@@ -417,52 +526,78 @@ export default function OrderDetailPage() {
                 </Button>
               )}
             </div>
-            {(() => {
-              const invReqs = (order.invoiceRequests as Array<Record<string, unknown>>) || [];
-              const invCoverage = (order.invoiceCoverage as Array<Record<string, unknown>>) || [];
-              // Deduplicate: direct invoices take priority; coverage only shown if not already direct
-              const directIds = new Set(invReqs.map(r => r.id as string));
-              const coverageItems: Array<Record<string, unknown>> = [];
-              for (const c of invCoverage) {
-                const ir = (c.invoiceRequest as Record<string, unknown> | null) || {};
-                if (!directIds.has(ir.id as string)) {
-                  coverageItems.push({ ...ir, _source: "coverage" });
-                }
-              }
-              const allInvoices: Array<Record<string, unknown>> = [
-                ...invReqs.map(r => ({ ...r, _source: "direct" })),
-                ...coverageItems,
-              ];
-              if (allInvoices.length === 0) {
-                return (
-                  <div className="text-sm text-muted-foreground py-6 text-center space-y-2">
-                    <p>暂无发票申请</p>
-                    {isAdmin && (
-                      <Button size="sm" onClick={() => setInvoiceDialogOpen(true)}>
-                        <Plus className="h-3 w-3 mr-1" />新建订单发票
-                      </Button>
-                    )}
-                  </div>
-                );
-              }
-              return (
-                <div className="space-y-2">
-                  {allInvoices.map((inv: Record<string, unknown>, i: number) => (
-                    <div key={i} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
-                      <div>
+            {invoices.length === 0 ? (
+              <div className="text-sm text-muted-foreground py-6 text-center space-y-2">
+                <p>暂无发票申请</p>
+                {isAdmin && (
+                  <Button size="sm" onClick={() => setInvoiceDialogOpen(true)}>
+                    <Plus className="h-3 w-3 mr-1" />新建订单发票
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {invoices.map((inv: Record<string, unknown>) => {
+                  const invStatus = (inv.status as string) || "";
+                  const statusLabel: Record<string, string> = { DRAFT: "草稿", REQUESTED: "待开票", ISSUED: "已开票", CANCELLED: "已取消" };
+                  const hasRed = (inv.adjustments as Array<Record<string, unknown>>)?.some((a) => a.kind === "RED");
+                  const docCount = (inv._documentCount as number) || 0;
+                  const actions: Array<{ label: string; icon: React.ReactNode; onClick: () => void; destructive?: boolean }> = [];
+                   if (isAdmin) {
+                    if (invStatus === "DRAFT") {
+                      actions.push({ label: "编辑", icon: <Pencil className="h-3 w-3" />, onClick: () => setEditingInvoiceId(inv.id as string) });
+                      actions.push({ label: "提交", icon: <Upload className="h-3 w-3" />, onClick: () => handleSubmitInvoice(inv.id as string) });
+                      actions.push({ label: "取消", icon: <Ban className="h-3 w-3" />, onClick: () => handleCancelInvoice(inv.id as string), destructive: true });
+                    } else if (invStatus === "REQUESTED") {
+                      actions.push({ label: "登记已开票", icon: <Upload className="h-3 w-3" />, onClick: () => setIssueInvoiceId(inv.id as string) });
+                      actions.push({ label: "取消", icon: <Ban className="h-3 w-3" />, onClick: () => handleCancelInvoice(inv.id as string), destructive: true });
+                    } else if (invStatus === "ISSUED" && !hasRed) {
+                      if (docCount === 0) {
+                        actions.push({ label: "补传附件", icon: <Upload className="h-3 w-3" />, onClick: () => setIssueInvoiceId(inv.id as string) });
+                      }
+                      actions.push({ label: "冲红", icon: <RotateCcw className="h-3 w-3" />, onClick: () => handleRedInvoice(inv.id as string), destructive: true });
+                      actions.push({ label: "重开", icon: <RotateCcw className="h-3 w-3" />, onClick: () => handleReissueInvoice(inv.id as string) });
+                    }
+                  }
+                  return (
+                    <div key={inv.id as string} className="flex items-center justify-between text-sm border-b pb-2 last:border-0">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium">{(inv.invoiceType as string) === "SPECIAL" ? "专票" : "普票"}</span>
-                        <span className="text-muted-foreground ml-2">{(inv.contentSummary as string) || "—"}</span>
-                        {inv._source === "coverage" && <Badge variant="outline" className="ml-2 text-xs">合并</Badge>}
+                        <span className="text-muted-foreground">{(inv.contentSummary as string) || "—"}</span>
+                        {(inv.linkType as string) === "COVERAGE" && (
+                          <Badge variant="outline" className="text-xs">合并</Badge>
+                        )}
+                        {(inv.isLegacyLinked as boolean) && (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">历史</Badge>
+                        )}
+                        {hasRed && (
+                          <Badge variant="outline" className="text-xs text-destructive">已冲红</Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">¥{(inv.totalAmount as number || 0).toLocaleString()}</span>
-                        <Badge variant="outline" className="text-xs">{(inv.status as string) || "—"}</Badge>
+                        <span className="font-medium">¥{((inv.totalAmount as number) || 0).toLocaleString()}</span>
+                        <Badge variant="outline" className="text-xs">{statusLabel[invStatus] || invStatus}</Badge>
+                        <Link href={`/finance/invoices?orderId=${id}`} className="text-primary hover:underline text-xs">
+                          <Eye className="h-3 w-3 inline mr-0.5" />查看
+                        </Link>
+                        {actions.map((a) => (
+                          <Button
+                            key={a.label}
+                            size="sm"
+                            variant="ghost"
+                            className={`h-6 text-xs ${a.destructive ? "text-destructive hover:text-destructive" : ""}`}
+                            onClick={(e) => { e.stopPropagation(); a.onClick(); }}
+                          >
+                            {a.icon}
+                            {a.label}
+                          </Button>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              );
-            })()}
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           {/* Receipts section */}
@@ -684,6 +819,31 @@ export default function OrderDetailPage() {
             : [{ itemName: (order.title as string) || "订单服务", spec: "", unit: "项", quantity: "1", amount: String(order.totalAmount || 0) }],
         }}
         onSuccess={() => fetchOrder()}
+      />
+
+      {/* Edit invoice dialog (DRAFT edit / reissue review) */}
+      <InvoiceFormDialog
+        open={!!editingInvoiceId}
+        onOpenChange={handleEditInvoiceOpenChange}
+        editingInvoice={editingInvoice || null}
+        editingInvoiceId={editingInvoiceId}
+        mode="edit"
+        createUrl="/api/finance/order-invoices"
+        patchUrlPrefix="/api/finance/order-invoices"
+        extraPayload={undefined}
+        showProjectCode={false}
+        aiDraftUrl={null}
+        reissueFromInvoiceId={reissueFromInvoiceId}
+        reissueReason={reissueReason}
+        onSuccess={() => { fetchOrder(); setEditingInvoiceId(null); setReissueFromInvoiceId(null); setReissueReason(null); }}
+      />
+
+      {/* Issue invoice dialog (REQUESTED → ISSUED upload) */}
+      <UploadIssuedInvoiceDialog
+        open={!!issueInvoiceId}
+        onOpenChange={handleIssueInvoiceOpenChange}
+        invoiceId={issueInvoiceId || ""}
+        onSuccess={() => { fetchOrder(); queryClient.invalidateQueries({ queryKey: ["order", id] }); }}
       />
 
       {/* Cost dialog */}

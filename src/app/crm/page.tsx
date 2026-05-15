@@ -16,7 +16,7 @@ import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
   MessageSquare, ClipboardCheck, Building2,
-  ChevronRight, Inbox,
+  Inbox,
 } from "lucide-react";
 import Link from "next/link";
 import { CrmEmptyState } from "@/components/crm/empty-state";
@@ -39,6 +39,7 @@ function CrmDashboard() {
   const role = session?.user?.role;
   const isRep = role === "REPRESENTATIVE";
   const isAdmin = role === "ADMIN";
+  const isRegionalManager = role === "REGIONAL_MANAGER";
   const [quickAction, setQuickAction] = useState<"interaction" | "checkin" | null>(null);
   const [quickProfileId, setQuickProfileId] = useState("");
   const [quickCustomerId, setQuickCustomerId] = useState("");
@@ -224,68 +225,78 @@ function CrmDashboard() {
       </div>
 
       {/* Quick navigation */}
-      <div className="space-y-2">
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">快捷导航</h2>
-        <nav className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+      <div className="space-y-3">
+        <h2 className="text-sm font-medium text-muted-foreground">功能入口</h2>
+        <nav className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <QuickNavCard
             href="/crm/customers"
-            icon={<Users className="h-5 w-5" />}
-            label="客户池"
-            color="border-l-blue-500"
+            icon={<Users className="h-8 w-8" />}
+            label="客户档案库"
+            description="管理全部客户资料与阶段"
           />
           <QuickNavCard
             href="/crm/follow-ups"
-            icon={<CalendarClock className="h-5 w-5" />}
+            icon={<CalendarClock className="h-8 w-8" />}
             label="跟进任务"
-            color="border-l-orange-500"
+            description="待处理、已逾期、已完成的跟进任务"
           />
           {!isRep && !isAdmin && (
             <QuickNavCard
               href="/crm/customer-pool"
-              icon={<Users className="h-5 w-5" />}
+              icon={<Users className="h-8 w-8" />}
               label="客户流转池"
-              color="border-l-sky-500"
+              description="客户分配与回收流转记录"
             />
           )}
           <QuickNavCard
             href="/crm/customer-applications"
-            icon={<ClipboardCheck className="h-5 w-5" />}
-            label={isRep ? "客户申请" : "申请审核"}
-            color="border-l-green-500"
+            icon={<ClipboardCheck className="h-8 w-8" />}
+            label="客户申请"
+            description={isRep ? "提交新客户申请" : "客户申请与主管复核"}
           />
+          {isRep && (
+            <QuickNavCard
+              href="/crm/my-report"
+              icon={<ClipboardList className="h-8 w-8" />}
+              label="我的汇报"
+              description="填写本周工作汇报"
+            />
+          )}
           <QuickNavCard
             href="/crm/relations"
-            icon={<Network className="h-5 w-5" />}
-            label="关系网络"
-            color="border-l-purple-500"
+            icon={<Network className="h-8 w-8" />}
+            label="关系管理"
+            description="客户关系边与类型管理"
           />
           <QuickNavCard
             href="/crm/graph"
-            icon={<Network className="h-5 w-5" />}
+            icon={<Network className="h-8 w-8" />}
             label="关系图谱"
-            color="border-l-indigo-500"
+            description="力导向图可视化"
           />
           {isAdmin && (
-            <>
-              <QuickNavCard
-                href="/admin/organizations/analytics"
-                icon={<Building2 className="h-5 w-5" />}
-                label="机构分析"
-                color="border-l-cyan-500"
-              />
-              <QuickNavCard
-                href="/crm/representatives"
-                icon={<BarChart3 className="h-5 w-5" />}
-                label="代表运营"
-                color="border-l-pink-500"
-              />
-              <QuickNavCard
-                href="/crm/region-managers"
-                icon={<UserCog className="h-5 w-5" />}
-                label="地区经理"
-                color="border-l-amber-500"
-              />
-            </>
+            <QuickNavCard
+              href="/admin/organizations"
+              icon={<Building2 className="h-8 w-8" />}
+              label="机构管理"
+              description="机构主数据管理与去重审核"
+            />
+          )}
+          {(isAdmin || isRegionalManager) && (
+            <QuickNavCard
+              href="/crm/representatives"
+              icon={<BarChart3 className="h-8 w-8" />}
+              label="代表运营"
+              description="代表签到与沟通统计"
+            />
+          )}
+          {isAdmin && (
+            <QuickNavCard
+              href="/crm/region-managers"
+              icon={<UserCog className="h-8 w-8" />}
+              label="地区经理"
+              description="区域经理与代表绑定"
+            />
           )}
         </nav>
       </div>
@@ -329,23 +340,32 @@ function QuickNavCard({
   href,
   icon,
   label,
-  color,
+  description,
 }: {
   href: string;
   icon: React.ReactNode;
   label: string;
-  color: string;
+  description?: string;
 }) {
   return (
-    <Link
-      href={href}
-      className={`group flex items-center gap-3 h-14 md:h-12 px-4 border border-input bg-background hover:bg-muted/80 rounded-md border-l-4 ${color} active:scale-[0.98] transition-transform`}
-    >
-      <span className="text-muted-foreground group-hover:text-foreground transition-colors">
-        {icon}
-      </span>
-      <span className="text-sm font-medium flex-1">{label}</span>
-      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+    <Link href={href}>
+      <Card className="hover:bg-muted/50 transition-colors cursor-pointer group h-full">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="font-medium">{label}</p>
+              {description && (
+                <p className="text-sm text-muted-foreground mt-1 truncate">
+                  {description}
+                </p>
+              )}
+            </div>
+            <span className="text-muted-foreground group-hover:text-foreground transition-colors shrink-0">
+              {icon}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
     </Link>
   );
 }

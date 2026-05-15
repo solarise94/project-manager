@@ -8,6 +8,7 @@ import type {
 import { computeProjectReceivable } from "./types";
 import { computeOrderFinanceAmount, getOrderEffectiveTreatment, computeAllProgressReceivables } from "./progress";
 import { computeBatchProjectRevenue } from "./ledger";
+import { getOrderInvoiceTotals, getOrderReceiptTotals } from "./order-receivables";
 import type { Prisma } from "@prisma/client";
 
 /** Build a mapping of orderId → hasProjectLinks for efficient treatment derivation. */
@@ -95,19 +96,48 @@ export async function getFinanceSummary(
   const orderIds = allOrders.map((o) => o.id);
   const linkMap = await buildOrderProjectLinkMap(orderIds);
 
+  // Compute per-order invoice / receipt totals for queue metrics
+  const [orderInvoiceTotals, orderReceiptTotals] = await Promise.all([
+    getOrderInvoiceTotals(orderIds),
+    getOrderReceiptTotals(orderIds),
+  ]);
+
   let standaloneOrderAmount = 0;
   let projectLinkedOrderAmount = 0;
   let matchedOnline = 0;
   let unmatchedOnline = 0;
+  let unmatchedOrderCount = 0;
+  let unmatchedOrderAmount = 0;
+  let uninvoicedOrderCount = 0;
+  let uninvoicedOrderAmount = 0;
+  let invoicedUnpaidOrderCount = 0;
+  let invoicedUnpaidOrderAmount = 0;
 
   for (const o of allOrders) {
     const amt = computeOrderFinanceAmount(o);
     if (o.customerId) matchedOnline += amt;
-    else unmatchedOnline += amt;
+    else {
+      unmatchedOnline += amt;
+      unmatchedOrderCount += 1;
+      unmatchedOrderAmount += amt;
+    }
 
     const treatment = getOrderEffectiveTreatment(o.financeTreatment, linkMap.has(o.id));
     if (treatment === "PROJECT_INCLUDED") projectLinkedOrderAmount += amt;
     else if (treatment === "STANDALONE") standaloneOrderAmount += amt;
+
+    const invoiced = orderInvoiceTotals.get(o.id) || 0;
+    const received = orderReceiptTotals.get(o.id) || 0;
+    const unpaid = Math.max(invoiced - received, 0);
+    if (o.customerId != null) {
+      if (invoiced <= 0) {
+        uninvoicedOrderCount += 1;
+        uninvoicedOrderAmount += amt;
+      } else if (unpaid > 0) {
+        invoicedUnpaidOrderCount += 1;
+        invoicedUnpaidOrderAmount += unpaid;
+      }
+    }
   }
 
   const [
@@ -134,6 +164,7 @@ export async function getFinanceSummary(
       _sum: { totalAmount: true },
       where: {
         status: { not: "CANCELLED" },
+        adjustmentsAsOriginal: { none: { kind: "RED" } },
         OR: [
           { externalOrder: customerScope
             ? { customerId: { in: customerScope.id.in }, mergedIntoId: null }
@@ -225,6 +256,14 @@ export async function getFinanceSummary(
     costAmount,
     profitAmount,
     profitRate,
+    unmatchedOrderCount,
+    unmatchedOrderAmount,
+    uninvoicedOrderCount,
+    uninvoicedOrderAmount,
+    invoicedUnpaidOrderCount,
+    invoicedUnpaidOrderAmount,
+    advanceRefundPendingCount: 0,
+    advanceRefundPendingAmount: 0,
   };
 }
 
@@ -301,6 +340,7 @@ export async function getCustomerFinanceList(
         _sum: { totalAmount: true },
         where: {
           status: { not: "CANCELLED" },
+          adjustmentsAsOriginal: { none: { kind: "RED" } },
           OR: [
             { externalOrder: { customerId: cust.id, mergedIntoId: null } },
             ...(custOrderIds.length > 0 ? [{ orderId: { in: custOrderIds } }] : []),
@@ -383,6 +423,7 @@ export async function getCustomerFinanceDetail(
   const orderInvoices = await prisma.externalOrderInvoiceRequest.findMany({
     where: {
       status: { not: "CANCELLED" },
+      adjustmentsAsOriginal: { none: { kind: "RED" } },
       OR: [
         { externalOrder: { customerId, mergedIntoId: null } },
         ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),

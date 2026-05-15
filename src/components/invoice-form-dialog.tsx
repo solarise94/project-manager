@@ -78,6 +78,8 @@ export interface InvoiceFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingInvoice: InvoiceRecord | null;
+  editingInvoiceId?: string | null;
+  mode?: "create" | "edit";
   createUrl: string;
   patchUrlPrefix: string;
   onSuccess: () => void;
@@ -95,6 +97,8 @@ export interface InvoiceFormDialogProps {
   showProjectCode?: boolean;
   aiDraftUrl?: string | null;
   extraPayload?: Record<string, unknown>;
+  reissueFromInvoiceId?: string | null;
+  reissueReason?: string | null;
 }
 
 const emptyItem = (): InvoiceItem => ({
@@ -144,32 +148,52 @@ export function buildPreviewText(form: {
 }
 
 export function InvoiceFormDialog({
-  open, onOpenChange, editingInvoice, createUrl, patchUrlPrefix,
-  onSuccess, defaultValues, showProjectCode = true, aiDraftUrl,
-  extraPayload, projectName, projectContent,
+  open, onOpenChange, editingInvoice, editingInvoiceId, mode = "create",
+  createUrl, patchUrlPrefix, onSuccess, defaultValues, showProjectCode = true,
+  aiDraftUrl, extraPayload, projectName, projectContent,
+  reissueFromInvoiceId, reissueReason,
 }: InvoiceFormDialogProps & { projectName?: string; projectContent?: string }) {
+  const isLoadingEdit = mode === "edit" && !editingInvoice;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open && (
-        <InvoiceFormContent
-          editingInvoice={editingInvoice}
-          createUrl={createUrl}
-          patchUrlPrefix={patchUrlPrefix}
-          onSuccess={onSuccess}
-          onClose={() => onOpenChange(false)}
-          defaultValues={defaultValues}
-          showProjectCode={showProjectCode}
-          aiDraftUrl={aiDraftUrl}
-          extraPayload={extraPayload}
-          projectName={projectName}
-          projectContent={projectContent}
-        />
+        <>
+          {isLoadingEdit ? (
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>加载发票详情…</DialogTitle>
+              </DialogHeader>
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            </DialogContent>
+          ) : (
+            <InvoiceFormContent
+              key={editingInvoice?.id || editingInvoiceId || "create"}
+              mode={mode}
+              editingInvoice={editingInvoice}
+              createUrl={createUrl}
+              patchUrlPrefix={patchUrlPrefix}
+              onSuccess={onSuccess}
+              onClose={() => onOpenChange(false)}
+              defaultValues={defaultValues}
+              showProjectCode={showProjectCode}
+              aiDraftUrl={aiDraftUrl}
+              extraPayload={extraPayload}
+              projectName={projectName}
+              projectContent={projectContent}
+              reissueFromInvoiceId={reissueFromInvoiceId}
+              reissueReason={reissueReason}
+            />
+          )}
+        </>
       )}
     </Dialog>
   );
 }
 
 interface ContentProps {
+  mode: "create" | "edit";
   editingInvoice: InvoiceRecord | null;
   createUrl: string;
   patchUrlPrefix: string;
@@ -179,12 +203,15 @@ interface ContentProps {
   showProjectCode: boolean;
   aiDraftUrl?: string | null;
   extraPayload?: Record<string, unknown>;
+  reissueFromInvoiceId?: string | null;
+  reissueReason?: string | null;
 }
 
 function InvoiceFormContent({
-  editingInvoice, createUrl, patchUrlPrefix,
+  mode, editingInvoice, createUrl, patchUrlPrefix,
   onSuccess, onClose, defaultValues, showProjectCode, aiDraftUrl,
   extraPayload, projectName, projectContent,
+  reissueFromInvoiceId, reissueReason,
 }: ContentProps & { projectName?: string; projectContent?: string }) {
   const inv = editingInvoice;
   const [contactName, setContactName] = useState(inv?.contactName || defaultValues?.contactName || "");
@@ -309,6 +336,9 @@ function InvoiceFormContent({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      if (mode === "edit" && !inv && !reissueFromInvoiceId) {
+        throw new Error("发票详情尚未加载完成，不能保存");
+      }
       const payload = {
         contactName, projectCode: formProjectCode,
         sellerProfileId: sellerProfileId || null, sellerName,
@@ -323,9 +353,22 @@ function InvoiceFormContent({
           amount: parseFloat(it.amount) || 0,
         })),
       };
-      const url = inv ? `${patchUrlPrefix}/${inv.id}` : createUrl;
-      const method = inv ? "PATCH" : "POST";
-      const body = extraPayload ? { ...payload, ...extraPayload } : payload;
+      let url: string;
+      let method: string;
+      let body: Record<string, unknown>;
+      if (reissueFromInvoiceId) {
+        url = `/api/finance/order-invoices/${reissueFromInvoiceId}/reissue`;
+        method = "POST";
+        body = { ...payload, reason: reissueReason };
+      } else if (inv) {
+        url = `${patchUrlPrefix}/${inv.id}`;
+        method = "PATCH";
+        body = extraPayload ? { ...payload, ...extraPayload } : payload;
+      } else {
+        url = createUrl;
+        method = "POST";
+        body = extraPayload ? { ...payload, ...extraPayload } : payload;
+      }
       const res = await fetch(url, {
         method, headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -335,7 +378,7 @@ function InvoiceFormContent({
       return data;
     },
     onSuccess: () => {
-      toast.success(inv ? "已更新" : "开票申请已保存");
+      toast.success(inv && !reissueFromInvoiceId ? "已更新" : "开票申请已保存");
       onClose();
       onSuccess();
     },
@@ -436,7 +479,7 @@ function InvoiceFormContent({
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle>{inv ? "编辑开票申请" : "新建开票申请"}</DialogTitle>
+            <DialogTitle>{reissueFromInvoiceId ? "重开发票" : inv ? "编辑开票申请" : "新建开票申请"}</DialogTitle>
             {aiDraftUrl && (
               <Button size="sm" variant="outline" className="h-7 text-xs" disabled={aiDraftLoading} onClick={handleAiDraft}>
                 {aiDraftLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Wand2 className="mr-1 h-3 w-3" />}
@@ -470,7 +513,7 @@ function InvoiceFormContent({
           previewText={previewText} formSheetData={formSheetData}
           copyText={copyText} exportPdf={exportPdf}
           canSubmit={canSubmit} saveMutation={saveMutation}
-          onClose={onClose} isEdit={!!inv}
+          onClose={onClose} isEdit={!!inv && !reissueFromInvoiceId}
         />
       </DialogContent>
 

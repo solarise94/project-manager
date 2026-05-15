@@ -241,6 +241,23 @@ export interface CrmReportCustomerItem {
   hasOrderThisWeek: boolean;
 }
 
+export interface CrmReportLineItem {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerCode?: string;
+  organization: string | null;
+  demand: string;
+  note: string;
+  sortOrder: number;
+  customerExists?: boolean;
+  stage?: string;
+  importance?: string;
+  weeklyVisitCount?: number;
+  lastVisitAt?: string | null;
+  hasOrderThisWeek?: boolean;
+}
+
 export interface CrmRepresentativeReport {
   representative: { id: string; name: string; email: string };
   periodStart: string;
@@ -252,5 +269,6 @@ export interface CrmRepresentativeReport {
     communicatedCustomerCount: number;
   };
   customers: CrmReportCustomerItem[];
+  lines: CrmReportLineItem[];
   draftNote: string | null;
 }

@@ -119,7 +119,7 @@ async function scanAndNotifySupervisorReviews() {
 ${newSection}
 ${top5 ? `<ul>${top5}</ul>` : ""}
 ${pendingCount > 5 ? `<p>... 以及其他 ${pendingCount - 5} 条申请</p>` : ""}
-<p><a href="${baseUrl}/crm/customer-applications?review=PENDING" style="display: inline-block; background: #0284c7; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">查看待复核申请</a></p>
+<p><a href="${baseUrl}/crm/customer-applications?view=review" style="display: inline-block; background: #0284c7; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">查看待复核申请</a></p>
 <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
 <p style="color: #64748b; font-size: 12px;">SciManage 科研项目管理平台 -- 此邮件每小时发送一次</p>
 </div>`;

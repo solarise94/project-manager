@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
 import { ORDER_STATUS_TRANSITIONS, ORDER_DELIVERY_TRANSITIONS } from "@/lib/orders/constants";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { getInvoicesForOrder } from "@/lib/finance/order-invoices";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -36,13 +37,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       },
       receipts: { select: { id: true, amount: true, receivedAt: true, source: true, remark: true, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
       financeCosts: { select: { id: true, amount: true, costType: true, remark: true, createdAt: true }, take: 20, orderBy: { createdAt: "desc" } },
-      invoiceRequests: { select: { id: true, status: true, totalAmount: true, invoiceType: true, contentSummary: true, createdAt: true }, take: 20, orderBy: { createdAt: "desc" } },
-      invoiceCoverage: { select: { invoiceRequest: { select: { id: true, status: true, totalAmount: true, invoiceType: true, contentSummary: true, createdAt: true } } }, take: 10 },
       _count: { select: { lines: true, sourceRecords: true, projectLinks: true, receipts: true, invoiceRequests: true, financeCosts: true } },
     },
   });
 
   if (!order) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Unified invoices (includes legacy direct + legacy coverage + new direct + new coverage)
+  const unifiedInvoices = await getInvoicesForOrder(id);
 
   // Scope check for non-ADMIN
   if (session.user.role !== "ADMIN") {
@@ -58,7 +60,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  return NextResponse.json({ order });
+  return NextResponse.json({ order, invoices: unifiedInvoices });
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

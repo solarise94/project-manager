@@ -20,7 +20,7 @@ export async function getOrderInvoiceTotals(orderIds: string[]): Promise<Map<str
 
   // Direct: orderId on invoice request
   const direct = await prisma.externalOrderInvoiceRequest.findMany({
-    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" } },
+    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
     select: { id: true, orderId: true, totalAmount: true },
   });
   for (const inv of direct) {
@@ -31,7 +31,7 @@ export async function getOrderInvoiceTotals(orderIds: string[]): Promise<Map<str
   const coverage = await prisma.orderInvoiceCoverage.findMany({
     where: {
       orderId: { in: orderIds },
-      invoiceRequest: { status: { not: "CANCELLED" } },
+      invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
     },
     select: {
       orderId: true,
@@ -97,14 +97,14 @@ export async function getGlobalInvoiceTotal(orderIds: string[]): Promise<number>
 
   // Collect all unique invoice requests that touch these orders
   const directInvoices = await prisma.externalOrderInvoiceRequest.findMany({
-    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" } },
+    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
     select: { id: true, totalAmount: true },
   });
 
   const coverageInvoices = await prisma.orderInvoiceCoverage.findMany({
     where: {
       orderId: { in: orderIds },
-      invoiceRequest: { status: { not: "CANCELLED" } },
+      invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
     },
     select: { invoiceRequest: { select: { id: true, totalAmount: true } } },
   });

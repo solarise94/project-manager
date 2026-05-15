@@ -93,7 +93,7 @@ function RelationsList() {
         <Link href="/crm">
           <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
-        <h1 className={cn("font-bold", isMobile ? "text-base" : "text-2xl")}>客户关系中心</h1>
+        <h1 className={cn("font-bold", isMobile ? "text-base" : "text-2xl")}>关系管理</h1>
         <div className="ml-auto flex items-center gap-2">
           {isMobile && (
             <Sheet>

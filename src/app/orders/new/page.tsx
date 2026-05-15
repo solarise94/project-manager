@@ -436,7 +436,7 @@ function NewOrderForm() {
     : String(primaryLine?.quantity || 1);
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <div><Link href="/orders" className="text-sm text-muted-foreground hover:underline">&larr; 返回</Link><h1 className="text-xl font-bold">新建服务订单</h1></div>
       </div>

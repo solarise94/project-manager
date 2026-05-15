@@ -350,7 +350,7 @@ function GraphView() {
 
         {!focusCustomer && (
           <div className="text-center text-sm text-muted-foreground py-12">
-            搜索客户以查看其关系网络
+            搜索客户以查看其关系图谱
           </div>
         )}
       </div>

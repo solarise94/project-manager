@@ -3,7 +3,8 @@
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,14 @@ const CONFLICT_BADGES: Record<string, { label: string; className: string }> = {
 };
 
 export default function CrmCustomerApplicationsPage() {
+  return (
+    <Suspense fallback={<div className="p-6">加载中...</div>}>
+      <ApplicationPageInner />
+    </Suspense>
+  );
+}
+
+function ApplicationPageInner() {
   const { status, data: session } = useSession();
   const router = useRouter();
 
@@ -105,6 +114,8 @@ export default function CrmCustomerApplicationsPage() {
 function ApplicationList() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewing, setReviewing] = useState<ApplicationItem | null>(null);
   const [reviewNote, setReviewNote] = useState("");
@@ -122,12 +133,35 @@ function ApplicationList() {
   const canReview = isAdmin || isRegionalManager;
   const isRep = session?.user?.role === "REPRESENTATIVE";
 
-  const [filterMode, setFilterMode] = useState<"review" | "all">(isRep ? "all" : "review");
+  const filterMode = useMemo<"pending" | "review" | "all">(() => {
+    if (isRep) return "all";
+    const view = searchParams.get("view");
+    if (view === "review" || view === "pending" || view === "all") return view;
+    if (searchParams.get("review") === "PENDING") return "review";
+    return "pending";
+  }, [searchParams, isRep]);
 
   const { data, isLoading } = useQuery<{ applications: ApplicationItem[] }>({
     queryKey: ["crm-customer-applications", filterMode],
-    queryFn: () => fetch(`/api/crm/customer-applications${filterMode === "review" ? "?review=PENDING" : ""}`).then((r) => r.json()),
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filterMode !== "all") params.set("view", filterMode);
+      return fetch(`/api/crm/customer-applications?${params.toString()}`).then((r) => r.json());
+    },
   });
+
+  const applications = useMemo(() => data?.applications || [], [data]);
+
+  // Prune selectedIds to intersection with current application IDs when data changes
+  useEffect(() => {
+    const currentIds = new Set(applications.map((a) => a.id));
+    const hasStale = [...selectedIds].some((id) => !currentIds.has(id));
+    if (hasStale) {
+      queueMicrotask(() => {
+        setSelectedIds((prev) => new Set([...prev].filter((id) => currentIds.has(id))));
+      });
+    }
+  }, [applications, selectedIds]);
 
   const { data: assigneesData } = useQuery<{ assignees: AssigneeOption[] }>({
     queryKey: ["crm-assignees"],
@@ -367,9 +401,6 @@ function ApplicationList() {
     setReviewOpen(true);
   };
 
-  const applications = data?.applications || [];
-  const pendingCount = applications.filter((a) => a.status === "PENDING").length;
-  const reviewCount = applications.filter((a) => a.adminReviewStatus === "PENDING").length;
   const assignees = assigneesData?.assignees || [];
 
   function openRejectReviewDialog(app: ApplicationItem) {
@@ -387,32 +418,35 @@ function ApplicationList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {canReview ? "客户申请审核" : "我的客户申请"}
+            {canReview ? "客户申请与主管复核" : "我的客户申请"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
             {canReview
-              ? `待复核 ${reviewCount} 条，待审核 ${pendingCount} 条`
+              ? (filterMode === "pending" ? `待创建 ${applications.length} 条` : filterMode === "review" ? `待复核 ${applications.length} 条` : `共 ${applications.length} 条`)
               : "申请将自动通过并创建客户档案，主管会进行复核"}
           </p>
           {canReview && (
             <div className="flex items-center gap-2 mt-2">
-              <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => setFilterMode("review")}>
-                待复核 ({reviewCount})
+              <Button size="sm" variant={filterMode === "pending" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=pending"); }}>
+                待创建
               </Button>
-              <Button size="sm" variant={filterMode === "all" ? "default" : "outline"} onClick={() => setFilterMode("all")}>
+              <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=review"); }}>
+                待复核
+              </Button>
+              <Button size="sm" variant={filterMode === "all" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=all"); }}>
                 全部
               </Button>
             </div>
           )}
-          {canReview && pendingCount > 0 && (
+          {canReview && filterMode === "pending" && applications.length > 0 && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 rounded border-gray-300"
-                checked={applications.filter((a) => a.status === "PENDING").every((a) => selectedIds.has(a.id))}
+                checked={applications.every((a) => selectedIds.has(a.id))}
                 onChange={toggleSelectAll}
               />
-              全选本页待审核
+              全选本页待创建
             </label>
           )}
         </div>
@@ -420,7 +454,7 @@ function ApplicationList() {
       </div>
 
       {/* Batch action bar */}
-      {canReview && selectedIds.size > 0 && (
+      {canReview && filterMode === "pending" && selectedIds.size > 0 && (
         <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-sm font-medium">已选择 {selectedIds.size} 条</span>
@@ -485,7 +519,7 @@ function ApplicationList() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
-                    {canReview && app.status === "PENDING" && (
+                    {canReview && filterMode === "pending" && (
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 shrink-0"
