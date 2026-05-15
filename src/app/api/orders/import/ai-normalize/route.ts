@@ -48,9 +48,12 @@ export async function POST(req: NextRequest) {
   let source: string;
   let rawText: string;
 
+  let sourceRemark: string | undefined;
+
   if (ct.includes("multipart/form-data")) {
     const form = await req.formData();
     source = (form.get("source") as string | null)?.trim() || "OTHER_IMPORT";
+    sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
     const file = form.get("file") as File | null;
     if (!file) return NextResponse.json({ error: "缺少 file" }, { status: 400 });
     const buf = Buffer.from(await file.arrayBuffer());
@@ -65,6 +68,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (!body || typeof body.rawText !== "string") return NextResponse.json({ error: "缺少 rawText" }, { status: 400 });
     source = (body.source as string)?.trim() || "OTHER_IMPORT";
+    sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
     rawText = body.rawText.trim();
   }
 
@@ -100,6 +104,7 @@ export async function POST(req: NextRequest) {
       rawColumns,
       rowCount,
       suggestedMode: "AI_NORMALIZE",
+      sourceRemark,
     });
   }
 
@@ -109,5 +114,6 @@ export async function POST(req: NextRequest) {
     rawColumns,
     rowCount,
     suggestedMode: "AI_NORMALIZE",
+    sourceRemark,
   });
 }

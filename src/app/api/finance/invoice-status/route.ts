@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
         where: { status: { not: "CANCELLED" } },
         select: { id: true, totalAmount: true, status: true, createdAt: true },
       },
-      receipts: { select: { id: true, amount: true, projectInvoiceId: true } },
+      receipts: { where: { deleted: false }, select: { id: true, amount: true, projectInvoiceId: true } },
     },
   });
 

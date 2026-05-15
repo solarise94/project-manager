@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -9,6 +10,21 @@ export async function GET() {
 
   if (session.user.role === "REPRESENTATIVE") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // REGIONAL_MANAGER: only self + managed reps; ADMIN: all reps
+  let allowedRepEmails: Set<string> | null = null;
+  if (session.user.role === "REGIONAL_MANAGER") {
+    const managedIds = await getRegionalManagerUserIds(session.user.id);
+    if (managedIds && managedIds.length > 0) {
+      const managedUsers = await prisma.user.findMany({
+        where: { id: { in: managedIds } },
+        select: { email: true },
+      });
+      allowedRepEmails = new Set(managedUsers.map((u) => u.email));
+    } else {
+      allowedRepEmails = new Set();
+    }
   }
 
   const reps = await prisma.representative.findMany({
@@ -43,6 +59,8 @@ export async function GET() {
     const user = emailToUser.get(rep.email);
     if (!user) continue;
     if (user.id === session.user.id) continue;
+    // REGIONAL_MANAGER: only show managed reps
+    if (allowedRepEmails && !allowedRepEmails.has(rep.email)) continue;
     assignees.push({
       userId: user.id,
       name: rep.name,

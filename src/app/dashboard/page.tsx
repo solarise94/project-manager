@@ -61,7 +61,7 @@ function getWorkbenchGroups(role: string | undefined): WorkbenchGroup[] {
         ...(role === "ADMIN"
           ? [{ label: "新建服务订单", href: "/orders/new", icon: FolderPlus, description: "创建新的服务订单" }]
           : []),
-        { label: "拼好鼠订单", href: "/orders?source=PINGOODMICE", icon: ShoppingCart, description: "查看拼好鼠平台订单" },
+        { label: "平台订单", href: "/orders?source=PINGOODMICE", icon: ShoppingCart, description: "查看导入平台订单" },
       ],
     });
   }

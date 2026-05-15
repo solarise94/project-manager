@@ -6,24 +6,26 @@ import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource } from "@/lib/orders/constants";
 import { generateImportOrderNo, computeOrderAmount, withRetry } from "@/lib/orders/import-commit";
 
-async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string } | { error: string }> {
+async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("multipart/form-data")) {
     const form = await req.formData();
     const source = (form.get("source") as string | null)?.trim();
+    const sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
     const file = form.get("file") as File | null;
     if (!source || !file) return { error: "缺少 source 或 file" };
     const buf = Buffer.from(await file.arrayBuffer());
-    return { source, rawText: decodeImportFile(buf) };
+    return { source, rawText: decodeImportFile(buf), sourceRemark };
   }
   const body = await req.json().catch(() => null);
   if (!body || typeof body.source !== "string" || typeof body.rawText !== "string") {
     return { error: "缺少 source 或 rawText" };
   }
   const source = body.source.trim();
+  const sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
   const rawText = body.rawText.trim();
   if (!source || !rawText) return { error: "source 和 rawText 不能为空" };
-  return { source, rawText };
+  return { source, rawText, sourceRemark };
 }
 
 export async function POST(req: NextRequest) {
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
   const input = await extractInput(req);
   if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 });
 
-  const { source, rawText } = input;
+  const { source, rawText, sourceRemark } = input;
   const { rows, errors, format } = parseOrderText(source, rawText);
   if (rows.length === 0 && errors.length > 0) {
     return NextResponse.json({ error: errors[0].message, errors, format }, { status: 422 });
@@ -48,7 +50,7 @@ export async function POST(req: NextRequest) {
   for (const row of rows) {
     const existingSrc = await prisma.orderSourceRecord.findUnique({
       where: { source_externalOrderNo: { source: normalizeOrderSource(row.source), externalOrderNo: row.externalOrderNo } },
-      select: { orderId: true },
+      select: { id: true, orderId: true },
     });
 
     const totalAmount = computeOrderAmount(row);
@@ -59,6 +61,7 @@ export async function POST(req: NextRequest) {
         where: { id: existingSrc.orderId },
         data: {
           totalAmount: totalAmount > 0 ? totalAmount : undefined,
+          sourceRemark: sourceRemark ?? undefined,
           buyerNameSnapshot: row.receiverName ?? undefined,
           buyerPhoneSnapshot: row.receiverPhone ?? undefined,
           buyerAddressSnapshot: row.receiverAddress ?? undefined,
@@ -69,6 +72,12 @@ export async function POST(req: NextRequest) {
           title: row.productNamesRaw ?? undefined,
         },
       });
+      if (sourceRemark !== undefined) {
+        await prisma.orderSourceRecord.update({
+          where: { id: existingSrc.id },
+          data: { sourceRemark },
+        });
+      }
       updated++;
       continue;
     }
@@ -84,9 +93,10 @@ export async function POST(req: NextRequest) {
               orderNo,
               source: normalizeOrderSource(row.source),
               sourcePlatform: row.platform || source,
+              sourceRemark,
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
-              title: row.productNamesRaw || `${row.receiverName || "未知"}的拼好鼠订单`,
+              title: row.productNamesRaw || `${row.receiverName || "未知"}的平台订单`,
               category: "UNKNOWN",
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
@@ -107,6 +117,7 @@ export async function POST(req: NextRequest) {
             data: {
               orderId: order.id,
               source: normalizeOrderSource(row.source),
+              sourceRemark,
               platform: row.platform || source,
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
@@ -114,7 +125,7 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          const itemName = row.productNamesRaw || row.externalOrderNo || "拼好鼠订单";
+          const itemName = row.productNamesRaw || row.externalOrderNo || "平台订单";
           await tx.orderLine.create({
             data: {
               orderId: order.id,

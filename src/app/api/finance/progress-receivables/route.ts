@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { isFinanceBlocked, getFinanceProjectScopeWhere, getFinanceCustomerScopeWhere } from "@/lib/finance/permissions";
 import { prisma } from "@/lib/prisma";
 import { isProductProject } from "@/lib/finance/types";
-import { getProjectStartDate, getOrderDate, getOrderEffectiveTreatment, computeOrderFinanceAmount, resolveProjectCompletionDate } from "@/lib/finance/progress";
+import { getProjectStartDate, getOrderDate, getOrderEffectiveTreatment, computeOrderFinanceAmount, resolveProjectCompletionDate, getProgressAdjustmentsForDateRange, getProgressAdjustmentsForPeriodWithDetails, getProgressAdjustmentsForDateRangeWithDetails } from "@/lib/finance/progress";
 import { getProjectTypeLabel } from "@/lib/project-type";
 
 function getWeekRange() {
@@ -169,9 +169,52 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const periodKey = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}`;
+
+  // Build scope lists for adjustment filtering
+  const scopedOrderIds = session.user.role !== "ADMIN" ? orderIds : undefined;
+  const scopedProjectIds = session.user.role !== "ADMIN" ? allProjects.map((p) => p.id) : undefined;
+
+  const [adjustmentAmount, adjustmentItems] = await Promise.all([
+    getProgressAdjustmentsForDateRange(range.start, range.end, scopedOrderIds, scopedProjectIds),
+    period === "month"
+      ? getProgressAdjustmentsForPeriodWithDetails(periodKey, scopedOrderIds, scopedProjectIds)
+      : getProgressAdjustmentsForDateRangeWithDetails(range.start, range.end, scopedOrderIds, scopedProjectIds),
+  ]);
+
+  // Enrich adjustment items with order/project names
+  const adjustmentOrderIds = [...new Set(adjustmentItems.map((a) => a.orderId).filter(Boolean))] as string[];
+  const adjustmentProjectIds = [...new Set(adjustmentItems.map((a) => a.projectId).filter(Boolean))] as string[];
+
+  const [adjOrders, adjProjects] = await Promise.all([
+    adjustmentOrderIds.length > 0
+      ? prisma.order.findMany({ where: { id: { in: adjustmentOrderIds } }, select: { id: true, orderNo: true } })
+      : [],
+    adjustmentProjectIds.length > 0
+      ? prisma.project.findMany({ where: { id: { in: adjustmentProjectIds } }, select: { id: true, name: true } })
+      : [],
+  ]);
+
+  const orderMap = new Map(adjOrders.map((o) => [o.id, o.orderNo]));
+  const projectMap = new Map(adjProjects.map((p) => [p.id, p.name]));
+
+  const adjustmentRows = adjustmentItems.map((a) => ({
+    type: "ORDER_REVISION_ADJUSTMENT",
+    orderId: a.orderId,
+    projectId: a.projectId,
+    orderNo: a.orderId ? (orderMap.get(a.orderId) || null) : null,
+    projectName: a.projectId ? (projectMap.get(a.projectId) || null) : null,
+    amount: a.amount,
+    periodKey: a.periodKey,
+    reason: a.reason,
+    revisionId: a.sourceId,
+  }));
+
   return NextResponse.json({
     period,
-    total: totalServiceDeposit + totalServiceFinal + totalProductReceivable + orderDepositTotal + orderProductTotal,
+    total: totalServiceDeposit + totalServiceFinal + totalProductReceivable + orderDepositTotal + orderProductTotal + adjustmentAmount,
+    adjustmentAmount,
+    adjustmentItems: adjustmentRows,
     serviceDeposit: totalServiceDeposit,
     serviceFinal: totalServiceFinal,
     productReceivable: totalProductReceivable,

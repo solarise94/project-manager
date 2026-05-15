@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
         where: { invoiceRequest: { status: { not: "CANCELLED" } } },
         select: { id: true },
       },
-      receipts: { select: { id: true } },
+      receipts: { where: { deleted: false }, select: { id: true } },
       financeCosts: { select: { id: true } },
     },
   });

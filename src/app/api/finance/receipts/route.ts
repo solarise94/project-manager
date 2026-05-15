@@ -43,6 +43,8 @@ export async function GET(req: NextRequest) {
   const search = url.searchParams.get("search")?.trim();
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
   const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
+  const includeDeleted = url.searchParams.get("includeDeleted") === "1" && session.user.role === "ADMIN";
+  const deletedOnly = url.searchParams.get("deletedOnly") === "1" && session.user.role === "ADMIN";
 
   // If projectId is passed, resolve to order IDs via OrderProjectLink
   let resolvedOrderIds: string[] | null = null;
@@ -107,6 +109,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Deletion filter: non-ADMIN always sees only non-deleted; ADMIN can toggle
+  if (deletedOnly) {
+    andConditions.push({ deleted: true });
+  } else if (!includeDeleted) {
+    andConditions.push({ deleted: false });
+  }
+
   const where: Record<string, unknown> = andConditions.length === 1
     ? andConditions[0]
     : (andConditions.length > 0 ? { AND: andConditions } : {});
@@ -117,7 +126,16 @@ export async function GET(req: NextRequest) {
       orderBy: { receivedAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: {
+      select: {
+        id: true,
+        amount: true,
+        receivedAt: true,
+        source: true,
+        remark: true,
+        deleted: true,
+        deletedAt: true,
+        deletedById: true,
+        deleteReason: true,
         customer: { select: { id: true, name: true } },
         order: { select: { id: true, orderNo: true, externalOrderNo: true } },
         createdBy: { select: { id: true, name: true } },
@@ -126,7 +144,19 @@ export async function GET(req: NextRequest) {
     prisma.financeReceipt.count({ where }),
   ]);
 
-  return NextResponse.json({ receipts, total, page, pageSize });
+  // Resolve deletedBy user names
+  const deletedByIds = [...new Set(receipts.map((r) => r.deletedById).filter(Boolean))] as string[];
+  const deletedByUsers = deletedByIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: deletedByIds } }, select: { id: true, name: true } })
+    : [];
+  const deletedByNameMap = new Map(deletedByUsers.map((u) => [u.id, u.name]));
+
+  const result = receipts.map((r) => ({
+    ...r,
+    deletedByName: r.deletedById ? (deletedByNameMap.get(r.deletedById) || null) : null,
+  }));
+
+  return NextResponse.json({ receipts: result, total, page, pageSize });
 }
 
 export async function POST(req: NextRequest) {

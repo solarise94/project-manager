@@ -176,14 +176,14 @@ export async function getFinanceSummary(
     }),
     prisma.financeReceipt.aggregate({
       _sum: { amount: true },
-      where: receiptScopeWhere,
+      where: { ...receiptScopeWhere, deleted: false },
     }),
     prisma.projectInvoice.count({
       where: { status: { in: ["DRAFT", "REQUESTED"] }, project: projectWhere },
     }),
     prisma.customer.count({ where: customerWhere }),
     prisma.project.count({ where: projectWhere }),
-    prisma.financeReceipt.count({ where: receiptScopeWhere }),
+    prisma.financeReceipt.count({ where: { ...receiptScopeWhere, deleted: false } }),
     prisma.financeCost.aggregate({
       _sum: { amount: true },
       where: (customerScope || projectScope)
@@ -214,7 +214,12 @@ export async function getFinanceSummary(
   const progressStandaloneOrders = allOrders
     .filter((o) => getOrderEffectiveTreatment(o.financeTreatment, linkMap.has(o.id)) === "STANDALONE")
     .map((o) => ({ ...o, hasProjectLinks: linkMap.has(o.id) }));
-  const progress = await computeAllProgressReceivables(allProjectsForProgress, progressStandaloneOrders);
+  const progress = await computeAllProgressReceivables(
+    allProjectsForProgress,
+    progressStandaloneOrders,
+    orderIds,
+    allProjectsForProgress.map((p) => p.id),
+  );
 
   let unmatchedOnlineOrderAmount = 0;
   if (!customerScope && !projectScope) {
@@ -308,7 +313,7 @@ export async function getCustomerFinanceList(
             },
           },
         },
-        receipts: { select: { amount: true } },
+        receipts: { where: { deleted: false }, select: { amount: true } },
       },
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -409,6 +414,7 @@ export async function getCustomerFinanceDetail(
         },
       },
       receipts: {
+        where: { deleted: false },
         select: { id: true, amount: true, receivedAt: true, source: true, remark: true },
         orderBy: { receivedAt: "desc" },
       },

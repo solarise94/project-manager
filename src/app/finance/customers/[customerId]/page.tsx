@@ -95,7 +95,7 @@ function CustomerFinanceDetail() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <FinanceKpiCard
-          title="拼好鼠订单额"
+          title="平台订单额"
           value={data.summary.onlineOrderTotal}
           icon={ShoppingBag}
         />

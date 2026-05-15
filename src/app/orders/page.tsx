@@ -15,11 +15,11 @@ import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
 import { FolderTree, Receipt, UserRound, Filter, X, FileText, Trash2 } from "lucide-react";
 import { canAccessOrders } from "@/lib/role-guards";
+import { getOrderSourcePublicLabel, getOrderSourceDisplay } from "@/lib/orders/source-labels";
 import { toast } from "sonner";
 
 const PAGE_SIZE = 20;
 
-const SOURCE_LABELS: Record<string, string> = { MANUAL: "手动", PINGOODMICE: "拼好鼠", OTHER_IMPORT: "其他导入" };
 const STATUS_LABELS: Record<string, string> = { DRAFT: "草稿", CONFIRMED: "已确认", CANCELLED: "已取消", CLOSED: "已关闭" };
 const CATEGORY_LABELS: Record<string, string> = { SERVICE: "服务", PRODUCT: "商品", MIXED: "混合", UNKNOWN: "未分类" };
 const TREATMENT_LABELS: Record<string, string> = { AUTO: "自动", STANDALONE: "独立计入", PROJECT_INCLUDED: "并入项目", EXCLUDED: "排除" };
@@ -27,7 +27,7 @@ const DELIVERY_LABELS: Record<string, string> = { PENDING: "未交付", PARTIAL:
 const MATCH_LABELS: Record<string, string> = { UNMATCHED: "未匹配", AUTO_MATCHED: "自动匹配", MANUAL_MATCHED: "人工匹配", CONFLICT: "冲突" };
 
 const FILTER_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  source: [{ value: "", label: "全部来源" }, { value: "MANUAL", label: "手动" }, { value: "PINGOODMICE", label: "拼好鼠" }, { value: "OTHER_IMPORT", label: "其他导入" }],
+  source: [{ value: "", label: "全部来源" }, { value: "MANUAL", label: "手动" }, { value: "PINGOODMICE", label: "平台导入" }, { value: "OTHER_IMPORT", label: "外部导入" }],
   status: [{ value: "", label: "全部状态" }, { value: "DRAFT", label: "草稿" }, { value: "CONFIRMED", label: "已确认" }, { value: "CANCELLED", label: "已取消" }, { value: "CLOSED", label: "已关闭" }],
   deliveryStatus: [{ value: "", label: "全部交付" }, { value: "PENDING", label: "未交付" }, { value: "PARTIAL", label: "部分交付" }, { value: "DELIVERED", label: "已交付" }, { value: "WAIVED", label: "无需交付" }],
   category: [{ value: "", label: "全部分类" }, { value: "SERVICE", label: "服务" }, { value: "PRODUCT", label: "商品" }, { value: "MIXED", label: "混合" }, { value: "UNKNOWN", label: "未分类" }],
@@ -239,7 +239,7 @@ function OrdersContent() {
   const getVariant = (v: string) => (BADGE_VARIANT[v] || "secondary") as "default" | "secondary" | "destructive" | "outline";
 
   const activeFilters = [
-    { key: "source", value: source, label: SOURCE_LABELS[source] || source },
+    { key: "source", value: source, label: getOrderSourcePublicLabel(source) },
     { key: "status", value: status, label: STATUS_LABELS[status] || status },
     { key: "deliveryStatus", value: deliveryStatus, label: DELIVERY_LABELS[deliveryStatus] || deliveryStatus },
     { key: "category", value: category, label: CATEGORY_LABELS[category] || category },
@@ -466,7 +466,7 @@ function OrdersContent() {
       {!loading && (
         <div className="flex items-center gap-3 text-sm text-muted-foreground bg-muted/30 rounded-lg px-4 py-2 flex-wrap">
           <span className="font-medium text-foreground">共 {total} 条</span>
-          {source && <span>来源: {SOURCE_LABELS[source] || source}</span>}
+          {source && <span>来源: {getOrderSourcePublicLabel(source)}</span>}
           {matchStatus === "UNMATCHED" && <span className="text-amber-600">待匹配</span>}
           {matchStatus === "CONFLICT" && <span className="text-red-600">冲突待确认</span>}
           {hasAnyFilter && (
@@ -566,7 +566,7 @@ function OrdersContent() {
                         </td>
                       )}
                       <td className="p-2 font-mono text-xs truncate" title={extNo}>{extNo}</td>
-                      <td className="p-2 text-xs">{SOURCE_LABELS[o.source as string] || (o.source as string)}</td>
+                      <td className="p-2 text-xs">{getOrderSourceDisplay(o.source as string, (o as Record<string, unknown>).sourceRemark as string | null)}</td>
                       <td className="p-2 max-w-[220px]">
                         <div className="truncate font-medium" title={o.title as string}>{o.title as string}</div>
                         <div className="text-xs text-muted-foreground truncate" title={(cust?.name || o.buyerNameSnapshot) as string}>{(cust?.name || o.buyerNameSnapshot) as string || "-"}</div>

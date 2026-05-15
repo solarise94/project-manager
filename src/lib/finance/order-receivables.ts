@@ -132,7 +132,7 @@ export async function getGlobalInvoiceTotal(orderIds: string[]): Promise<number>
 export async function getOrderReceiptTotals(orderIds: string[]): Promise<Map<string, number>> {
   if (orderIds.length === 0) return new Map();
   const receipts = await prisma.financeReceipt.findMany({
-    where: { orderId: { in: orderIds } },
+    where: { orderId: { in: orderIds }, deleted: false },
     select: { orderId: true, amount: true },
   });
   const result = new Map<string, number>();

@@ -51,9 +51,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       const receipt = await tx.financeReceipt.findUnique({
         where: { id: settledByReceiptId },
-        select: { id: true, amount: true, orderId: true, projectId: true, customerId: true },
+        select: { id: true, amount: true, orderId: true, projectId: true, customerId: true, deleted: true },
       });
       if (!receipt) throw new Error("回款记录不存在");
+      if (receipt.deleted) throw new Error("该回款记录已删除，不能用于垫付退款结算");
 
       // Entity consistency: order-first cascading match.
       // If advance has an order, receipt must belong to that same order.

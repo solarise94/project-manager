@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
 
   const ct = req.headers.get("content-type") || "";
   let source: string;
+  let sourceRemark: string | undefined;
   let rawText: string;
   let customerMode: CustomerMode = "MATCH_ONLY";
   let organizationMode: OrganizationMode = "RESOLVE_ONLY";
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
   if (ct.includes("multipart/form-data")) {
     const form = await req.formData();
     source = (form.get("source") as string | null)?.trim() || "OTHER_IMPORT";
+    sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
     customerMode = (form.get("customerMode") as CustomerMode) || "MATCH_ONLY";
     organizationMode = (form.get("organizationMode") as OrganizationMode) || "RESOLVE_ONLY";
     ownerUserId = (form.get("ownerUserId") as string)?.trim() || null;
@@ -60,6 +62,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "无效请求体" }, { status: 400 });
     source = (body.source as string)?.trim() || "OTHER_IMPORT";
+    sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
     rawText = (body.rawText as string)?.trim() || "";
     customerMode = (body.customerMode as CustomerMode) || "MATCH_ONLY";
     organizationMode = (body.organizationMode as OrganizationMode) || "RESOLVE_ONLY";
@@ -148,7 +151,7 @@ export async function POST(req: NextRequest) {
         // Dedup check inside retry so concurrent imports see committed records on retry
         const existingSrc = await prisma.orderSourceRecord.findUnique({
           where: { source_externalOrderNo: { source: normalizedSource, externalOrderNo: row.externalOrderNo } },
-          select: { orderId: true },
+          select: { id: true, orderId: true },
         });
         if (existingSrc?.orderId) {
           const totalAmount = computeOrderAmount(row);
@@ -156,6 +159,7 @@ export async function POST(req: NextRequest) {
             where: { id: existingSrc.orderId },
             data: {
               totalAmount: totalAmount > 0 ? totalAmount : undefined,
+              sourceRemark: sourceRemark ?? undefined,
               buyerNameSnapshot: row.receiverName ?? undefined,
               buyerPhoneSnapshot: row.receiverPhone ?? undefined,
               buyerAddressSnapshot: row.receiverAddress ?? undefined,
@@ -166,6 +170,12 @@ export async function POST(req: NextRequest) {
               title: row.productNamesRaw ?? undefined,
             },
           });
+          if (sourceRemark !== undefined) {
+            await prisma.orderSourceRecord.update({
+              where: { id: existingSrc.id },
+              data: { sourceRemark },
+            });
+          }
           return "updated" as const;
         }
 
@@ -194,6 +204,7 @@ export async function POST(req: NextRequest) {
               orderNo,
               source: normalizedSource,
               sourcePlatform: row.platform || source,
+              sourceRemark,
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
               title: row.productNamesRaw || `${row.receiverName || "未知"}的订单`,
@@ -221,6 +232,7 @@ export async function POST(req: NextRequest) {
             data: {
               orderId: order.id,
               source: normalizedSource,
+              sourceRemark,
               platform: row.platform || source,
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,

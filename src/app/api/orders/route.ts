@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       where, orderBy: [{ orderedAt: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * pageSize, take: pageSize,
       select: {
-        id: true, orderNo: true, source: true, sourcePlatform: true, externalOrderNo: true,
+        id: true, orderNo: true, source: true, sourcePlatform: true, sourceRemark: true, externalOrderNo: true,
         title: true, category: true, status: true, deliveryStatus: true,
         orderedAt: true, confirmedAt: true,
         customerId: true, customer: { select: { id: true, name: true, customerCode: true, crmProfile: { select: { sourceCustomerId: true } } } },
@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
         invoiceRequests: { where: { status: { not: "CANCELLED" } }, select: { status: true } },
         invoiceCoverage: { where: { invoiceRequest: { status: { not: "CANCELLED" } } }, select: { invoiceRequest: { select: { status: true } } } },
         sourceRecords: { select: { duplicateStatus: true }, take: 1, orderBy: { createdAt: "desc" } },
-        _count: { select: { lines: true, receipts: true } },
+        _count: { select: { lines: true, receipts: { where: { deleted: false } } } },
       },
     }),
     prisma.order.count({ where }),

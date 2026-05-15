@@ -130,7 +130,8 @@ function ApplicationList() {
 
   const isAdmin = session?.user?.role === "ADMIN";
   const isRegionalManager = session?.user?.role === "REGIONAL_MANAGER";
-  const canReview = isAdmin || isRegionalManager;
+  const canAdminCreate = isAdmin;
+  const canSupervisorReview = isAdmin || isRegionalManager;
   const isRep = session?.user?.role === "REPRESENTATIVE";
 
   const filterMode = useMemo<"pending" | "review" | "all">(() => {
@@ -138,8 +139,9 @@ function ApplicationList() {
     const view = searchParams.get("view");
     if (view === "review" || view === "pending" || view === "all") return view;
     if (searchParams.get("review") === "PENDING") return "review";
-    return "pending";
-  }, [searchParams, isRep]);
+    // Regional managers default to review view; admins default to pending
+    return isRegionalManager ? "review" : "pending";
+  }, [searchParams, isRep, isRegionalManager]);
 
   const { data, isLoading } = useQuery<{ applications: ApplicationItem[] }>({
     queryKey: ["crm-customer-applications", filterMode],
@@ -166,7 +168,7 @@ function ApplicationList() {
   const { data: assigneesData } = useQuery<{ assignees: AssigneeOption[] }>({
     queryKey: ["crm-assignees"],
     queryFn: () => fetch("/api/crm/assignees").then((r) => r.json()),
-    enabled: canReview,
+    enabled: canSupervisorReview,
   });
 
   const [candidates, setCandidates] = useState<CandidateCustomer[]>([]);
@@ -418,18 +420,20 @@ function ApplicationList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {canReview ? "客户申请与主管复核" : "我的客户申请"}
+            {canSupervisorReview ? "客户申请与主管复核" : "我的客户申请"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {canReview
+            {canSupervisorReview
               ? (filterMode === "pending" ? `待创建 ${applications.length} 条` : filterMode === "review" ? `待复核 ${applications.length} 条` : `共 ${applications.length} 条`)
               : "申请将自动通过并创建客户档案，主管会进行复核"}
           </p>
-          {canReview && (
+          {(canAdminCreate || canSupervisorReview) && (
             <div className="flex items-center gap-2 mt-2">
-              <Button size="sm" variant={filterMode === "pending" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=pending"); }}>
-                待创建
-              </Button>
+              {canAdminCreate && (
+                <Button size="sm" variant={filterMode === "pending" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=pending"); }}>
+                  待创建
+                </Button>
+              )}
               <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=review"); }}>
                 待复核
               </Button>
@@ -438,7 +442,7 @@ function ApplicationList() {
               </Button>
             </div>
           )}
-          {canReview && filterMode === "pending" && applications.length > 0 && (
+          {canAdminCreate && filterMode === "pending" && applications.length > 0 && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -454,7 +458,7 @@ function ApplicationList() {
       </div>
 
       {/* Batch action bar */}
-      {canReview && filterMode === "pending" && selectedIds.size > 0 && (
+      {canAdminCreate && filterMode === "pending" && selectedIds.size > 0 && (
         <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-sm font-medium">已选择 {selectedIds.size} 条</span>
@@ -519,7 +523,7 @@ function ApplicationList() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
-                    {canReview && filterMode === "pending" && (
+                    {canAdminCreate && filterMode === "pending" && (
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 shrink-0"
@@ -602,7 +606,7 @@ function ApplicationList() {
                     </div>
                   )}
                 </div>
-                {canReview && app.status === "PENDING" && (
+                {canAdminCreate && app.status === "PENDING" && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       size="sm"
@@ -621,7 +625,7 @@ function ApplicationList() {
                     </Button>
                   </div>
                 )}
-                {canReview && app.autoApproved && (
+                {canSupervisorReview && app.autoApproved && (
                   (app.supervisorReviewStatus === "PENDING" ||
                    (app.adminReviewStatus === "PENDING" && app.supervisorReviewStatus === "NONE"))
                 ) && (

@@ -50,7 +50,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       orderCoverage: { include: { order: { select: { id: true, orderNo: true } } } },
       coverage: { include: { externalOrder: { select: { id: true, externalOrderNo: true } } } },
       documents: { include: { uploadedBy: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } },
-      receipts: { select: { id: true, amount: true, receivedAt: true } },
+      receipts: { where: { deleted: false }, select: { id: true, amount: true, receivedAt: true } },
     },
   });
 

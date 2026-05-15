@@ -16,7 +16,7 @@ export async function computeInvoicePaymentStatus(
 
   if (type === "project") {
     const receipts = await prisma.financeReceipt.findMany({
-      where: { projectInvoiceId: invoiceId },
+      where: { projectInvoiceId: invoiceId, deleted: false },
       select: { amount: true },
     });
     receiptTotal = receipts.reduce((sum, r) => sum + r.amount, 0);
@@ -29,7 +29,7 @@ export async function computeInvoicePaymentStatus(
   }
 
   const receipts = await prisma.financeReceipt.findMany({
-    where: { externalOrderInvoiceRequestId: invoiceId },
+    where: { externalOrderInvoiceRequestId: invoiceId, deleted: false },
     select: { amount: true },
   });
   receiptTotal = receipts.reduce((sum, r) => sum + r.amount, 0);

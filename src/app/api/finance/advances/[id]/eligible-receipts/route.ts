@@ -40,7 +40,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (receiptOr.length === 0) return NextResponse.json({ eligible: [] });
 
   const receipts = await prisma.financeReceipt.findMany({
-    where: { OR: receiptOr },
+    where: { OR: receiptOr, deleted: false },
     select: {
       id: true,
       amount: true,

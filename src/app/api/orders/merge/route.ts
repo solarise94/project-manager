@@ -66,9 +66,9 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Migrate receipts
+        // Migrate receipts (skip deleted)
         await tx.financeReceipt.updateMany({
-          where: { orderId: sourceId },
+          where: { orderId: sourceId, deleted: false },
           data: { orderId: targetOrderId },
         });
 

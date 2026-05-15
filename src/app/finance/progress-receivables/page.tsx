@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, TrendingUp, FolderKanban, ShoppingBag } from "lucide-react";
+import { Loader2, TrendingUp, FolderKanban, ShoppingBag, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { FinancePageHeader } from "@/components/finance/finance-page-header";
 import { FinanceKpiCard } from "@/components/finance/finance-kpi-card";
@@ -43,6 +43,8 @@ function ProgressContent() {
       if (!res.ok) throw new Error("Failed to load");
       return res.json() as Promise<{
         period: string; total: number;
+        adjustmentAmount: number;
+        adjustmentItems: Array<Record<string, unknown>>;
         serviceDeposit: number; serviceFinal: number; productReceivable: number;
         projectItems: Array<Record<string, unknown>>;
         orderItems: Array<Record<string, unknown>>;
@@ -58,6 +60,10 @@ function ProgressContent() {
   const orderItems = (data?.orderItems || []).filter((i) =>
     filter === "ALL" || i.eventType === filter || (filter === "SERVICE" && String(i.eventType).startsWith("SERVICE")) || (filter === "PRODUCT" && String(i.eventType).startsWith("PRODUCT"))
   );
+  const adjustmentItems = (data?.adjustmentItems || []).filter(() =>
+    filter === "ALL" || filter === "SERVICE_ORDER_DEPOSIT"
+  );
+  const adjustmentAmount = (data?.adjustmentAmount as number) || 0;
 
   const filterOptions = [
     { value: "ALL", label: "全部" },
@@ -81,11 +87,17 @@ function ProgressContent() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <FinanceKpiCard title="进度款总额" value={data?.total ?? 0} icon={TrendingUp} />
         <FinanceKpiCard title="服务立项(30%)" value={data?.serviceDeposit ?? 0} icon={FolderKanban} />
         <FinanceKpiCard title="服务结项(70%)" value={data?.serviceFinal ?? 0} icon={FolderKanban} />
         <FinanceKpiCard title="商品项目(100%)" value={data?.productReceivable ?? 0} icon={ShoppingBag} />
+        <FinanceKpiCard
+          title="修订调整"
+          value={adjustmentAmount}
+          icon={RefreshCw}
+          variant={adjustmentAmount < 0 ? "danger" : adjustmentAmount > 0 ? "success" : "muted"}
+        />
       </div>
 
       <div>
@@ -185,6 +197,83 @@ function ProgressContent() {
           data={orderItems}
           keyExtractor={(_, i) => `o-${i}`}
         />
+      )}
+
+      {adjustmentItems.length > 0 && (
+        <>
+          <h2 className="text-lg font-semibold mt-6">订单修订调整项</h2>
+          {isMobile ? (
+            <div className="md:hidden space-y-3">
+              {adjustmentItems.map((item, i) => {
+                const amount = Number(item.amount);
+                return (
+                  <FinanceMobileCard
+                    key={i}
+                    title={amount >= 0 ? "订单修订新增进度款" : "订单修订扣减进度款"}
+                    badge={
+                      <Badge variant={amount >= 0 ? "default" : "destructive"}>
+                        {amount >= 0 ? "新增" : "扣减"}
+                      </Badge>
+                    }
+                    subtitle={String(item.orderNo || item.projectName || "-")}
+                    metrics={[
+                      { label: "调整金额", value: <span className={amount < 0 ? "text-red-500" : "text-green-600"}><MoneyText value={amount} compact /></span> },
+                      { label: "月份", value: String(item.periodKey) },
+                      { label: "原因", value: String(item.reason || "-") },
+                    ]}
+                    primaryAction={item.orderId ? {
+                      label: "查看订单",
+                      onClick: () => router.push(`/orders/${item.orderId}`),
+                    } : undefined}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <FinanceDataTable
+              columns={[
+                {
+                  key: "type",
+                  header: "类型",
+                  render: (item) => {
+                    const amount = Number(item.amount);
+                    return (
+                      <Badge variant={amount >= 0 ? "default" : "destructive"}>
+                        {amount >= 0 ? "订单修订新增进度款" : "订单修订扣减进度款"}
+                      </Badge>
+                    );
+                  },
+                },
+                { key: "orderNo", header: "订单", render: (item) => String(item.orderNo || "-") },
+                { key: "projectName", header: "项目", render: (item) => String(item.projectName || "-") },
+                {
+                  key: "amount",
+                  header: "调整金额",
+                  align: "right",
+                  render: (item) => {
+                    const amount = Number(item.amount);
+                    return <span className={amount < 0 ? "text-red-500" : "text-green-600"}><MoneyText value={amount} /></span>;
+                  },
+                },
+                { key: "periodKey", header: "影响月份", align: "center", render: (item) => String(item.periodKey) },
+                { key: "reason", header: "原因", render: (item) => String(item.reason || "-") },
+                {
+                  key: "actions",
+                  header: "操作",
+                  align: "center",
+                  render: (item) =>
+                    item.orderId ? (
+                      <a href={`/orders/${item.orderId}?tab=history`} className="text-primary hover:underline text-xs">
+                        查看订单
+                      </a>
+                    ) : null,
+                },
+              ]}
+              data={adjustmentItems}
+              keyExtractor={(_, i) => `adj-${i}`}
+            />
+          )}
+        </>
       )}
     </div>
   );

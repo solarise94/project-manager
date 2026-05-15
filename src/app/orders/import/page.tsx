@@ -5,14 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 
-const SOURCES = [
-  { value: "PINGOODMICE", label: "拼好鼠" },
-  { value: "OTHER_IMPORT", label: "其他导入" },
-];
+const DEFAULT_SOURCE = "OTHER_IMPORT";
 
 const CUSTOMER_MODES = [
   { value: "MATCH_ONLY", label: "仅匹配" },
@@ -40,7 +38,8 @@ function ImportContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { status } = useSession();
-  const [source, setSource] = useState(searchParams.get("source") || "PINGOODMICE");
+  const [source] = useState(searchParams.get("source") || DEFAULT_SOURCE);
+  const [sourceRemark, setSourceRemark] = useState("");
   const [rawText, setRawText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,10 +69,12 @@ function ImportContent() {
       if (mode === "file" && file) {
         const form = new FormData();
         form.set("source", source);
+        if (sourceRemark) form.set("sourceRemark", sourceRemark);
         form.set("file", file);
         payload = form;
       } else {
-        payload = { source, rawText };
+        payload = { source: source, rawText };
+        if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
       }
       const res = await fetch("/api/orders/import/preview", {
         method: "POST",
@@ -98,10 +99,12 @@ function ImportContent() {
       if (mode === "file" && file) {
         const form = new FormData();
         form.set("source", source);
+        if (sourceRemark) form.set("sourceRemark", sourceRemark);
         form.set("file", file);
         payload = form;
       } else {
-        payload = { source, rawText };
+        payload = { source: source, rawText };
+        if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
       }
       const res = await fetch("/api/orders/import/ai-normalize", {
         method: "POST",
@@ -130,13 +133,15 @@ function ImportContent() {
       if (mode === "file" && file) {
         const form = new FormData();
         form.set("source", source);
+        if (sourceRemark) form.set("sourceRemark", sourceRemark);
         form.set("file", file);
         form.set("customerMode", customerMode);
         form.set("organizationMode", organizationMode);
         if (columnMapping) form.set("columnMapping", JSON.stringify(columnMapping));
         payload = form;
       } else {
-        payload = { source, rawText, customerMode, organizationMode };
+        payload = { source: source, rawText, customerMode, organizationMode };
+        if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
         if (columnMapping) (payload as Record<string, unknown>).columnMapping = columnMapping;
       }
       const res = await fetch("/api/orders/import/commit", {
@@ -192,15 +197,14 @@ function ImportContent() {
       {step === "input" && (
         <Card className="p-4 space-y-3">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">来源:</span>
-            <Select value={source} onValueChange={(v) => setSource(v || "PINGOODMICE")}>
-              <SelectTrigger className="w-32">
-                <span>{SOURCES.find((s) => s.value === source)?.label || source}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {SOURCES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            <span className="text-sm text-muted-foreground">来源备注:</span>
+            <Input
+              className="w-64"
+              placeholder="例如：客户转发表格、平台后台导出、合作方提供"
+              value={sourceRemark}
+              onChange={(e) => setSourceRemark(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">仅作为备注展示，不影响系统去重和导入匹配</span>
           </div>
 
           <div className="flex gap-2">

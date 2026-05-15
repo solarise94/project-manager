@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
 import { validateOrg, buildCustomerData, createCustomerWithRetry, findDuplicateCustomers } from "@/lib/crm/customer-application-review";
-import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
+import { getApplicationReviewerUserIds } from "@/lib/crm/supervisor";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -20,8 +20,8 @@ async function canReviewApplication(
 ): Promise<boolean> {
   if (role === "ADMIN") return true;
   if (role === "REGIONAL_MANAGER") {
-    const repUserIds = await getRegionalManagerUserIds(userId);
-    return repUserIds !== null && repUserIds.includes(application.submittedByUserId);
+    const reviewerIds = await getApplicationReviewerUserIds(application.submittedByUserId);
+    return reviewerIds.includes(userId);
   }
   return false;
 }
@@ -60,6 +60,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   if (isRepresentative(session.user.role) && application.submittedByUserId !== session.user.id) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (session.user.role === "REGIONAL_MANAGER" && !(await canReviewApplication(session.user.id, session.user.role, application))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -214,6 +217,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // ── Legacy actions for old PENDING applications ──
   if (application.status !== "PENDING") {
     return NextResponse.json({ error: "该申请已处理" }, { status: 400 });
+  }
+
+  if (!(await canReviewApplication(session.user.id, session.user.role, application))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   if (action === "reject") {

@@ -68,6 +68,11 @@ export async function GET(
   });
   if (!receipt) return NextResponse.json({ error: "Not Found" }, { status: 404 });
 
+  // Deleted receipts: only ADMIN can view
+  if (receipt.deleted && session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Not Found" }, { status: 404 });
+  }
+
   if (session.user.role !== "ADMIN") {
     const resolvedCustId = await resolveReceiptCustomerId(receipt);
     if (resolvedCustId) {
@@ -108,15 +113,36 @@ export async function PATCH(
 
   const existing = await prisma.financeReceipt.findUnique({
     where: { id },
-    include: { settledAdvanceRefunds: { select: { id: true, amount: true } } },
+    include: {
+      settledAdvances: { select: { id: true, amount: true } },
+      settledAdvanceRefunds: { select: { id: true, amount: true } },
+    },
   });
   if (!existing) return NextResponse.json({ error: "Not Found" }, { status: 404 });
+  if (existing.deleted) return NextResponse.json({ error: "已删除的到款记录不能编辑" }, { status: 409 });
 
-  // Block amount/orderId changes if this receipt has settled advance refunds
-  const hasRefunds = existing.settledAdvanceRefunds.length > 0;
+  // Validation
+  if (amount !== undefined) {
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json({ error: "金额必须大于 0" }, { status: 400 });
+    }
+  }
+  if (receivedAt !== undefined) {
+    const d = new Date(receivedAt);
+    if (isNaN(d.getTime())) {
+      return NextResponse.json({ error: "到款日期无效" }, { status: 400 });
+    }
+  }
+  const VALID_SOURCES = ["MANUAL", "BANK", "PINGOODMICE_ORDER", "OTHER"];
+  if (source !== undefined && !VALID_SOURCES.includes(source)) {
+    return NextResponse.json({ error: "来源值无效" }, { status: 400 });
+  }
+
+  // Block amount/orderId changes if this receipt has settled advances or refunds
+  const hasSettlements = existing.settledAdvances.length > 0 || existing.settledAdvanceRefunds.length > 0;
   if ((amount !== undefined && amount !== existing.amount) || (orderId !== undefined && orderId !== existing.orderId)) {
-    if (hasRefunds) {
-      return NextResponse.json({ error: "该回款已有垫付退款绑定，修改金额或订单可能破坏结算一致性。请先处理关联退款" }, { status: 409 });
+    if (hasSettlements) {
+      return NextResponse.json({ error: "该回款已用于预收款核销或垫付退款，修改金额或订单可能破坏结算一致性。请先解除关联后再修改" }, { status: 409 });
     }
   }
 
@@ -159,7 +185,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
@@ -169,9 +195,76 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const existing = await prisma.financeReceipt.findUnique({ where: { id } });
-  if (!existing) return NextResponse.json({ error: "Not Found" }, { status: 404 });
+  let reason: string | undefined;
+  try {
+    const body = await req.json();
+    reason = body.reason?.trim() || undefined;
+  } catch {
+    // reason is optional
+  }
 
-  await prisma.financeReceipt.delete({ where: { id } });
-  return NextResponse.json({ success: true });
+  const receipt = await prisma.financeReceipt.findUnique({
+    where: { id },
+    include: {
+      settledAdvances: { select: { id: true } },
+      settledAdvanceRefunds: { select: { id: true } },
+      order: { select: { id: true } },
+      customer: { select: { id: true } },
+      project: { select: { id: true } },
+      projectInvoice: { select: { id: true } },
+      externalOrderInvoiceRequest: { select: { id: true } },
+    },
+  });
+
+  if (!receipt) return NextResponse.json({ error: "Not Found" }, { status: 404 });
+  if (receipt.deleted) return NextResponse.json({ error: "该到款记录已删除" }, { status: 409 });
+
+  if (receipt.settledAdvances.length > 0 || receipt.settledAdvanceRefunds.length > 0) {
+    return NextResponse.json({ error: "该到款已用于预收款核销或垫付退款，请先解除核销关系后再删除" }, { status: 409 });
+  }
+
+  const snapshot = {
+    id: receipt.id,
+    amount: receipt.amount,
+    receivedAt: receipt.receivedAt.toISOString(),
+    source: receipt.source,
+    remark: receipt.remark,
+    orderId: receipt.orderId,
+    customerId: receipt.customerId,
+    projectId: receipt.projectId,
+    projectInvoiceId: receipt.projectInvoiceId,
+    externalOrderInvoiceRequestId: receipt.externalOrderInvoiceRequestId,
+    externalOrderId: receipt.externalOrderId,
+    createdById: receipt.createdById,
+    createdAt: receipt.createdAt.toISOString(),
+  };
+
+  const [deletionLog] = await prisma.$transaction([
+    prisma.financeReceiptDeletionLog.create({
+      data: {
+        receiptId: receipt.id,
+        amount: receipt.amount,
+        receivedAt: receipt.receivedAt,
+        orderId: receipt.orderId,
+        customerId: receipt.customerId,
+        projectId: receipt.projectId,
+        source: receipt.source,
+        remark: receipt.remark,
+        reason,
+        snapshotJson: JSON.stringify(snapshot),
+        deletedById: session.user.id,
+      },
+    }),
+    prisma.financeReceipt.update({
+      where: { id },
+      data: {
+        deleted: true,
+        deletedAt: new Date(),
+        deletedById: session.user.id,
+        deleteReason: reason || null,
+      },
+    }),
+  ]);
+
+  return NextResponse.json({ receiptId: receipt.id, deletionLogId: deletionLog.id });
 }

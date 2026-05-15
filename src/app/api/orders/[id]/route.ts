@@ -35,9 +35,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       mergeTargets: {
         include: { targetOrder: { select: { id: true, orderNo: true } } },
       },
-      receipts: { select: { id: true, amount: true, receivedAt: true, source: true, remark: true, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
+      receipts: { where: { deleted: false }, select: { id: true, amount: true, receivedAt: true, source: true, remark: true, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
       financeCosts: { select: { id: true, amount: true, costType: true, remark: true, createdAt: true }, take: 20, orderBy: { createdAt: "desc" } },
-      _count: { select: { lines: true, sourceRecords: true, projectLinks: true, receipts: true, invoiceRequests: true, financeCosts: true } },
+      _count: { select: { lines: true, sourceRecords: true, projectLinks: true, receipts: { where: { deleted: false } }, invoiceRequests: true, financeCosts: true } },
     },
   });
 
@@ -143,7 +143,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const finCheck = await prisma.order.findUnique({
       where: { id },
       select: {
-        _count: { select: { receipts: true, financeCosts: true } },
+        _count: { select: { receipts: { where: { deleted: false } }, financeCosts: true } },
         invoiceRequests: { where: { status: { not: "CANCELLED" } }, select: { id: true }, take: 1 },
         invoiceCoverage: { where: { invoiceRequest: { status: { not: "CANCELLED" } } }, select: { id: true }, take: 1 },
       },

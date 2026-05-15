@@ -66,6 +66,7 @@ model User {
   invoiceAdjustmentsCreated    InvoiceAdjustment[]           @relation("InvoiceAdjustmentCreatedBy")
   advancesCreated              FinanceAdvance[]              @relation("FinanceAdvanceCreatedBy")
   advanceRefundsCreated        FinanceAdvanceRefund[]        @relation("FinanceAdvanceRefundCreatedBy")
+  revisionsCreated             OrderRevision[]               @relation("OrderRevisionCreatedBy")
 }
 
 model Representative {
@@ -709,12 +710,39 @@ model FinanceReceipt {
   updatedAt                     DateTime                     @updatedAt
   settledAdvances               FinanceAdvance[]             @relation("AdvanceSettledByReceipt")
   settledAdvanceRefunds         FinanceAdvanceRefund[]       @relation("AdvanceRefundSettledByReceipt")
+  deleted                       Boolean                      @default(false)
+  deletedAt                     DateTime?
+  deletedById                   String?
+  deleteReason                  String?
+  deletionLogs                  FinanceReceiptDeletionLog[]
 
   @@index([customerId])
   @@index([projectId])
   @@index([externalOrderId])
   @@index([orderId])
   @@index([receivedAt])
+  @@index([deleted])
+  @@index([deletedAt])
+}
+
+model FinanceReceiptDeletionLog {
+  id        String          @id @default(cuid())
+  receiptId String
+  receipt   FinanceReceipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  amount     Float
+  receivedAt DateTime
+  orderId    String?
+  customerId String?
+  projectId  String?
+  source     String?
+  remark     String?
+  reason       String?
+  snapshotJson String
+  deletedById  String
+  deletedAt    DateTime @default(now())
+
+  @@index([receiptId])
+  @@index([deletedAt])
 }
 
 model FinanceAdvance {
@@ -767,6 +795,7 @@ model Order {
   orderNo               String        @unique
   source                String        @default("MANUAL")
   sourcePlatform        String?
+  sourceRemark          String?
   externalOrderNo       String?
   merchantOrderNo       String?
   legacyExternalOrderId String?       @unique
@@ -822,6 +851,8 @@ model Order {
   financeCosts          FinanceCost[]
   advances              FinanceAdvance[]             @relation("FinanceAdvanceOrder")
 
+  revisions             OrderRevision[]
+
   @@index([source, externalOrderNo])
   @@index([merchantOrderNo])
   @@index([customerId])
@@ -858,6 +889,7 @@ model OrderSourceRecord {
   order           Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
   importBatchId   String?
   source          String
+  sourceRemark    String?
   platform        String?
   externalOrderNo String
   merchantOrderNo String?
@@ -930,6 +962,64 @@ model OrderMerge {
 
   @@unique([sourceOrderId, targetOrderId])
   @@index([targetOrderId])
+}
+
+model OrderRevision {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  revisionNo Int
+
+  oldTotalAmount   Float
+  newTotalAmount   Float
+  deltaTotalAmount Float
+
+  oldFinanceAmount   Float
+  newFinanceAmount   Float
+  deltaFinanceAmount Float
+
+  effectiveAt     DateTime @default(now())
+  effectivePeriod String
+
+  reason       String
+  snapshotJson String?
+
+  createdById String
+  createdBy   User   @relation("OrderRevisionCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  adjustments ProgressReceivableAdjustment[]
+
+  @@unique([orderId, revisionNo])
+  @@index([orderId])
+  @@index([effectivePeriod])
+}
+
+model ProgressReceivableAdjustment {
+  id String @id @default(cuid())
+
+  sourceType String // ORDER_REVISION
+  sourceId   String
+  revision   OrderRevision @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  orderId    String?
+  projectId  String?
+  customerId String?
+
+  periodKey  String
+  occurredAt DateTime @default(now())
+
+  amount   Float
+  category String
+  reason   String?
+
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@index([periodKey])
+  @@index([orderId])
+  @@index([projectId])
 }
 
 model FinanceCost {

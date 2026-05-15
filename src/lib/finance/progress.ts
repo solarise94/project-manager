@@ -195,6 +195,8 @@ export async function computeAllProgressReceivables(
     confirmedAt: Date | string | null;
     createdAt: Date | string;
   }>,
+  scopedOrderIds?: string[],
+  scopedProjectIds?: string[],
 ): Promise<{
   weekProject: ProgressReceivableResult;
   monthProject: ProgressReceivableResult;
@@ -232,5 +234,97 @@ export async function computeAllProgressReceivables(
     monthOrder += computeStandaloneOrderReceivable(o, month.start, month.end);
   }
 
+  // Add revision adjustments for the periods
+  const [weekAdjustment, monthAdjustment] = await Promise.all([
+    getProgressAdjustmentsForDateRange(week.start, week.end, scopedOrderIds, scopedProjectIds),
+    getProgressAdjustmentsForDateRange(month.start, month.end, scopedOrderIds, scopedProjectIds),
+  ]);
+  weekOrder += weekAdjustment;
+  monthOrder += monthAdjustment;
+
   return { weekProject, monthProject, weekOrder, monthOrder };
+}
+
+// ─── Revision adjustment helpers ──────────────────────────────────
+
+export async function getProgressAdjustmentsForDateRange(
+  start: Date,
+  end: Date,
+  scopedOrderIds?: string[],
+  scopedProjectIds?: string[],
+): Promise<number> {
+  const where: Record<string, unknown> = { occurredAt: { gte: start, lte: end } };
+  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
+    const orConditions: Record<string, unknown>[] = [];
+    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
+    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
+    if (orConditions.length > 0) where.OR = orConditions;
+    else where.orderId = { in: ["__NO_MATCH__"] };
+  }
+  const agg = await prisma.progressReceivableAdjustment.aggregate({
+    _sum: { amount: true },
+    where,
+  });
+  return agg._sum.amount || 0;
+}
+
+export async function getProgressAdjustmentsForPeriodWithDetails(
+  periodKey: string,
+  scopedOrderIds?: string[],
+  scopedProjectIds?: string[],
+): Promise<Array<{
+  id: string;
+  orderId: string | null;
+  projectId: string | null;
+  customerId: string | null;
+  amount: number;
+  category: string;
+  reason: string | null;
+  periodKey: string;
+  sourceId: string;
+  sourceType: string;
+}>> {
+  const where: Record<string, unknown> = { periodKey };
+  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
+    const orConditions: Record<string, unknown>[] = [];
+    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
+    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
+    if (orConditions.length > 0) where.OR = orConditions;
+    else where.orderId = { in: ["__NO_MATCH__"] };
+  }
+  return prisma.progressReceivableAdjustment.findMany({
+    where,
+    orderBy: { occurredAt: "desc" },
+  });
+}
+
+export async function getProgressAdjustmentsForDateRangeWithDetails(
+  start: Date,
+  end: Date,
+  scopedOrderIds?: string[],
+  scopedProjectIds?: string[],
+): Promise<Array<{
+  id: string;
+  orderId: string | null;
+  projectId: string | null;
+  customerId: string | null;
+  amount: number;
+  category: string;
+  reason: string | null;
+  periodKey: string;
+  sourceId: string;
+  sourceType: string;
+}>> {
+  const where: Record<string, unknown> = { occurredAt: { gte: start, lte: end } };
+  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
+    const orConditions: Record<string, unknown>[] = [];
+    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
+    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
+    if (orConditions.length > 0) where.OR = orConditions;
+    else where.orderId = { in: ["__NO_MATCH__"] };
+  }
+  return prisma.progressReceivableAdjustment.findMany({
+    where,
+    orderBy: { occurredAt: "desc" },
+  });
 }

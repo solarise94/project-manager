@@ -43,7 +43,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   // Aggregate receipt amounts for this order
   const receiptAgg = await prisma.financeReceipt.aggregate({
-    where: { orderId: id },
+    where: { orderId: id, deleted: false },
     _sum: { amount: true },
   });
   const receiptAmount = receiptAgg._sum.amount ?? 0;

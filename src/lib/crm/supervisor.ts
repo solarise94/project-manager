@@ -9,20 +9,25 @@ export const SUPERVISOR_REASON_LABELS: Record<string, string> = {
 };
 
 /**
- * Resolve supervisor users for a given submittedByUserId.
+ * Shared resolver: given a submitter userId, return the set of user IDs
+ * authorised to review that submitter's applications.
+ *
+ * Used by notification targeting, list scoping, and PATCH canReview checks
+ * so all three paths stay in sync.
+ *
  * Walk: User → (by email) Representative → CrmRegionManagerRepresentative →
- * unarchived CrmRegionManager → User.
- * Fallback: all ADMIN users if no regional manager found.
+ * unarchived CrmRegionManager → User (must be REGIONAL_MANAGER or ADMIN).
+ * Fallback: all ADMIN user IDs.
  */
-export async function resolveApplicationSupervisors(
+export async function getApplicationReviewerUserIds(
   submittedByUserId: string,
-): Promise<Array<{ id: string; email: string; name: string }>> {
+): Promise<string[]> {
   const submitter = await prisma.user.findUnique({
     where: { id: submittedByUserId },
     select: { email: true },
   });
   if (!submitter?.email) {
-    return getAdminFallback();
+    return getAdminFallbackIds();
   }
 
   const rep = await prisma.representative.findUnique({
@@ -30,7 +35,7 @@ export async function resolveApplicationSupervisors(
     select: { id: true },
   });
   if (!rep) {
-    return getAdminFallback();
+    return getAdminFallbackIds();
   }
 
   const links = await prisma.crmRegionManagerRepresentative.findMany({
@@ -39,7 +44,7 @@ export async function resolveApplicationSupervisors(
   });
   const managerIds = links.map((l) => l.managerId);
   if (managerIds.length === 0) {
-    return getAdminFallback();
+    return getAdminFallbackIds();
   }
 
   const managers = await prisma.crmRegionManager.findMany({
@@ -48,23 +53,68 @@ export async function resolveApplicationSupervisors(
   });
   const userIds = managers.map((m) => m.userId);
   if (userIds.length === 0) {
-    return getAdminFallback();
+    return getAdminFallbackIds();
   }
 
+  // Only users with REGIONAL_MANAGER or ADMIN role can review
   const supervisors = await prisma.user.findMany({
-    where: { id: { in: userIds }, email: { not: "" } },
-    select: { id: true, email: true, name: true },
+    where: {
+      id: { in: userIds },
+      role: { in: ["REGIONAL_MANAGER", "ADMIN"] },
+    },
+    select: { id: true },
   });
 
-  const seen = new Set<string>();
-  const deduped: Array<{ id: string; email: string; name: string }> = [];
-  for (const s of supervisors) {
-    if (!seen.has(s.id)) {
-      seen.add(s.id);
-      deduped.push({ id: s.id, email: s.email!, name: s.name });
-    }
-  }
-  return deduped.length > 0 ? deduped : getAdminFallback();
+  const deduped = [...new Set(supervisors.map((s) => s.id))];
+  return deduped.length > 0 ? deduped : getAdminFallbackIds();
+}
+
+/**
+ * Reverse companion to getApplicationReviewerUserIds:
+ * given a regional manager's userId, return the set of submitter userIds
+ * whose applications they are authorised to review.
+ *
+ * Walk: User → CrmRegionManager → CrmRegionManagerRepresentative →
+ * Representative → User (must be REPRESENTATIVE or REGIONAL_MANAGER).
+ *
+ * Used by the list API so its scope stays in sync with the shared reviewer resolver.
+ */
+export async function getManagedSubmitterUserIds(
+  managerUserId: string,
+): Promise<string[]> {
+  const manager = await prisma.crmRegionManager.findUnique({
+    where: { userId: managerUserId, archived: false },
+    include: {
+      reps: {
+        include: {
+          representative: { select: { email: true } },
+        },
+      },
+    },
+  });
+  if (!manager || manager.reps.length === 0) return [];
+
+  const emails = manager.reps.map((r) => r.representative.email);
+  const repUsers = await prisma.user.findMany({
+    where: { email: { in: emails }, role: { in: ["REPRESENTATIVE", "REGIONAL_MANAGER"] } },
+    select: { id: true },
+  });
+  return [...new Set(repUsers.map((u) => u.id))];
+}
+
+/**
+ * Resolve supervisor users for a given submittedByUserId.
+ * Delegates to getApplicationReviewerUserIds for the ID set, then hydrates full user objects.
+ */
+export async function resolveApplicationSupervisors(
+  submittedByUserId: string,
+): Promise<Array<{ id: string; email: string; name: string }>> {
+  const ids = await getApplicationReviewerUserIds(submittedByUserId);
+  const users = await prisma.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, email: true, name: true },
+  });
+  return users.map((u) => ({ id: u.id, email: u.email!, name: u.name }));
 }
 
 /**
@@ -104,6 +154,14 @@ export async function resolveBindingReviewers(
   }
 
   return getAdminFallback();
+}
+
+async function getAdminFallbackIds(): Promise<string[]> {
+  const admins = await prisma.user.findMany({
+    where: { role: "ADMIN" },
+    select: { id: true },
+  });
+  return admins.map((a) => a.id);
 }
 
 async function getAdminFallback(): Promise<Array<{ id: string; email: string; name: string }>> {

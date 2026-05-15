@@ -4,8 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateOrg, buildCustomerData, findDuplicateCustomers, checkOrgOwnership, checkCustomerOwnershipConflict } from "@/lib/crm/customer-application-review";
 import { generateCustomerCode } from "@/lib/customer-code";
-import { notifyApplicationSupervisors } from "@/lib/crm/supervisor";
-import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
+import { notifyApplicationSupervisors, getManagedSubmitterUserIds } from "@/lib/crm/supervisor";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -46,8 +45,8 @@ export async function GET(req: NextRequest) {
   } else if (session.user.role === "REPRESENTATIVE") {
     where.submittedByUserId = session.user.id;
   } else if (session.user.role === "REGIONAL_MANAGER") {
-    const repUserIds = await getRegionalManagerUserIds(session.user.id);
-    if (repUserIds && repUserIds.length > 0) {
+    const repUserIds = await getManagedSubmitterUserIds(session.user.id);
+    if (repUserIds.length > 0) {
       where.submittedByUserId = { in: repUserIds };
     } else {
       where.submittedByUserId = session.user.id;

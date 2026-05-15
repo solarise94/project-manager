@@ -20,12 +20,13 @@ import type { InvoiceRecord } from "@/components/invoice-form-dialog";
 import { CostFormDialog } from "@/components/finance/cost-form-dialog";
 import { ReceiptFormDialog } from "@/components/finance/receipt-form-dialog";
 import { UploadIssuedInvoiceDialog } from "@/components/finance/upload-issued-invoice-dialog";
-import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus, Upload, RotateCcw, Ban, Eye } from "lucide-react";
+import { FolderTree, Receipt, Banknote, UserRound, Pencil, Link2, Plus, Upload, RotateCcw, Ban, Eye, RefreshCw, Trash2 } from "lucide-react";
+import { OrderRevisionDialog } from "@/components/finance/order-revision-dialog";
 import { OrderEditDialog } from "@/components/orders/order-edit-dialog";
 import { canAccessOrders } from "@/lib/role-guards";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
+import { getOrderSourcePublicLabel } from "@/lib/orders/source-labels";
 
-const SOURCE_LABELS: Record<string, string> = { MANUAL: "手动", PINGOODMICE: "拼好鼠", OTHER_IMPORT: "其他导入" };
 const STATUS_LABELS: Record<string, string> = { DRAFT: "草稿", CONFIRMED: "已确认", CANCELLED: "已取消", CLOSED: "已关闭" };
 const CATEGORY_LABELS: Record<string, string> = { SERVICE: "服务", PRODUCT: "商品", MIXED: "混合", UNKNOWN: "未分类" };
 const TREATMENT_LABELS: Record<string, string> = { AUTO: "自动", STANDALONE: "独立计入", PROJECT_INCLUDED: "并入项目", EXCLUDED: "排除" };
@@ -52,6 +53,8 @@ export default function OrderDetailPage() {
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(urlAction === "invoice");
   const [costDialogOpen, setCostDialogOpen] = useState(urlAction === "cost");
   const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
+  const [editingReceipt, setEditingReceipt] = useState<Record<string, unknown> | null>(null);
+  const [revisionDialogOpen, setRevisionDialogOpen] = useState(false);
   const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false);
   const [refundingAdvanceId, setRefundingAdvanceId] = useState<string | null>(null);
   const [advances, setAdvances] = useState<Array<Record<string, unknown>>>([]);
@@ -78,6 +81,32 @@ export default function OrderDetailPage() {
     enabled: !!editingInvoiceId,
     retry: false,
   });
+  // Fetch revisions for the revision dialog and history
+  const { data: revisionsData } = useQuery<{ revisions: Array<Record<string, unknown>> }>({
+    queryKey: ["order", id, "revisions"],
+    queryFn: async () => {
+      const res = await fetch(`/api/orders/${id}/revisions`);
+      if (!res.ok) return { revisions: [] };
+      return res.json();
+    },
+    enabled: !!id && authStatus === "authenticated",
+  });
+  const revisions = (revisionsData?.revisions || []) as Array<Record<string, unknown>>;
+
+  // Computed values for revision dialog
+  const issuedInvoiceAmount = (invoices as Array<Record<string, unknown>>).reduce(
+    (sum, inv) => {
+      const status = inv.status as string;
+      if (status === "CANCELLED") return sum;
+      const adjustments = inv.adjustments as Array<Record<string, unknown>> | undefined;
+      if (adjustments?.some((a) => a.kind === "RED")) return sum;
+      return sum + (inv.totalAmount as number || 0);
+    }, 0,
+  );
+  const receivedAmount = ((order?.receipts || []) as Array<Record<string, unknown>>).reduce(
+    (sum, r) => sum + (r.amount as number || 0), 0,
+  );
+
   useEffect(() => {
     if (!editError || !editingInvoiceId) return;
     alert(editError.message || "发票详情加载失败");
@@ -187,6 +216,30 @@ export default function OrderDetailPage() {
     if (res.ok) { const d = await res.json(); setOrder(d?.order || null); setInvoices((d?.invoices || []) as Array<Record<string, unknown>>); }
     setLoading(false);
   }, [id, router]);
+
+  const handleDeleteReceipt = async (receiptId: string) => {
+    if (!confirm("确定要删除这条回款记录吗？删除后不可恢复。")) return;
+    const reason = prompt("请输入删除原因（必填）：");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      alert("删除原因不能为空");
+      return;
+    }
+    const res = await fetch(`/api/finance/receipts/${receiptId}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason.trim() }),
+    });
+    if (res.ok) {
+      fetchOrder();
+      fetchAdvances();
+      queryClient.invalidateQueries({ queryKey: ["finance", "summary"] });
+      queryClient.invalidateQueries({ queryKey: ["finance", "receipts"] });
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(d.error || "删除失败");
+    }
+  };
 
   const handleCancelInvoice = async (invoiceId: string) => {
     if (!confirm("确定要取消这张发票申请吗？")) return;
@@ -313,6 +366,11 @@ export default function OrderDetailPage() {
           </Button>
         )}
         {isAdmin && (
+          <Button size="sm" variant="outline" onClick={() => setRevisionDialogOpen(true)}>
+            <RefreshCw className="h-3 w-3 mr-1" />修订金额
+          </Button>
+        )}
+        {isAdmin && (
           <Button size="sm" variant="outline" onClick={() => setCustomerMatchOpen(true)}>
             <Link2 className="h-3 w-3 mr-1" />{cust ? "重绑客户" : "绑定客户"}
           </Button>
@@ -359,7 +417,8 @@ export default function OrderDetailPage() {
 
         <TabsContent value="overview" className="space-y-3 mt-3">
           <Card className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div><span className="text-muted-foreground">来源</span><div>{SOURCE_LABELS[order.source as string] || (order.source as string)}</div></div>
+            <div><span className="text-muted-foreground">导入渠道</span><div>{getOrderSourcePublicLabel(order.source as string)}</div></div>
+            {(order as Record<string, unknown>).sourceRemark ? <div><span className="text-muted-foreground">来源备注</span><div>{(order as Record<string, unknown>).sourceRemark as string}</div></div> : null}
             <div><span className="text-muted-foreground">分类</span><div><Badge variant="outline">{CATEGORY_LABELS[order.category as string] || (order.category as string)}</Badge></div></div>
             <div><span className="text-muted-foreground">订单金额</span><div className="font-medium">¥{(order.totalAmount as number || 0).toLocaleString()}</div></div>
             <div><span className="text-muted-foreground">有效财务金额</span><div className="font-medium">¥{effectiveAmount.toLocaleString()}</div></div>
@@ -625,6 +684,28 @@ export default function OrderDetailPage() {
                         {(r.remark as string) && <span>{(r.remark as string)}</span>}
                         <span>{(r.receivedAt as string)?.slice(0, 10) || ""}</span>
                         {Boolean(r.createdBy) && <span>{String(((r.createdBy as Record<string, unknown> | null) || {}).name || "")}</span>}
+                        {isAdmin && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 text-xs px-1"
+                              onClick={() => setEditingReceipt(r)}
+                            >
+                              <Pencil className="h-3 w-3 mr-0.5" />
+                              编辑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 text-xs px-1 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteReceipt(r.id as string)}
+                            >
+                              <Trash2 className="h-3 w-3 mr-0.5" />
+                              删除
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -740,14 +821,50 @@ export default function OrderDetailPage() {
         <TabsContent value="source" className="space-y-2 mt-3">
           {sourceRecords.length === 0 ? <div className="text-muted-foreground text-sm">暂无来源记录</div> : sourceRecords.map((s: Record<string, unknown>, i: number) => (
             <Card key={i} className="p-3 text-sm">
-              <div className="text-xs text-muted-foreground">{s.source as string} / {s.externalOrderNo as string} / {s.duplicateStatus as string}</div>
+              <div className="text-xs text-muted-foreground">
+                {getOrderSourcePublicLabel(s.source as string)} / {s.externalOrderNo as string} / {s.duplicateStatus as string}
+                {s.sourceRemark ? <span className="ml-2 text-foreground">备注：{s.sourceRemark as string}</span> : null}
+              </div>
               <details className="mt-1"><summary className="cursor-pointer text-xs text-muted-foreground">查看原始数据</summary><pre className="text-xs mt-1 bg-muted p-2 rounded overflow-x-auto max-h-60">{JSON.stringify(s.rawJson ? JSON.parse(s.rawJson as string) : {}, null, 2)}</pre></details>
             </Card>
           ))}
         </TabsContent>
 
         <TabsContent value="history" className="space-y-2 mt-3">
-          {statusHistory.length === 0 ? <div className="text-muted-foreground text-sm">暂无操作记录</div> : statusHistory.map((h: Record<string, unknown>, i: number) => (
+          {/* Revision history */}
+          {revisions.length > 0 && (
+            <div className="space-y-2 mb-3">
+              <h3 className="text-sm font-medium">金额修订记录</h3>
+              {revisions.map((rev: Record<string, unknown>, i: number) => (
+                <Card key={i} className="p-3 text-sm">
+                  <div className="flex justify-between items-start">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">修订 #{rev.revisionNo as number}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          ¥{(rev.oldTotalAmount as number).toLocaleString()} → ¥{(rev.newTotalAmount as number).toLocaleString()}
+                        </span>
+                        <Badge variant={(rev.deltaFinanceAmount as number) >= 0 ? "default" : "destructive"} className="text-xs">
+                          {(rev.deltaFinanceAmount as number) >= 0 ? "+" : ""}¥{(rev.deltaFinanceAmount as number).toLocaleString()}
+                        </Badge>
+                      </div>
+                      {rev.reason ? <p className="text-xs text-muted-foreground">原因：{rev.reason as string}</p> : null}
+                      {(rev.adjustments as Array<Record<string, unknown>>)?.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          调整项：{(rev.adjustments as Array<Record<string, unknown>>).map((a) => `${(a.amount as number) >= 0 ? "+" : ""}¥${(a.amount as number).toLocaleString()} (${a.periodKey})`).join(", ")}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground text-right">
+                      <div>{(rev.createdAt as string)?.slice(0, 10)}</div>
+                      {(rev.createdBy as Record<string, unknown>)?.name ? <div>{(rev.createdBy as Record<string, unknown>).name as string}</div> : null}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+          {statusHistory.length === 0 && revisions.length === 0 ? <div className="text-muted-foreground text-sm">暂无操作记录</div> : statusHistory.map((h: Record<string, unknown>, i: number) => (
             <Card key={i} className="p-3 text-sm flex justify-between">
               <div>
                 {h.oldStatus ? <Badge variant="outline" className="text-xs mr-1">{STATUS_LABELS[h.oldStatus as string] || (h.oldStatus as string)}</Badge> : null}
@@ -857,12 +974,28 @@ export default function OrderDetailPage() {
         onCreated={() => fetchOrder()}
       />
 
-      {/* Receipt dialog */}
+      {/* Receipt create dialog */}
       <ReceiptFormDialog
-        open={receiptDialogOpen}
-        onOpenChange={setReceiptDialogOpen}
+        open={receiptDialogOpen && !editingReceipt}
+        onOpenChange={(open) => { setReceiptDialogOpen(open); if (!open) setEditingReceipt(null); }}
         defaultOrderId={id}
-        onCreated={() => { fetchOrder(); fetchAdvances(); }}
+        onSuccess={() => { fetchOrder(); fetchAdvances(); queryClient.invalidateQueries({ queryKey: ["finance", "summary"] }); queryClient.invalidateQueries({ queryKey: ["finance", "receipts"] }); }}
+      />
+
+      {/* Receipt edit dialog */}
+      <ReceiptFormDialog
+        open={!!editingReceipt}
+        onOpenChange={(open) => { if (!open) setEditingReceipt(null); }}
+        defaultOrderId={id}
+        receipt={editingReceipt ? {
+          id: editingReceipt.id as string,
+          amount: editingReceipt.amount as number,
+          receivedAt: editingReceipt.receivedAt as string,
+          source: (editingReceipt.source as string) || "MANUAL",
+          remark: (editingReceipt.remark as string) || null,
+          orderId: (editingReceipt.orderId as string) || null,
+        } : null}
+        onSuccess={() => { setEditingReceipt(null); fetchOrder(); fetchAdvances(); queryClient.invalidateQueries({ queryKey: ["finance", "summary"] }); queryClient.invalidateQueries({ queryKey: ["finance", "receipts"] }); }}
       />
 
       {/* Advance create dialog */}
@@ -930,6 +1063,28 @@ export default function OrderDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Order Revision Dialog */}
+      {revisionDialogOpen && (
+        <OrderRevisionDialog
+          open={revisionDialogOpen}
+          onOpenChange={setRevisionDialogOpen}
+          onSuccess={() => fetchOrder()}
+          orderId={id}
+          currentTotalAmount={(order.totalAmount as number) || 0}
+          financeAmountOverride={(order.financeAmountOverride as number) ?? null}
+          category={(order.category as string) || "UNKNOWN"}
+          financeTreatment={(order.financeTreatment as string) || "AUTO"}
+          issuedInvoiceAmount={issuedInvoiceAmount}
+          receivedAmount={receivedAmount}
+          projectLinks={(order.projectLinks as Array<Record<string, unknown>> || []).map((l) => ({
+            projectId: (l.project as Record<string, unknown>)?.id as string,
+            projectName: (l.project as Record<string, unknown>)?.name as string || "",
+            allocatedAmount: l.allocatedAmount as number | null,
+            isPrimary: (l.isPrimary as boolean) || false,
+          }))}
+        />
+      )}
     </div>
   );
 }

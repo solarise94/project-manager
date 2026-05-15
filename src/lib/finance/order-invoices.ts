@@ -55,7 +55,7 @@ const INVOICE_SELECT = {
   orderCoverage: { select: { order: { select: { id: true, orderNo: true } } } },
   coverage: { select: { externalOrder: { select: { id: true } } } },
   documents: { select: { id: true } },
-  receipts: { select: { amount: true } },
+  receipts: { where: { deleted: false }, select: { amount: true } },
   adjustmentsAsOriginal: { select: { id: true, kind: true, reason: true, createdAt: true } },
 } as const;
 
