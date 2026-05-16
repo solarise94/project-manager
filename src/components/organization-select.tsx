@@ -437,7 +437,7 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
         onChange(null, existingName);
         setOpen(false);
         setSearch("");
-      onSearchChange?.("");
+        onSearchChange?.("");
         queryClient.invalidateQueries({ queryKey: ["representative-organizations"] });
         queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
         return;
@@ -473,7 +473,6 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
       onSearchChange?.("");
       setShowQuickAdd(false);
       setQuickName("");
-      onSearchChange?.("");
     }
   };
 
