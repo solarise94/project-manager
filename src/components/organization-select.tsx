@@ -67,6 +67,7 @@ function OrgList({
   onToggleQuickAdd,
   quickCreateMutation,
   hideQuickAdd,
+  disableUnavailable = true,
 }: {
   value: string;
   search: string;
@@ -82,6 +83,7 @@ function OrgList({
     mutate: (name: string) => void;
   };
   hideQuickAdd?: boolean;
+  disableUnavailable?: boolean;
 }) {
   const isUnavailable = (o: OrgOption): boolean =>
     o.availability !== undefined && o.availability !== "" && o.availability !== "AVAILABLE";
@@ -109,14 +111,14 @@ function OrgList({
           <button
             key={o.id}
             type="button"
-            disabled={isUnavailable(o)}
+            disabled={disableUnavailable && isUnavailable(o)}
             className={cn(
               "w-full text-left px-3 py-2.5 text-sm flex items-center gap-2 min-w-0",
-              isUnavailable(o)
+              disableUnavailable && isUnavailable(o)
                 ? "opacity-50 cursor-not-allowed"
                 : "hover:bg-accent"
             )}
-            onClick={() => !isUnavailable(o) && onSelect(o)}
+            onClick={() => (!disableUnavailable || !isUnavailable(o)) && onSelect(o)}
           >
             <Check className={cn("h-4 w-4 shrink-0", value === o.id ? "opacity-100" : "opacity-0")} />
             <div className="flex flex-col min-w-0 flex-1">
@@ -450,10 +452,16 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
   const repBindingsError = repBindingsQueryError instanceof Error ? repBindingsQueryError.message : null;
   const selectedRepBinding = repBindings.find((binding) => binding.organizationId === value && binding.organization);
 
+  const handleSearchValueChange = (nextValue: string) => {
+    setSearch(nextValue);
+    onSearchChange?.(nextValue);
+  };
+
   const handleSelect = (o: OrgOption) => {
     onChange(o.id || null, o.canonicalName, o.address, o.taxId);
     setOpen(false);
     setSearch("");
+    onSearchChange?.("");
     setShowQuickAdd(false);
     setQuickName("");
   };
@@ -509,14 +517,14 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
     );
 
     const repList = (
-      <RepOrgList
-        value={value}
-        displayValue={displayValue}
-        search={search}
-        onSearchChange={setSearch}
-        bindings={repBindings}
-        onSelect={(binding) => {
-          const organization = binding.organization;
+        <RepOrgList
+          value={value}
+          displayValue={displayValue}
+          search={search}
+          onSearchChange={handleSearchValueChange}
+          bindings={repBindings}
+          onSelect={(binding) => {
+            const organization = binding.organization;
           if (!organization) return;
           onChange(organization.id, organization.canonicalName, organization.address, null);
           setOpen(false);
@@ -603,7 +611,7 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
             <OrgList
               value={value}
               search={search}
-              onSearchChange={setSearch}
+              onSearchChange={handleSearchValueChange}
               orgs={orgs}
               onSelect={handleSelect}
               quickName={quickName}
@@ -615,6 +623,7 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
                 mutate: (name: string) => quickCreateMutation.mutate(name),
               }}
               hideQuickAdd={isRepDiscover}
+              disableUnavailable={!isRepDiscover}
             />
           </SheetContent>
         </Sheet>
@@ -629,7 +638,7 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
         <OrgList
           value={value}
           search={search}
-          onSearchChange={setSearch}
+          onSearchChange={handleSearchValueChange}
           orgs={orgs}
           onSelect={handleSelect}
           quickName={quickName}
@@ -641,6 +650,7 @@ export function OrganizationSelect({ value, displayValue, disabled, mode = "defa
             mutate: (name: string) => quickCreateMutation.mutate(name),
           }}
           hideQuickAdd={isRepDiscover}
+          disableUnavailable={!isRepDiscover}
         />
       </PopoverContent>
     </Popover>

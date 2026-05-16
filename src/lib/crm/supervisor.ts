@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getAppUrl } from "@/lib/app-url";
+import { sendMailInBackground } from "@/lib/mail";
 
 export const SUPERVISOR_REASON_LABELS: Record<string, string> = {
   NORMAL: "常规复核",
@@ -156,6 +158,52 @@ export async function resolveBindingReviewers(
   return getAdminFallback();
 }
 
+async function resolveBindingRegionalManagers(
+  representativeId: string,
+): Promise<Array<{ id: string; email: string; name: string }>> {
+  const links = await prisma.crmRegionManagerRepresentative.findMany({
+    where: { representativeId },
+    select: { managerId: true },
+  });
+  const managerIds = links.map((l) => l.managerId);
+  if (managerIds.length === 0) return [];
+
+  const managers = await prisma.crmRegionManager.findMany({
+    where: { id: { in: managerIds }, archived: false },
+    select: { userId: true },
+  });
+  const userIds = managers.map((m) => m.userId);
+  if (userIds.length === 0) return [];
+
+  const supervisors = await prisma.user.findMany({
+    where: { id: { in: userIds }, role: "REGIONAL_MANAGER", email: { not: "" } },
+    select: { id: true, email: true, name: true },
+  });
+
+  const seen = new Set<string>();
+  const deduped: Array<{ id: string; email: string; name: string }> = [];
+  for (const s of supervisors) {
+    if (!seen.has(s.id)) {
+      seen.add(s.id);
+      deduped.push({ id: s.id, email: s.email!, name: s.name });
+    }
+  }
+  return deduped;
+}
+
+function getBindingWarningText(warningCodes: string[]): string | null {
+  if (warningCodes.includes("ORG_BOUND_BY_OTHER_REP")) {
+    return "注意：该机构当前已被其他代表绑定。";
+  }
+  if (warningCodes.includes("ORG_PENDING_BY_OTHER_REP")) {
+    return "注意：该机构当前已有其他代表提交绑定申请。";
+  }
+  if (warningCodes.includes("ORG_NAME_PENDING_BY_OTHER_REP")) {
+    return "注意：已有其他代表提交过同名新机构申请。";
+  }
+  return null;
+}
+
 async function getAdminFallbackIds(): Promise<string[]> {
   const admins = await prisma.user.findMany({
     where: { role: "ADMIN" },
@@ -214,24 +262,55 @@ export async function notifyBindingReviewers(
   bindingId: string,
   representativeId: string,
   orgName: string,
+  warningCodes: string[] = [],
 ): Promise<void> {
-  const reviewers = await resolveBindingReviewers(representativeId);
+  const regionalManagers = await resolveBindingRegionalManagers(representativeId);
+  const admins = await getAdminFallback();
+  const warningText = getBindingWarningText(warningCodes);
+  const contentBase = `代表申请负责单位「${orgName}」，请审核`;
+  const content = warningText ? `${contentBase}。${warningText}` : contentBase;
+  const reviewLink = `/crm/representatives/${representativeId}`;
 
-  for (const reviewer of reviewers) {
+  for (const reviewer of admins) {
     try {
       await prisma.notification.create({
         data: {
           userId: reviewer.id,
           type: "CRM_ORG_BINDING_REVIEW",
           title: "单位绑定申请",
-          content: `代表申请负责单位「${orgName}」，请审核`,
-          link: `/crm/representatives/${representativeId}`,
+          content,
+          link: reviewLink,
           dedupeKey: `org-binding-review:${bindingId}:${reviewer.id}`,
         },
       });
     } catch (e: unknown) {
       const isDup = typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "P2002";
       if (!isDup) console.error(`Failed to notify binding reviewer ${reviewer.id} for binding ${bindingId}:`, e);
+    }
+  }
+
+  for (const reviewer of regionalManagers) {
+    try {
+      const notification = await prisma.notification.create({
+        data: {
+          userId: reviewer.id,
+          type: "CRM_ORG_BINDING_REVIEW",
+          title: "单位绑定申请",
+          content,
+          link: reviewLink,
+          emailStatus: "pending",
+          dedupeKey: `org-binding-review-email:${bindingId}:${reviewer.id}`,
+        },
+      });
+
+      sendMailInBackground({
+        to: reviewer.email,
+        subject: `[SciManage] 单位绑定申请待审核：${orgName}`,
+        text: `${contentBase}${warningText ? `\n\n${warningText}` : ""}\n\n审核链接：${getAppUrl(reviewLink)}`,
+      }, notification.id);
+    } catch (e: unknown) {
+      const isDup = typeof e === "object" && e !== null && "code" in e && (e as { code: string }).code === "P2002";
+      if (!isDup) console.error(`Failed to email regional manager ${reviewer.id} for binding ${bindingId}:`, e);
     }
   }
 }

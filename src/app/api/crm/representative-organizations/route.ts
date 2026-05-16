@@ -13,6 +13,11 @@ import { resolveOrganization } from "@/lib/organization-resolver";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
 import { notifyBindingReviewers } from "@/lib/crm/supervisor";
 
+type BindingWarningCode =
+  | "ORG_BOUND_BY_OTHER_REP"
+  | "ORG_PENDING_BY_OTHER_REP"
+  | "ORG_NAME_PENDING_BY_OTHER_REP";
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -88,6 +93,51 @@ function normalizeOrgName(text: string): string {
   return text.replace(/\s+/g, "").toLowerCase();
 }
 
+async function collectExistingOrgWarnings(
+  representativeId: string,
+  organizationId: string,
+): Promise<BindingWarningCode[]> {
+  const warnings: BindingWarningCode[] = [];
+  const otherActive = await prisma.representativeOrganization.findFirst({
+    where: {
+      organizationId,
+      status: "ACTIVE",
+      representativeId: { not: representativeId },
+    },
+    select: { id: true },
+  });
+  if (otherActive) warnings.push("ORG_BOUND_BY_OTHER_REP");
+
+  const otherPending = await prisma.representativeOrganization.findFirst({
+    where: {
+      organizationId,
+      status: "PENDING",
+      representativeId: { not: representativeId },
+    },
+    select: { id: true },
+  });
+  if (otherPending) warnings.push("ORG_PENDING_BY_OTHER_REP");
+
+  return warnings;
+}
+
+async function collectRequestedNameWarnings(
+  representativeId: string,
+  requestedOrganizationNormalizedName: string,
+): Promise<BindingWarningCode[]> {
+  const otherPending = await prisma.representativeOrganization.findFirst({
+    where: {
+      representativeId: { not: representativeId },
+      organizationId: null,
+      requestedOrganizationNormalizedName,
+      status: "PENDING",
+    },
+    select: { id: true },
+  });
+
+  return otherPending ? ["ORG_NAME_PENDING_BY_OTHER_REP"] : [];
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -135,6 +185,7 @@ export async function POST(req: NextRequest) {
 
   const canAutoApproveBinding = isAdmin || (isRegionalManagerRole(session.user.role) && !!bodyRepId);
   const status = canAutoApproveBinding ? "ACTIVE" : "PENDING";
+  let warningCodes: BindingWarningCode[] = [];
 
   let orgId: string | null = (organizationId as string) || null;
   let requestedOrgName: string | null = null;
@@ -153,6 +204,7 @@ export async function POST(req: NextRequest) {
       const newRequestedOrgNormalizedName = normalizeOrgName(newRequestedOrgName);
       requestedOrgName = newRequestedOrgName;
       requestedOrganizationNormalizedName = newRequestedOrgNormalizedName;
+      warningCodes = await collectRequestedNameWarnings(rep.id, newRequestedOrgNormalizedName);
 
       // Manual dedup: check existing pending new-org request for same rep + normalized name
       const existingPending = await prisma.representativeOrganization.findFirst({
@@ -211,34 +263,15 @@ export async function POST(req: NextRequest) {
         throw e;
       }
 
-      notifyBindingReviewers(newBinding.id, rep.id, newRequestedOrgName).catch(() => {});
+      notifyBindingReviewers(newBinding.id, rep.id, newRequestedOrgName, warningCodes).catch(() => {});
 
-      return NextResponse.json({ binding: newBinding }, { status: 201 });
+      return NextResponse.json({ binding: newBinding, warningCodes }, { status: 201 });
     }
-  }
-
-  // Global occupancy check helper
-  async function checkGlobalOrgConflict(targetOrgId: string) {
-    if (!rep) return null;
-    const otherActive = await prisma.representativeOrganization.findFirst({
-      where: { organizationId: targetOrgId, status: "ACTIVE", representativeId: { not: rep.id } },
-    });
-    if (otherActive) {
-      return NextResponse.json({ error: "该机构已被其他代表绑定", code: "ORG_BOUND_BY_OTHER_REP" }, { status: 409 });
-    }
-    const otherPending = await prisma.representativeOrganization.findFirst({
-      where: { organizationId: targetOrgId, status: "PENDING", representativeId: { not: rep.id } },
-    });
-    if (otherPending) {
-      return NextResponse.json({ error: "该机构已有其他代表申请中", code: "ORG_PENDING_BY_OTHER_REP" }, { status: 409 });
-    }
-    return null;
   }
 
   // Existing-org flow below
   if (orgId) {
-    const globalConflict = await checkGlobalOrgConflict(orgId);
-    if (globalConflict) return globalConflict;
+    warningCodes = await collectExistingOrgWarnings(rep.id, orgId);
 
     const existing = await prisma.representativeOrganization.findUnique({
       where: { representativeId_organizationId: { representativeId: rep.id, organizationId: orgId } },
@@ -257,12 +290,12 @@ export async function POST(req: NextRequest) {
           include: { organization: { select: { canonicalName: true } } },
         });
         if (status === "PENDING") {
-          notifyBindingReviewers(updated.id, rep.id, updated.organization?.canonicalName || orgId).catch(() => {});
+          notifyBindingReviewers(updated.id, rep.id, updated.organization?.canonicalName || orgId, warningCodes).catch(() => {});
         }
         if (status === "ACTIVE") {
           autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
         }
-        return NextResponse.json({ binding: updated }, { status: 200 });
+        return NextResponse.json({ binding: updated, warningCodes }, { status: 200 });
       }
       return NextResponse.json({ error: "绑定已存在", binding: existing }, { status: 409 });
     }
@@ -295,12 +328,12 @@ export async function POST(req: NextRequest) {
 
   if (status === "PENDING") {
     const orgDisplayName = binding.organization?.canonicalName || requestedOrgName || orgId || "";
-    notifyBindingReviewers(binding.id, rep.id, orgDisplayName).catch(() => {});
+    notifyBindingReviewers(binding.id, rep.id, orgDisplayName, warningCodes).catch(() => {});
   }
 
   if (status === "ACTIVE" && orgId) {
     autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
   }
 
-  return NextResponse.json({ binding }, { status: 201 });
+  return NextResponse.json({ binding, warningCodes }, { status: 201 });
 }

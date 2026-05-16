@@ -25,6 +25,25 @@ interface RepBinding {
   } | null;
 }
 
+interface BindingResponse {
+  binding?: RepBinding;
+  warningCodes?: string[];
+}
+
+function describeBindingWarnings(warningCodes: string[] | undefined): string | null {
+  if (!warningCodes || warningCodes.length === 0) return null;
+  if (warningCodes.includes("ORG_BOUND_BY_OTHER_REP")) {
+    return "该机构当前已由其他代表负责，已同步通知地区经理。";
+  }
+  if (warningCodes.includes("ORG_PENDING_BY_OTHER_REP")) {
+    return "该机构已有其他代表提交过绑定申请，已同步通知地区经理。";
+  }
+  if (warningCodes.includes("ORG_NAME_PENDING_BY_OTHER_REP")) {
+    return "已有其他代表提交过同名新机构申请，已同步通知地区经理。";
+  }
+  return null;
+}
+
 export default function MyOrganizationsPage() {
   const { status } = useSession();
   const router = useRouter();
@@ -71,12 +90,17 @@ function MyOrganizations() {
         err.status = res.status;
         throw err;
       }
-      return json;
+      return json as BindingResponse;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success("绑定申请已提交，等待审核");
+      const warningText = describeBindingWarnings(data.warningCodes);
+      if (warningText) {
+        toast.info(warningText);
+      }
       setSelectedOrgId("");
       setSelectedOrgName("");
+      setSearchText("");
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
     },
     onError: (err: Error & { status?: number }) => {
