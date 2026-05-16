@@ -28,6 +28,8 @@ interface OrgOption {
   canonicalName: string;
   address: string | null;
   taxId: string | null;
+  availability?: string;
+  availabilityLabel?: string;
 }
 
 interface RepBinding {
@@ -42,13 +44,15 @@ interface RepBinding {
   } | null;
 }
 
+type SelectMode = "default" | "rep-bound" | "rep-discover";
+
 interface OrganizationSelectProps {
   value: string;
   displayValue?: string;
   disabled?: boolean;
-  excludeIds?: string[];
-  showAllOrgs?: boolean;
+  mode?: SelectMode;
   onChange: (id: string | null, canonicalName: string, address?: string | null, taxId?: string | null) => void;
+  onSearchChange?: (search: string) => void;
 }
 
 function OrgList({
@@ -62,6 +66,7 @@ function OrgList({
   showQuickAdd,
   onToggleQuickAdd,
   quickCreateMutation,
+  hideQuickAdd,
 }: {
   value: string;
   search: string;
@@ -76,7 +81,10 @@ function OrgList({
     isPending: boolean;
     mutate: (name: string) => void;
   };
+  hideQuickAdd?: boolean;
 }) {
+  const isUnavailable = (o: OrgOption): boolean =>
+    o.availability !== undefined && o.availability !== "" && o.availability !== "AVAILABLE";
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b">
@@ -101,14 +109,25 @@ function OrgList({
           <button
             key={o.id}
             type="button"
-            className="w-full text-left px-3 py-2.5 text-sm hover:bg-accent flex items-center gap-2 min-w-0"
-            onClick={() => onSelect(o)}
+            disabled={isUnavailable(o)}
+            className={cn(
+              "w-full text-left px-3 py-2.5 text-sm flex items-center gap-2 min-w-0",
+              isUnavailable(o)
+                ? "opacity-50 cursor-not-allowed"
+                : "hover:bg-accent"
+            )}
+            onClick={() => !isUnavailable(o) && onSelect(o)}
           >
             <Check className={cn("h-4 w-4 shrink-0", value === o.id ? "opacity-100" : "opacity-0")} />
-            <div className="flex flex-col min-w-0">
+            <div className="flex flex-col min-w-0 flex-1">
               <span className="truncate">{o.canonicalName} <span className="text-xs text-muted-foreground">({o.orgCode})</span></span>
               {o.address && <span className="text-xs text-muted-foreground truncate">{o.address}</span>}
             </div>
+            {o.availabilityLabel && (
+              <Badge variant={o.availability === "AVAILABLE" ? "outline" : "secondary"} className="shrink-0 text-[10px]">
+                {o.availabilityLabel}
+              </Badge>
+            )}
           </button>
         ))}
         {orgs.length === 0 && search && (
@@ -117,43 +136,45 @@ function OrgList({
           </div>
         )}
       </div>
-      <div className="border-t p-3">
-        {showQuickAdd ? (
-          <div className="flex items-center gap-2">
-            <Input
-              placeholder="单位名称"
-              value={quickName}
-              onChange={(e) => onQuickNameChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && quickName.trim()) {
-                  e.preventDefault();
-                  quickCreateMutation.mutate(quickName.trim());
-                }
-                if (e.key === "Escape") onToggleQuickAdd(false);
-              }}
-              className="h-9 text-sm"
-              autoFocus
-            />
-            <Button
-              size="sm"
-              className="h-9 shrink-0"
-              disabled={!quickName.trim() || quickCreateMutation.isPending}
-              onClick={() => quickName.trim() && quickCreateMutation.mutate(quickName.trim())}
+      {!hideQuickAdd && (
+        <div className="border-t p-3">
+          {showQuickAdd ? (
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="单位名称"
+                value={quickName}
+                onChange={(e) => onQuickNameChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && quickName.trim()) {
+                    e.preventDefault();
+                    quickCreateMutation.mutate(quickName.trim());
+                  }
+                  if (e.key === "Escape") onToggleQuickAdd(false);
+                }}
+                className="h-9 text-sm"
+                autoFocus
+              />
+              <Button
+                size="sm"
+                className="h-9 shrink-0"
+                disabled={!quickName.trim() || quickCreateMutation.isPending}
+                onClick={() => quickName.trim() && quickCreateMutation.mutate(quickName.trim())}
+              >
+                {quickCreateMutation.isPending ? "..." : "添加"}
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent rounded-sm w-full"
+              onClick={() => onToggleQuickAdd(true)}
             >
-              {quickCreateMutation.isPending ? "..." : "添加"}
-            </Button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent rounded-sm w-full"
-            onClick={() => onToggleQuickAdd(true)}
-          >
-            <Plus className="h-4 w-4" />
-            快速添加单位
-          </button>
-        )}
-      </div>
+              <Plus className="h-4 w-4" />
+              快速添加单位
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -315,7 +336,7 @@ function RepOrgList({
   );
 }
 
-export function OrganizationSelect({ value, displayValue, disabled, excludeIds, showAllOrgs, onChange }: OrganizationSelectProps) {
+export function OrganizationSelect({ value, displayValue, disabled, mode = "default", onChange, onSearchChange }: OrganizationSelectProps) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -325,6 +346,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
   const isMobile = useMediaQuery("(max-width: 767px)");
 
   const isRep = session?.user?.role === "REPRESENTATIVE";
+  const isRepDiscover = mode === "rep-discover";
 
   const {
     data: repBindingsData,
@@ -350,7 +372,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
       if (!res.ok) throw new Error("Failed to load organizations");
       return res.json();
     },
-    enabled: (!isRep || showAllOrgs) && open,
+    enabled: (!isRep || isRepDiscover) && open,
   });
 
   const quickCreateMutation = useMutation({
@@ -402,6 +424,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
       onChange(null, bindingName);
       setOpen(false);
       setSearch("");
+      onSearchChange?.("");
       queryClient.invalidateQueries({ queryKey: ["representative-organizations"] });
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
     },
@@ -412,6 +435,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
         onChange(null, existingName);
         setOpen(false);
         setSearch("");
+      onSearchChange?.("");
         queryClient.invalidateQueries({ queryKey: ["representative-organizations"] });
         queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
         return;
@@ -420,7 +444,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
     },
   });
 
-  const orgs = (data?.organizations || []).filter((o) => !excludeIds?.includes(o.id));
+  const orgs = data?.organizations || [];
   const selected = orgs.find((o) => o.id === value);
   const repBindings = repBindingsData?.bindings || [];
   const repBindingsError = repBindingsQueryError instanceof Error ? repBindingsQueryError.message : null;
@@ -438,8 +462,10 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
     setOpen(v);
     if (!v) {
       setSearch("");
+      onSearchChange?.("");
       setShowQuickAdd(false);
       setQuickName("");
+      onSearchChange?.("");
     }
   };
 
@@ -452,7 +478,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
     );
   }
 
-  if (isRep && !showAllOrgs) {
+  if (isRep && !isRepDiscover) {
     const repDesktopTrigger = (
       <Button
         variant="outline"
@@ -495,11 +521,13 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
           onChange(organization.id, organization.canonicalName, organization.address, null);
           setOpen(false);
           setSearch("");
+      onSearchChange?.("");
         }}
         onUseRawName={(name) => {
           onChange(null, name);
           setOpen(false);
           setSearch("");
+      onSearchChange?.("");
         }}
         onRequestBinding={(name) => requestBindingMutation.mutate(name)}
         requestPending={requestBindingMutation.isPending}
@@ -586,6 +614,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
                 isPending: quickCreateMutation.isPending,
                 mutate: (name: string) => quickCreateMutation.mutate(name),
               }}
+              hideQuickAdd={isRepDiscover}
             />
           </SheetContent>
         </Sheet>
@@ -611,6 +640,7 @@ export function OrganizationSelect({ value, displayValue, disabled, excludeIds, 
             isPending: quickCreateMutation.isPending,
             mutate: (name: string) => quickCreateMutation.mutate(name),
           }}
+          hideQuickAdd={isRepDiscover}
         />
       </PopoverContent>
     </Popover>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -43,6 +43,7 @@ function MyOrganizations() {
   const queryClient = useQueryClient();
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [selectedOrgName, setSelectedOrgName] = useState("");
+  const [searchText, setSearchText] = useState("");
   const [showRejected, setShowRejected] = useState(false);
 
   const isRep = session?.user?.role === "REPRESENTATIVE";
@@ -56,12 +57,6 @@ function MyOrganizations() {
     },
     enabled: isRep,
   });
-
-  const excludedOrgIds = useMemo(() => {
-    return (data?.bindings || [])
-      .filter((b) => b.organizationId && (b.status === "ACTIVE" || b.status === "PENDING"))
-      .map((b) => b.organizationId!);
-  }, [data]);
 
   const requestMutation = useMutation({
     mutationFn: async (payload: { organizationId?: string; canonicalName?: string }) => {
@@ -117,22 +112,23 @@ function MyOrganizations() {
             <OrganizationSelect
               value={selectedOrgId}
               displayValue={selectedOrgName || undefined}
-              excludeIds={excludedOrgIds}
-              showAllOrgs
+              mode="rep-discover"
               onChange={(id, name) => {
                 setSelectedOrgId(id || "");
                 setSelectedOrgName(name);
               }}
+              onSearchChange={setSearchText}
             />
           </div>
           <Button
-            disabled={!selectedOrgName.trim() || requestMutation.isPending}
+            disabled={(!selectedOrgName.trim() && !searchText.trim()) || requestMutation.isPending}
             onClick={() => {
-              if (!selectedOrgName.trim()) return;
               if (selectedOrgId) {
                 requestMutation.mutate({ organizationId: selectedOrgId });
-              } else {
+              } else if (selectedOrgName.trim()) {
                 requestMutation.mutate({ canonicalName: selectedOrgName.trim() });
+              } else if (searchText.trim()) {
+                requestMutation.mutate({ canonicalName: searchText.trim() });
               }
             }}
           >
@@ -144,9 +140,27 @@ function MyOrganizations() {
             <span className="ml-2">申请绑定</span>
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          从机构库中选择已有单位，或搜索后快速创建新单位
-        </p>
+        {!selectedOrgId && searchText.trim() && (
+          <div className="rounded-md border border-dashed p-3 text-sm">
+            <p className="text-muted-foreground">
+              未找到匹配单位「{searchText.trim()}」
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              disabled={requestMutation.isPending}
+              onClick={() => requestMutation.mutate({ canonicalName: searchText.trim() })}
+            >
+              {requestMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+              ) : (
+                <Send className="h-3.5 w-3.5 mr-1" />
+              )}
+              提报新机构并申请绑定
+            </Button>
+          </div>
+        )}
       </div>
 
       {isLoading ? (

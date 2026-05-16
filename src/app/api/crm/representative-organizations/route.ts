@@ -217,8 +217,29 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Global occupancy check helper
+  async function checkGlobalOrgConflict(targetOrgId: string) {
+    if (!rep) return null;
+    const otherActive = await prisma.representativeOrganization.findFirst({
+      where: { organizationId: targetOrgId, status: "ACTIVE", representativeId: { not: rep.id } },
+    });
+    if (otherActive) {
+      return NextResponse.json({ error: "该机构已被其他代表绑定", code: "ORG_BOUND_BY_OTHER_REP" }, { status: 409 });
+    }
+    const otherPending = await prisma.representativeOrganization.findFirst({
+      where: { organizationId: targetOrgId, status: "PENDING", representativeId: { not: rep.id } },
+    });
+    if (otherPending) {
+      return NextResponse.json({ error: "该机构已有其他代表申请中", code: "ORG_PENDING_BY_OTHER_REP" }, { status: 409 });
+    }
+    return null;
+  }
+
   // Existing-org flow below
   if (orgId) {
+    const globalConflict = await checkGlobalOrgConflict(orgId);
+    if (globalConflict) return globalConflict;
+
     const existing = await prisma.representativeOrganization.findUnique({
       where: { representativeId_organizationId: { representativeId: rep.id, organizationId: orgId } },
     });
