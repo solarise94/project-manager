@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { toast } from "sonner";
-import { MapPin, Camera, Check, Loader2 } from "lucide-react";
+import { MapPin, Camera, Check, Loader2, Mic, Square } from "lucide-react";
 
 interface CheckinFlowProps {
   profileId: string;
@@ -20,6 +20,13 @@ export function CheckinFlow({ profileId, sourceCustomerId, autoStart, onDone }: 
   const [location, setLocation] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [photoCount, setPhotoCount] = useState(0);
+  const [voiceUrl, setVoiceUrl] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [asrText, setAsrText] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef(0);
   const queryClient = useQueryClient();
 
   const createCheckin = useMutation({
@@ -39,6 +46,84 @@ export function CheckinFlow({ profileId, sourceCustomerId, autoStart, onDone }: 
     },
     onError: () => toast.error("签到创建失败"),
   });
+
+  const uploadVoice = useCallback(async (blob: Blob, ext: string) => {
+    if (!checkinId) return;
+    const fd = new FormData();
+    fd.append("file", blob, `voice_${Date.now()}.${ext}`);
+    fd.append("checkinId", checkinId);
+    const res = await fetch("/api/crm/upload", { method: "POST", body: fd });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || "语音上传失败");
+    }
+    const data = await res.json();
+    const url = data.media?.url as string;
+    if (!url) throw new Error("上传未返回 URL");
+    // Save voiceUrl to checkin
+    const patchRes = await fetch(`/api/crm/profiles/${profileId}/checkins/${checkinId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voiceUrl: url }),
+    });
+    if (!patchRes.ok) {
+      const patchData = await patchRes.json().catch(() => ({}));
+      throw new Error(patchData.error || "保存语音失败");
+    }
+    setVoiceUrl(url);
+    // Trigger ASR
+    const asrRes = await fetch(`/api/crm/checkins/${checkinId}/asr`, { method: "POST" });
+    if (asrRes.ok) {
+      const asrData = await asrRes.json();
+      if (asrData.text) setAsrText(asrData.text);
+    }
+  }, [checkinId, profileId]);
+
+  const startRecording = useCallback(async () => {
+    const candidates = ["audio/ogg;codecs=opus", "audio/ogg", "audio/webm;codecs=opus", "audio/webm"];
+    let mimeType: string | null = null;
+    for (const mime of candidates) {
+      if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(mime)) { mimeType = mime; break; }
+    }
+    if (!mimeType) { toast.error("当前浏览器不支持录音"); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType });
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+        const durationSec = Math.round((Date.now() - startTimeRef.current) / 1000);
+        if (durationSec < 1) { toast.warning("录音时间太短"); setRecording(false); return; }
+        const ext = mimeType.includes("ogg") ? "ogg" : "webm";
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        setRecording(false);
+        try {
+          await uploadVoice(blob, ext);
+          toast.success("语音已保存并识别");
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "语音处理失败");
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      startTimeRef.current = Date.now();
+      recorder.start(250);
+      setRecording(true);
+      timerRef.current = setInterval(() => {
+        const sec = Math.round((Date.now() - startTimeRef.current) / 1000);
+        if (sec >= 60) recorder.stop();
+      }, 500);
+    } catch {
+      toast.error("无法访问麦克风，请检查浏览器权限");
+    }
+  }, [uploadVoice]);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  }, []);
 
   const completeCheckin = useMutation({
     mutationFn: async () => {
@@ -94,6 +179,18 @@ export function CheckinFlow({ profileId, sourceCustomerId, autoStart, onDone }: 
       startLocating();
     }
   }, [autoStart, step, startLocating]);
+
+  // Cleanup recording on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      const recorder = mediaRecorderRef.current;
+      if (recorder?.state === "recording") {
+        recorder.onstop = () => recorder.stream?.getTracks().forEach((t) => t.stop());
+        recorder.stop();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (step === "done" && onDone) {
@@ -168,12 +265,25 @@ export function CheckinFlow({ profileId, sourceCustomerId, autoStart, onDone }: 
         </label>
         <Button
           size="sm"
+          variant={recording ? "destructive" : "outline"}
+          onClick={recording ? stopRecording : startRecording}
+          disabled={completeCheckin.isPending}
+        >
+          {recording ? <><Square className="h-4 w-4 mr-1" />停止录音</> : <><Mic className="h-4 w-4 mr-1" />{voiceUrl ? "重新录音" : "录音"}</>}
+        </Button>
+        <Button
+          size="sm"
           onClick={() => completeCheckin.mutate()}
-          disabled={completeCheckin.isPending || (!location && photoCount === 0)}
+          disabled={completeCheckin.isPending || (!location && photoCount === 0 && !voiceUrl)}
         >
           {completeCheckin.isPending ? "提交中..." : "完成签到"}
         </Button>
       </div>
+      {asrText && (
+        <div className="text-sm text-muted-foreground border-t pt-2">
+          <span className="font-medium">语音摘要：</span>{asrText}
+        </div>
+      )}
     </div>
   );
 }

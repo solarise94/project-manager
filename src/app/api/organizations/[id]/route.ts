@@ -15,9 +15,6 @@ async function assertAdmin(session: { user: { id: string; role: string } } | nul
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const { id } = await params;
   const org = await prisma.organization.findUnique({
@@ -25,6 +22,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     select: { id: true, orgCode: true, canonicalName: true, address: true, taxId: true, sites: { select: { id: true, siteName: true, siteType: true }, where: { archived: false }, orderBy: { siteName: "asc" } } },
   });
   if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (isRepresentative(session.user.role)) {
+    return NextResponse.json({
+      organization: {
+        id: org.id,
+        canonicalName: org.canonicalName,
+        address: org.address,
+        sites: org.sites,
+      },
+    });
+  }
 
   return NextResponse.json({ organization: org });
 }

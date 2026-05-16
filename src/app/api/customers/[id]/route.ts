@@ -2,24 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { assertCustomerEditable } from "@/lib/customers/permissions";
 import { isRepresentative } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
+import { validateOrg } from "@/lib/crm/customer-application-review";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const { id } = await params;
+
+  const editable = await assertCustomerEditable(id, session.user.id, session.user.role);
+  if (!editable.ok) {
+    return NextResponse.json({ error: editable.message }, { status: editable.status });
+  }
 
   const customer = await prisma.customer.findUnique({
     where: { id, deleted: false },
     select: {
       id: true, name: true, customerCode: true, organization: true,
-      organizationId: true, organizationSiteId: true, email: true,
+      organizationId: true, organizationSiteId: true, organizationRawInput: true, email: true,
       wechat: true, address: true, principal: true, miniProgramId: true,
       labOrGroup: true,
       org: { select: { canonicalName: true } },
@@ -38,11 +41,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentative(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const { id } = await params;
+
+  const editable = await assertCustomerEditable(id, session.user.id, session.user.role);
+  if (!editable.ok) {
+    return NextResponse.json({ error: editable.message }, { status: editable.status });
+  }
 
   try {
     const existing = await prisma.customer.findUnique({ where: { id } });
@@ -66,48 +70,42 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (organization !== undefined) data.organization = organization?.trim() || null;
     if (address !== undefined) data.address = address?.trim() || null;
     if (miniProgramId !== undefined) data.miniProgramId = miniProgramId?.trim() || null;
-    if (organizationId !== undefined) data.organizationId = organizationId || null;
-    if (organizationSiteId !== undefined) data.organizationSiteId = organizationSiteId || null;
-    if (organizationRawInput !== undefined) data.organizationRawInput = organizationRawInput || null;
     if (labOrGroup !== undefined) data.labOrGroup = labOrGroup || null;
 
-    // Validate organizationId exists and is active
-    const effectiveOrgId = (organizationId !== undefined ? organizationId : existing.organizationId) || null;
-    if (effectiveOrgId && organizationId !== undefined && organizationId) {
-      const org = await prisma.organization.findUnique({
-        where: { id: effectiveOrgId },
-        select: { id: true, canonicalName: true, deleted: true, archived: true },
-      });
-      if (!org || org.deleted) {
-        return NextResponse.json({ error: "指定的单位不存在" }, { status: 400 });
-      }
-      if (org.archived) {
-        return NextResponse.json({ error: "指定的单位已归档，无法关联" }, { status: 400 });
-      }
-      // Server-side sync: always use canonical name as organization text
-      data.organization = org.canonicalName;
-    }
+    const touchedOrganization =
+      organization !== undefined ||
+      organizationId !== undefined ||
+      organizationSiteId !== undefined ||
+      organizationRawInput !== undefined;
 
-    // When explicitly clearing organizationId, also clear organization text
-    if (organizationId !== undefined && !organizationId) {
-      data.organization = null;
-    }
+    if (touchedOrganization) {
+      const rawOrgText = typeof organizationRawInput === "string"
+        ? (organizationRawInput.trim() || (typeof organization === "string" ? organization.trim() : ""))
+        : (typeof organization === "string" ? organization.trim() : "");
+      const nextRawOrgText = rawOrgText || null;
+      const requestedOrgId = organizationId !== undefined ? (organizationId || null) : existing.organizationId;
+      const requestedSiteId = organizationSiteId !== undefined ? (organizationSiteId || null) : existing.organizationSiteId;
 
-    // Auto-clear siteId when orgId is absent (prevent orphaned FK)
-    if (!effectiveOrgId) {
-      data.organizationSiteId = null;
-    }
+      if (!requestedOrgId && !nextRawOrgText) {
+        data.organization = null;
+        data.organizationId = null;
+        data.organizationSiteId = null;
+        data.organizationRawInput = null;
+      } else {
+        const orgValidation = await validateOrg(requestedOrgId, requestedSiteId, nextRawOrgText);
+        if (orgValidation.error) {
+          return NextResponse.json({ error: orgValidation.error }, { status: 400 });
+        }
 
-    // Validate organizationSiteId belongs to organizationId
-    const effectiveSiteId = !effectiveOrgId ? null : (organizationSiteId !== undefined ? organizationSiteId : existing.organizationSiteId) || null;
-    if (effectiveSiteId && effectiveOrgId) {
-      const site = await prisma.organizationSite.findUnique({ where: { id: effectiveSiteId }, select: { organizationId: true } });
-      if (!site || site.organizationId !== effectiveOrgId) {
-        return NextResponse.json({ error: "院区不属于指定机构" }, { status: 400 });
+        data.organization = orgValidation.canonicalName || nextRawOrgText;
+        data.organizationId = orgValidation.organizationId || null;
+        data.organizationSiteId = orgValidation.organizationSiteId || null;
+        data.organizationRawInput = nextRawOrgText;
       }
     }
 
-    if (archived !== undefined) {
+    // Only ADMIN/USER can modify archived status
+    if (archived !== undefined && (session.user.role === "ADMIN" || session.user.role === "USER")) {
       data.archived = archived;
       data.archivedAt = archived ? new Date() : null;
     }

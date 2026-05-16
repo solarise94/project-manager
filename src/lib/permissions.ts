@@ -49,7 +49,7 @@ export async function getRepresentativeProjectIds(userId: string): Promise<strin
 
   const rep = await prisma.representative.findUnique({
     where: { email: user.email },
-    select: { id: true, name: true, archived: true },
+    select: { id: true, name: true, archived: true, createdAt: true },
   });
   if (!rep || rep.archived) return [];
 
@@ -60,7 +60,8 @@ export async function getRepresentativeProjectIds(userId: string): Promise<strin
   });
 
   // Fallback: projects where representativeId is null but representative text matches rep name.
-  // Only apply when the rep name is unique among active representatives to avoid over-authorization.
+  // Only apply when the rep name is unique among active representatives, and only for
+  // projects created after this representative record exists, to reduce stale same-name reuse.
   const nameCount = await prisma.representative.count({
     where: { name: rep.name, archived: false },
   });
@@ -72,6 +73,7 @@ export async function getRepresentativeProjectIds(userId: string): Promise<strin
       representativeId: null,
       representative: rep.name,
       deleted: false,
+      createdAt: { gte: rep.createdAt },
     },
     select: { id: true },
   });
@@ -153,13 +155,13 @@ export async function canManageProject(projectId: string, userId: string, role: 
 /**
  * Check if a user can manage tickets (change status, delete).
  * ADMIN can manage any project's tickets.
- * USER can manage tickets on projects they can read (member or representative-linked).
- * Project OWNER (any role) can manage tickets on their project.
- * Representatives and collaborators can only create tickets and reply.
+ * USER / REGIONAL_MANAGER can manage tickets only when they are explicit ProjectMember.
+ * Project OWNER (any role) can always manage tickets on their project.
+ * Representative linkage only grants read/contribute, not ticket management.
  */
 export async function canManageTicket(projectId: string, userId: string, role: string): Promise<boolean> {
   if (role === "ADMIN") return true;
-  if (role === "USER") return canReadProject(projectId, userId, role);
+  if (role === "USER" || role === "REGIONAL_MANAGER") return isProjectMember(projectId, userId);
   return isProjectOwner(projectId, userId);
 }
 
@@ -187,12 +189,17 @@ export async function buildProjectPermissions(projectId: string, userId: string,
  * - Deleted project → only ADMIN or project OWNER allowed, otherwise "FORBIDDEN"
  * - Active project → must be a project member, otherwise "FORBIDDEN"
  * - REPRESENTATIVE should NOT use this — they get a separate, scoped view.
+ *   The function enforces that restriction directly to avoid route-level drift.
  */
 export async function assertProjectContextReadable(
   projectId: string,
   userId: string,
   role: string,
 ) {
+  if (role === "REPRESENTATIVE") {
+    throw new Error("FORBIDDEN");
+  }
+
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: { id: true, deleted: true },

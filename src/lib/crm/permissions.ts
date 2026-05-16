@@ -46,6 +46,49 @@ export async function getRegionalManagerUserIds(managerUserId: string): Promise<
   return repUsers.map((u) => u.id);
 }
 
+export async function getManagedRepresentativeIds(managerUserId: string): Promise<string[]> {
+  const manager = await prisma.crmRegionManager.findUnique({
+    where: { userId: managerUserId, archived: false },
+    select: {
+      reps: {
+        select: { representativeId: true },
+      },
+    },
+  });
+  if (!manager) return [];
+  return manager.reps.map((link) => link.representativeId);
+}
+
+export async function getRepresentativeIdByUserEmail(email: string | null | undefined): Promise<string | null> {
+  if (!email) return null;
+  const rep = await prisma.representative.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+  return rep?.id ?? null;
+}
+
+export async function canManageRepresentativeBindings(
+  userId: string,
+  role: string,
+  representativeId: string,
+  userEmail?: string | null,
+): Promise<boolean> {
+  if (role === "ADMIN") return true;
+
+  if (role === "REGIONAL_MANAGER") {
+    const managedIds = await getManagedRepresentativeIds(userId);
+    return managedIds.includes(representativeId);
+  }
+
+  if (role === "REPRESENTATIVE") {
+    const ownRepresentativeId = await getRepresentativeIdByUserEmail(userEmail);
+    return ownRepresentativeId === representativeId;
+  }
+
+  return false;
+}
+
 /**
  * Build a Prisma where clause for CrmCustomerProfile scoping.
  *

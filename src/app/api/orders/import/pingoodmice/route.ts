@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
   if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 });
 
   const { source, rawText, sourceRemark } = input;
-  const { rows, errors, format } = parseOrderText(source, rawText);
+  const { rows, errors: parseErrors, format } = parseOrderText(source, rawText);
+  const errors: Array<{ row: number; externalOrderNo?: string; message: string }> = parseErrors;
   if (rows.length === 0 && errors.length > 0) {
     return NextResponse.json({ error: errors[0].message, errors, format }, { status: 422 });
   }

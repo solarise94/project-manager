@@ -133,7 +133,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { rows, errors, format } = parseOrderText(source, rawText);
+  const { rows, errors: parseErrors, format } = parseOrderText(source, rawText);
+  const errors: Array<{ row: number; externalOrderNo?: string; message: string }> = parseErrors;
   if (rows.length === 0 && errors.length > 0) {
     return NextResponse.json({ error: errors[0].message, errors, format }, { status: 422 });
   }

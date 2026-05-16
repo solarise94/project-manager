@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isFinanceBlocked, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
+import { canReadFinanceAdvance, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
 import { getOrderScopeWhere } from "@/lib/orders/permissions";
 
 async function resolveAndValidateAdvance(
@@ -70,12 +70,8 @@ async function resolveAndValidateAdvance(
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (isFinanceBlocked(session.user.role)) {
-    // Sales roles (REPRESENTATIVE / REGIONAL_MANAGER) can read advances
-    // for orders they can access, but cannot write.
-    if (session.user.role !== "REPRESENTATIVE" && session.user.role !== "REGIONAL_MANAGER") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  if (!canReadFinanceAdvance(session.user.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { searchParams } = req.nextUrl;
@@ -91,10 +87,9 @@ export async function GET(req: NextRequest) {
   if (projectId) where.projectId = projectId;
 
   if (session.user.role !== "ADMIN") {
-    const isSales = session.user.role === "REPRESENTATIVE" || session.user.role === "REGIONAL_MANAGER";
-
-    if (isSales) {
-      // Sales roles: only orderId filter is supported
+    const isRepresentative = session.user.role === "REPRESENTATIVE";
+    if (isRepresentative) {
+      // Representatives can only browse advances by a specific visible order.
       if (!orderId) {
         return NextResponse.json({ error: "请通过订单筛选" }, { status: 400 });
       }
@@ -105,19 +100,20 @@ export async function GET(req: NextRequest) {
       const orderScope = await getOrderScopeWhere(session.user.id, session.user.role);
       if (!orderScope) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       const inScope = await prisma.order.count({
-        where: { id: orderId, AND: [orderScope] },
+        where: { id: orderId, deleted: false, AND: [orderScope] },
       });
       if (inScope === 0) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       where.orderId = orderId;
     } else {
-      // USER role: standard finance scope
       const orConditions: Record<string, unknown>[] = [];
-      const [custScope, projScope] = await Promise.all([
+      const [custScope, projScope, orderScope] = await Promise.all([
         getFinanceCustomerScopeWhere(session.user.id, session.user.role),
         getFinanceProjectScopeWhere(session.user.id, session.user.role),
+        getOrderScopeWhere(session.user.id, session.user.role),
       ]);
       if (custScope) orConditions.push({ customerId: { in: custScope.id.in } });
       if (projScope) orConditions.push({ projectId: { in: projScope.id.in } });
+      if (orderScope) orConditions.push({ order: { AND: [orderScope, { deleted: false }] } });
       if (orConditions.length > 0) {
         where.OR = orConditions;
       } else {

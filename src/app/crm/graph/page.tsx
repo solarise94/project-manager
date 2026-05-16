@@ -40,6 +40,7 @@ export default function CrmGraphPage() {
 
 function GraphView() {
   const router = useRouter();
+  const { data: session } = useSession();
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [graphReady, setGraphReady] = useState(false);
   useEffect(() => {
@@ -89,6 +90,8 @@ function GraphView() {
     profileStages.set(p.sourceCustomer.id, p.stage);
     profileSourceMap.set(p.sourceCustomer.id, p.sourceCustomerId);
   }
+
+  const canCreateAnyRelation = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
 
   const filtered = allRelations.filter((r) => {
     if (!typeFilters.has(r.type)) return false;
@@ -330,16 +333,18 @@ function GraphView() {
                       ) : (
                         <span className="text-xs text-muted-foreground self-center">未建 CRM 档案</span>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setCreatePrefill({ customerId: focusCustomerId!, customerName: focusCustomer.name });
-                          setCreateDialogOpen(true);
-                        }}
-                      >
-                        <Plus className="h-3 w-3 mr-1" />添加关系
-                      </Button>
+                      {(canCreateAnyRelation || profileSourceMap.has(focusCustomerId!)) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setCreatePrefill({ customerId: focusCustomerId!, customerName: focusCustomer.name });
+                            setCreateDialogOpen(true);
+                          }}
+                        >
+                          <Plus className="h-3 w-3 mr-1" />添加关系
+                        </Button>
+                      )}
                     </div>
                   </div>
                 );
@@ -393,19 +398,21 @@ function GraphView() {
               >
                 <Eye className="h-4 w-4 mr-2" />查看客户
               </Button>
-              <Button
-                variant="outline"
-                className="flex-1 justify-start"
-                onClick={() => {
-                  if (clickedNode) {
-                    setCreatePrefill({ customerId: clickedNode.customerId, customerName: clickedNode.name });
-                    setNodeDialogOpen(false);
-                    setCreateDialogOpen(true);
-                  }
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" />添加关系
-              </Button>
+              {(canCreateAnyRelation || (clickedNode && profileSourceMap.has(clickedNode.customerId))) && (
+                <Button
+                  variant="outline"
+                  className="flex-1 justify-start"
+                  onClick={() => {
+                    if (clickedNode) {
+                      setCreatePrefill({ customerId: clickedNode.customerId, customerName: clickedNode.name });
+                      setNodeDialogOpen(false);
+                      setCreateDialogOpen(true);
+                    }
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />添加关系
+                </Button>
+              )}
             </div>
             {nodeRelations.length > 0 && (
               <div className="space-y-3">

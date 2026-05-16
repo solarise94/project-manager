@@ -918,7 +918,7 @@ export default function OrderDetailPage() {
         patchUrlPrefix="/api/finance/order-invoices"
         extraPayload={{ orderId: id, coveredOrderIds: [] }}
         showProjectCode={false}
-        aiDraftUrl={null}
+        aiDraftUrl={projectLinks.length > 0 ? `/api/projects/${(projectLinks[0].project as Record<string, unknown>)?.id}/invoice-draft` : null}
         defaultValues={{
           contactName: ((order.buyerNameSnapshot || cust?.name) as string) || undefined,
           buyerOrgName: ((order.buyerOrgNameSnapshot || custOrgName) as string) || undefined,
@@ -949,7 +949,7 @@ export default function OrderDetailPage() {
         patchUrlPrefix="/api/finance/order-invoices"
         extraPayload={undefined}
         showProjectCode={false}
-        aiDraftUrl={null}
+        aiDraftUrl={projectLinks.length > 0 ? `/api/projects/${(projectLinks[0].project as Record<string, unknown>)?.id}/invoice-draft` : null}
         reissueFromInvoiceId={reissueFromInvoiceId}
         reissueReason={reissueReason}
         onSuccess={() => { fetchOrder(); setEditingInvoiceId(null); setReissueFromInvoiceId(null); setReissueReason(null); }}

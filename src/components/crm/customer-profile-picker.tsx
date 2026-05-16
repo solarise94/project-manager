@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { CustomerSelect } from "@/components/customer-select";
@@ -16,9 +17,15 @@ interface CustomerProfilePickerProps {
 }
 
 export function CustomerProfilePicker({ trigger, title, actionLabel, onPick }: CustomerProfilePickerProps) {
+  const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const [customerId, setCustomerId] = useState("");
   const [customerName, setCustomerName] = useState("");
+
+  // REGIONAL_MANAGER cannot create new profiles (POST /api/crm/profiles rejects them),
+  // so restrict the picker to CRM-scoped customers only. REPRESENTATIVE can create
+  // profiles for project-linked customers, so they get the default (wider) list.
+  const restrictToCrmScope = session?.user?.role === "REGIONAL_MANAGER";
 
   const resolveMutation = useMutation({
     mutationFn: async () => {
@@ -60,6 +67,7 @@ export function CustomerProfilePicker({ trigger, title, actionLabel, onPick }: C
             <CustomerSelect
               value={customerId}
               onChange={(id, name) => { setCustomerId(id || ""); setCustomerName(name || ""); }}
+              crmScopeOnly={restrictToCrmScope}
             />
           </div>
           <Button

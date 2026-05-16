@@ -8,6 +8,7 @@ import Link from "next/link";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeDetail } from "@/lib/crm/types";
 import { RepresentativeReportPanel } from "@/components/crm/representative-report-panel";
+import { RepresentativeOrganizationsTab } from "@/components/crm/representative-organizations-tab";
 import { RepresentativeRegionEditor } from "@/components/crm/representative-region-editor";
 import { StageBadge, ImportanceBadge, FollowUpStatusBadge } from "@/components/crm/badges";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ function RepDetail() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [regionEditorOpen, setRegionEditorOpen] = useState(false);
+  const canManageBindings = session?.user?.role === "ADMIN" || session?.user?.role === "REGIONAL_MANAGER";
 
   const { data, isLoading } = useQuery<CrmRepresentativeDetail>({
     queryKey: crmKeys.representativeOpsDetail(repId),
@@ -80,6 +82,7 @@ function RepDetail() {
           <TabsTrigger value="customers">名下客户</TabsTrigger>
           <TabsTrigger value="checkins">拜访记录</TabsTrigger>
           <TabsTrigger value="followUps">跟进任务</TabsTrigger>
+          {canManageBindings && <TabsTrigger value="organizations">绑定单位</TabsTrigger>}
           <TabsTrigger value="report">周报</TabsTrigger>
         </TabsList>
 
@@ -242,6 +245,12 @@ function RepDetail() {
             </Card>
           )}
         </TabsContent>
+
+        {canManageBindings && (
+          <TabsContent value="organizations" className="mt-4">
+            <RepresentativeOrganizationsTab representativeId={representative.id} />
+          </TabsContent>
+        )}
 
         <TabsContent value="report" className="mt-4">
           <RepresentativeReportPanel representativeId={representative.id} readOnly />

@@ -36,6 +36,7 @@ import {
 import { toast } from "sonner";
 import { OrganizationSelect } from "@/components/organization-select";
 import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
+import { DraftInputPanel } from "@/components/draft-input-panel";
 import type { CustomerItem } from "@/lib/types";
 
 const emptyForm = {
@@ -447,6 +448,17 @@ export default function CustomersPage() {
             if (Object.keys(updates).length === 0) { setEditOpen(false); return; }
             updateMutation.mutate({ id: editing.id, ...updates });
           }} className="space-y-4">
+            <DraftInputPanel
+              formKey="customer.create"
+              fieldLabels={{
+                name: "客户姓名",
+                organization: "客户单位",
+                miniProgramId: "小程序 ID",
+              }}
+              onApply={(fields) => {
+                setEditForm((prev) => ({ ...prev, ...fields }));
+              }}
+            />
             <div className="space-y-2">
               <Label>客户姓名 *</Label>
               <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />

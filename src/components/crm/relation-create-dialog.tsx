@@ -134,6 +134,7 @@ export function RelationCreateDialog({ prefilledA, trigger, open: controlledOpen
               value={customerAId}
               displayValue={customerAName}
               onChange={(id, name) => { setCustomerAId(id || ""); setCustomerAName(name || ""); }}
+              crmScopeOnly
             />
           </div>
           <div>
@@ -142,6 +143,7 @@ export function RelationCreateDialog({ prefilledA, trigger, open: controlledOpen
               value={customerBId}
               displayValue={customerBName}
               onChange={(id, name) => { setCustomerBId(id || ""); setCustomerBName(name || ""); }}
+              crmScopeOnly
             />
           </div>
           {customerAId && customerBId && customerAId === customerBId && (

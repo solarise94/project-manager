@@ -42,6 +42,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   });
 
   if (!order) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (order.deleted && session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   // Unified invoices (includes legacy direct + legacy coverage + new direct + new coverage)
   const unifiedInvoices = await getInvoicesForOrder(id);
@@ -52,7 +55,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (scopeWhere) {
       // Check if this order is inside the scope
       const inScope = await prisma.order.count({
-        where: { id, AND: [scopeWhere] },
+        where: { id, deleted: false, AND: [scopeWhere] },
       });
       if (inScope === 0) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });

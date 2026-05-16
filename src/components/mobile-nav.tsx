@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { LayoutDashboard, Package, FolderKanban, HeartHandshake, Banknote } from "lucide-react";
+import { LayoutDashboard, Package, FolderKanban, HeartHandshake, Banknote, Ticket } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canAccessOrders, canAccessFinance } from "@/lib/role-guards";
 
@@ -21,6 +21,7 @@ function useMobileNavItems() {
 
   items.push(
     { href: "/projects", label: "项目", icon: FolderKanban },
+    { href: "/tickets", label: "工单", icon: Ticket },
     { href: "/crm", label: "CRM", icon: HeartHandshake }
   );
 

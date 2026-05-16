@@ -221,15 +221,15 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-md overflow-x-hidden p-4 sm:w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>绑定客户</DialogTitle>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="w-full">
-            <TabsTrigger value="existing">绑定已有客户</TabsTrigger>
-            <TabsTrigger value="new">新增客户并绑定</TabsTrigger>
+            <TabsTrigger value="existing">已有客户</TabsTrigger>
+            <TabsTrigger value="new">新增并绑定</TabsTrigger>
           </TabsList>
 
           <TabsContent value="existing" className="space-y-4 mt-4">
@@ -240,19 +240,21 @@ export function CustomerMatchDialog({ open, onOpenChange, orderId, userId, order
             {isLoading ? (
               <div className="flex justify-center py-4"><Loader2 className="h-6 w-6 animate-spin" /></div>
             ) : (
-              <div className="max-h-64 overflow-y-auto space-y-1">
+              <div className="max-h-64 overflow-y-auto space-y-1 min-w-0">
                 {(data?.customers || []).map((cust) => (
                   <button key={cust.id} type="button"
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${selectedId === cust.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors min-w-0 ${selectedId === cust.id ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
                     onClick={() => setSelectedId(cust.id)}>
-                    <div className="font-medium">{cust.name} <span className="font-normal opacity-70">({cust.customerCode})</span></div>
-                    {cust.organization && <div className="text-xs opacity-70">单位: {cust.organization}</div>}
-                    {(cust.principal || cust.wechat) && (
-                      <div className="text-xs opacity-70">{[cust.principal && `☎ ${cust.principal}`, cust.wechat && `💬 ${cust.wechat}`].filter(Boolean).join(" / ")}</div>
-                    )}
-                    {cust.representativeName && (
-                      <div className="text-xs text-blue-600">代表: {cust.representativeName}</div>
-                    )}
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{cust.name} <span className="font-normal opacity-70">({cust.customerCode})</span></div>
+                      {cust.organization && <div className="truncate text-xs opacity-70">单位: {cust.organization}</div>}
+                      {(cust.principal || cust.wechat) && (
+                        <div className="truncate text-xs opacity-70">{[cust.principal && `☎ ${cust.principal}`, cust.wechat && `💬 ${cust.wechat}`].filter(Boolean).join(" / ")}</div>
+                      )}
+                      {cust.representativeName && (
+                        <div className="truncate text-xs text-blue-600">代表: {cust.representativeName}</div>
+                      )}
+                    </div>
                   </button>
                 ))}
               </div>

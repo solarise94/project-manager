@@ -4,12 +4,16 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { isRepresentative } from "@/lib/permissions";
-import { isRegionalManagerRole } from "@/lib/crm/permissions";
+import {
+  canManageRepresentativeBindings,
+  getRepresentativeIdByUserEmail,
+  isRegionalManagerRole,
+} from "@/lib/crm/permissions";
 import { resolveOrganization } from "@/lib/organization-resolver";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
 import { notifyBindingReviewers } from "@/lib/crm/supervisor";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -19,16 +23,61 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const rep = await prisma.representative.findUnique({
-    where: { email: session.user.email ?? "" },
-    select: { id: true },
-  });
-  if (!rep) return NextResponse.json({ bindings: [] });
+  const { searchParams } = req.nextUrl;
+  const status = searchParams.get("status")?.trim() || "";
+  const representativeId = searchParams.get("representativeId")?.trim() || "";
+
+  if (session.user.role === "ADMIN" && !representativeId) {
+    const where: Prisma.RepresentativeOrganizationWhereInput = {};
+    if (status && ["ACTIVE", "PENDING", "REJECTED", "ARCHIVED"].includes(status)) {
+      where.status = status;
+    }
+    if (representativeId) where.representativeId = representativeId;
+
+    const bindings = await prisma.representativeOrganization.findMany({
+      where,
+      include: {
+        organization: { select: { id: true, canonicalName: true, address: true } },
+        representative: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json({ bindings });
+  }
+
+  if (representativeId) {
+    const allowed = await canManageRepresentativeBindings(
+      session.user.id,
+      session.user.role,
+      representativeId,
+      session.user.email,
+    );
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const where: Prisma.RepresentativeOrganizationWhereInput = { representativeId };
+    if (status && ["ACTIVE", "PENDING", "REJECTED", "ARCHIVED"].includes(status)) {
+      where.status = status;
+    }
+
+    const bindings = await prisma.representativeOrganization.findMany({
+      where,
+      include: {
+        organization: { select: { id: true, canonicalName: true, address: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json({ bindings });
+  }
+
+  const ownRepresentativeId = await getRepresentativeIdByUserEmail(session.user.email);
+  if (!ownRepresentativeId) return NextResponse.json({ bindings: [] });
 
   const bindings = await prisma.representativeOrganization.findMany({
-    where: { representativeId: rep.id },
+    where: { representativeId: ownRepresentativeId },
     include: {
-      organization: { select: { id: true, canonicalName: true } },
+      organization: { select: { id: true, canonicalName: true, address: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -59,24 +108,33 @@ export async function POST(req: NextRequest) {
   const isSales = isRepresentative(session.user.role) || isRegionalManagerRole(session.user.role);
   const isAdmin = session.user.role === "ADMIN";
 
-  // Only ADMIN can specify arbitrary representativeId; sales always bind to self
-  let repEmail = session.user.email ?? "";
-  if (isAdmin && bodyRepId && typeof bodyRepId === "string") {
-    const targetRep = await prisma.representative.findUnique({
+  // ADMIN can target any representative. REGIONAL_MANAGER can target managed reps.
+  // Without representativeId the request always binds to the caller's own representative record.
+  let rep: { id: string; email: string } | null = null;
+  if (bodyRepId && typeof bodyRepId === "string") {
+    const allowed = await canManageRepresentativeBindings(
+      session.user.id,
+      session.user.role,
+      bodyRepId,
+      session.user.email,
+    );
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    rep = await prisma.representative.findUnique({
       where: { id: bodyRepId },
-      select: { email: true },
+      select: { id: true, email: true },
     });
-    if (targetRep) repEmail = targetRep.email;
+  } else {
+    rep = await prisma.representative.findUnique({
+      where: { email: session.user.email ?? "" },
+      select: { id: true, email: true },
+    });
   }
-
-  const rep = await prisma.representative.findUnique({
-    where: { email: repEmail },
-    select: { id: true },
-  });
   if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
 
-  // Determine status: only ADMIN auto-approves
-  const status = isAdmin ? "ACTIVE" : "PENDING";
+  const canAutoApproveBinding = isAdmin || (isRegionalManagerRole(session.user.role) && !!bodyRepId);
+  const status = canAutoApproveBinding ? "ACTIVE" : "PENDING";
 
   let orgId: string | null = (organizationId as string) || null;
   let requestedOrgName: string | null = null;
@@ -181,7 +239,7 @@ export async function POST(req: NextRequest) {
           notifyBindingReviewers(updated.id, rep.id, updated.organization?.canonicalName || orgId).catch(() => {});
         }
         if (status === "ACTIVE") {
-          autoAssignOrgCustomersToRep(orgId, repEmail, session.user.id).catch(() => {});
+          autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
         }
         return NextResponse.json({ binding: updated }, { status: 200 });
       }
@@ -220,7 +278,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (status === "ACTIVE" && orgId) {
-    autoAssignOrgCustomersToRep(orgId, repEmail, session.user.id).catch(() => {});
+    autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
   }
 
   return NextResponse.json({ binding }, { status: 201 });

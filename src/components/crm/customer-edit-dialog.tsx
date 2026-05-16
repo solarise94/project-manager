@@ -1,17 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSession } from "next-auth/react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { OrganizationSelect } from "@/components/organization-select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { CRM_PERSON_CATEGORIES, PERSON_CATEGORY_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
-import { Pencil } from "lucide-react";
+import { Pencil, Loader2, AlertCircle } from "lucide-react";
 
 interface CustomerEditForm {
   name: string;
@@ -37,32 +39,149 @@ const emptyForm: CustomerEditForm = {
   labOrGroup: "", personCategory: "", jobTitle: "", graduationDate: "",
 };
 
+interface OrgResolveResult {
+  status: "exact" | "candidate" | "unmatched";
+  organizationId: string | null;
+  organizationSiteId: string | null;
+  canonicalName: string | null;
+  address: string | null;
+}
+
 export function CustomerEditDialog({
   customerId,
   sourceCustomerId,
   open,
   onOpenChange,
+  canEdit,
 }: {
   customerId: string;
   sourceCustomerId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  canEdit: boolean;
 }) {
+  const { data: session } = useSession();
   const [form, setForm] = useState<CustomerEditForm>(emptyForm);
   const [original, setOriginal] = useState<CustomerEditForm>(emptyForm);
   const [profileId, setProfileId] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [orgResolveStatus, setOrgResolveStatus] = useState<"exact" | "candidate" | "unmatched" | null>(null);
+  const [orgResolving, setOrgResolving] = useState(false);
+  const orgResolveAbortRef = useRef<AbortController | null>(null);
   const queryClient = useQueryClient();
+  const isRepresentative = session?.user?.role === "REPRESENTATIVE";
 
-  const { data: orgSitesData } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
+  const { data: orgSitesData, error: orgSitesError } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
     queryKey: ["organization-sites", form.organizationId],
-    queryFn: () => fetch(`/api/organizations/${form.organizationId}`).then((r) => r.json()).then((d) => ({ sites: d.organization?.sites || [] })),
-    enabled: !!form.organizationId && open,
+    queryFn: async () => {
+      const res = await fetch(`/api/organizations/${form.organizationId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "加载院区列表失败");
+      }
+      return { sites: data.organization?.sites || [] };
+    },
+    enabled: !!form.organizationId && open && canEdit,
+    retry: false,
   });
   const orgSites = orgSitesData?.sites || [];
 
+  async function resolveOrgName(rawName: string, signal?: AbortSignal): Promise<OrgResolveResult> {
+    try {
+      const res = await fetch("/api/organizations/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: rawName }),
+        signal,
+      });
+      if (!res.ok) throw new Error("resolve failed");
+      return await res.json();
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
+      return { status: "unmatched", organizationId: null, organizationSiteId: null, canonicalName: null, address: null };
+    }
+  }
+
+  async function applyOrgResolution(rawName: string) {
+    if (!rawName.trim()) return;
+    const nextRawName = rawName.trim();
+
+    orgResolveAbortRef.current?.abort();
+    const controller = new AbortController();
+    orgResolveAbortRef.current = controller;
+
+    setForm((prev) => ({
+      ...prev,
+      organization: nextRawName,
+      organizationId: "",
+      organizationSiteId: "",
+      organizationRawInput: nextRawName,
+    }));
+    setOrgResolveStatus(null);
+    setOrgResolving(true);
+    try {
+      const result = await resolveOrgName(nextRawName, controller.signal);
+
+      setForm((prev) => {
+        const next = { ...prev };
+        if (result.status === "exact" && result.organizationId && result.canonicalName) {
+          next.organization = result.canonicalName;
+          next.organizationId = result.organizationId;
+          next.organizationSiteId = result.organizationSiteId || "";
+          next.organizationRawInput = nextRawName;
+          if (!prev.address?.trim() && result.address) {
+            next.address = result.address;
+          }
+        } else {
+          next.organization = nextRawName;
+          next.organizationId = "";
+          next.organizationSiteId = "";
+          next.organizationRawInput = nextRawName;
+        }
+        return next;
+      });
+
+      setOrgResolveStatus(result.status === "exact" ? null : result.status);
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+    } finally {
+      if (orgResolveAbortRef.current === controller) {
+        setOrgResolving(false);
+      }
+    }
+  }
+
+  function handleOrgSelect(id: string | null, name: string, address?: string | null) {
+    if (id) {
+      setForm((prev) => ({
+        ...prev,
+        organization: name,
+        organizationId: id,
+        organizationSiteId: "",
+        organizationRawInput: "",
+        address: address || prev.address,
+      }));
+      setOrgResolveStatus(null);
+      return;
+    }
+
+    if (name.trim()) {
+      void applyOrgResolution(name);
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      organization: "",
+      organizationId: "",
+      organizationSiteId: "",
+      organizationRawInput: "",
+    }));
+    setOrgResolveStatus(null);
+  }
+
   useEffect(() => {
-    if (!open || !customerId) return;
+    if (!open || !customerId || !canEdit) return;
     let cancelled = false;
 
     void (async () => {
@@ -75,8 +194,16 @@ export function CustomerEditDialog({
         if (cancelled) return;
 
         const custData = await custRes.json();
+        if (!custRes.ok) {
+          throw new Error(custData.error || "加载客户信息失败");
+        }
         let profileData: { profiles?: { id: string; personCategory: string | null; jobTitle: string | null; graduationDate: string | null }[] } | null = null;
-        if (profileRes) profileData = await profileRes.json();
+        if (profileRes) {
+          profileData = await profileRes.json();
+          if (!profileRes.ok) {
+            throw new Error("加载 CRM 档案失败");
+          }
+        }
 
         if (custData.customer) {
           const c = custData.customer;
@@ -89,7 +216,7 @@ export function CustomerEditDialog({
             organization: c.organization || "",
             organizationId: c.organizationId || "",
             organizationSiteId: c.organizationSiteId || "",
-            organizationRawInput: c.organization || "",
+            organizationRawInput: c.organizationRawInput || c.organization || "",
             address: c.address || "",
             miniProgramId: c.miniProgramId || "",
             labOrGroup: c.labOrGroup || "",
@@ -99,18 +226,30 @@ export function CustomerEditDialog({
           };
           setForm(f);
           setOriginal(f);
+          setOrgResolveStatus(null);
           if (pf) setProfileId(pf.id);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(error instanceof Error ? error.message : "加载客户信息失败");
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [open, customerId, sourceCustomerId]);
+    return () => {
+      cancelled = true;
+      orgResolveAbortRef.current?.abort();
+    };
+  }, [open, customerId, sourceCustomerId, canEdit]);
 
   const mutation = useMutation({
     mutationFn: async () => {
+      if (!canEdit) {
+        throw new Error("无权限编辑此客户");
+      }
+
       const customerFields: (keyof CustomerEditForm)[] = ["name", "principal", "email", "wechat", "organization", "organizationId", "organizationSiteId", "organizationRawInput", "address", "miniProgramId", "labOrGroup"];
       const profileFields: (keyof CustomerEditForm)[] = ["personCategory", "jobTitle", "graduationDate"];
 
@@ -140,7 +279,11 @@ export function CustomerEditDialog({
         });
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || "保存失败");
+          const msg = data.error || "保存失败";
+          if (res.status === 403) {
+            throw new Error(msg === "只能编辑自己负责的客户" ? msg : "无权限编辑此客户");
+          }
+          throw new Error(msg);
         }
       }
 
@@ -174,13 +317,19 @@ export function CustomerEditDialog({
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const showOrgPending = orgResolveStatus && orgResolveStatus !== "exact" && form.organization.trim();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>编辑客户信息</DialogTitle>
         </DialogHeader>
-        {loading ? (
+        {!canEdit ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            当前角色不可编辑客户主数据。
+          </div>
+        ) : loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             加载中...
           </div>
@@ -189,6 +338,9 @@ export function CustomerEditDialog({
             onSubmit={(e) => { e.preventDefault(); mutation.mutate(); }}
             className="space-y-4"
           >
+            <div className="border-b pb-2 mb-2">
+              <h4 className="text-sm font-medium text-muted-foreground">客户主数据</h4>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>客户姓名 *</Label>
@@ -227,21 +379,29 @@ export function CustomerEditDialog({
               </div>
             </div>
             <div className="space-y-2">
-              <Label>客户单位</Label>
+              <div className="flex items-center gap-2">
+                <Label>客户单位</Label>
+                {isRepresentative && orgResolving && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                {isRepresentative && showOrgPending && (
+                  <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-700">
+                    <AlertCircle className="h-3 w-3 mr-0.5" />
+                    待确认
+                  </Badge>
+                )}
+              </div>
               <OrganizationSelect
                 value={form.organizationId}
                 displayValue={form.organization || undefined}
-                onChange={(id, name, address) => {
-                  setForm({
-                    ...form,
-                    organization: name,
-                    organizationId: id || "",
-                    organizationSiteId: "",
-                    organizationRawInput: name,
-                    address: id ? (address || "") : form.address,
-                  });
-                }}
+                onChange={handleOrgSelect}
               />
+              {isRepresentative && showOrgPending && (
+                <p className="text-xs text-muted-foreground">
+                  未在单位主数据中精确匹配，已保留原始文本，可继续保存。
+                </p>
+              )}
+              {orgSitesError instanceof Error && (
+                <p className="text-xs text-destructive">{orgSitesError.message}</p>
+              )}
             </div>
             {form.organizationId && orgSites.length > 0 && (
               <div className="space-y-2">
@@ -280,6 +440,9 @@ export function CustomerEditDialog({
                 value={form.labOrGroup}
                 onChange={(e) => setForm({ ...form, labOrGroup: e.target.value })}
               />
+            </div>
+            <div className="border-b pb-2 mb-2 mt-4">
+              <h4 className="text-sm font-medium text-muted-foreground">CRM 补充信息</h4>
             </div>
             <div className="space-y-2">
               <Label>人员分类</Label>

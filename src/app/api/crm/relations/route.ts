@@ -104,10 +104,6 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
   const body = await req.json();
   let { fromCustomerId, toCustomerId } = body;
   const { type, strength, notes, introducedAt } = body;
@@ -118,6 +114,19 @@ export async function POST(req: NextRequest) {
 
   if (fromCustomerId === toCustomerId) {
     return NextResponse.json({ error: "Cannot create a relation to the same customer" }, { status: 400 });
+  }
+
+  // REPRESENTATIVE and REGIONAL_MANAGER may create relations, but only between customers in their CRM scope
+  if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
+    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+    const ownedProfiles = await prisma.crmCustomerProfile.findMany({
+      where: scope as Record<string, unknown>,
+      select: { sourceCustomerId: true },
+    });
+    const ownedCustomerIds = new Set(ownedProfiles.map((p) => p.sourceCustomerId));
+    if (!ownedCustomerIds.has(fromCustomerId) || !ownedCustomerIds.has(toCustomerId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   if (SYMMETRIC_RELATION_TYPES.has(type) && fromCustomerId > toCustomerId) {

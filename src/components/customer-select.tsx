@@ -53,21 +53,28 @@ interface CustomerSelectProps {
     organizationId?: string;
     address?: string;
   };
+  /** When true, fetches only customers within the user's CRM scope. Use in CRM relation dialogs to match POST /api/crm/relations gate. */
+  crmScopeOnly?: boolean;
 }
 
-export function CustomerSelect({ value, displayValue, onChange, quickCreateDefaults }: CustomerSelectProps) {
+export function CustomerSelect({ value, displayValue, onChange, quickCreateDefaults, crmScopeOnly }: CustomerSelectProps) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [quickName, setQuickName] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
 
-  const isReadOnly = session?.user?.role === "REPRESENTATIVE";
+  // REPRESENTATIVE cannot create customers at all. REGIONAL_MANAGER cannot
+  // quick-add in CRM-scoped contexts because the new customer would have no CRM
+  // profile, and subsequent CRM operations (profile create, relation create) will 403.
+  const isReadOnly = session?.user?.role === "REPRESENTATIVE" || (crmScopeOnly && session?.user?.role === "REGIONAL_MANAGER");
+
+  const listUrl = crmScopeOnly ? "/api/customers/list?crmScope=true" : "/api/customers/list";
 
   const { data } = useQuery<{ customers: CustomerSelectOption[] }>({
-    queryKey: ["customers-list"],
+    queryKey: ["customers-list", crmScopeOnly ? "crm" : "all"],
     queryFn: async () => {
-      const res = await fetch("/api/customers/list");
+      const res = await fetch(listUrl);
       if (!res.ok) throw new Error("Failed to load customers");
       return res.json();
     },

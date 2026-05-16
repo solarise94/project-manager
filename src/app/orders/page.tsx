@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { ProjectBindDialog } from "@/components/finance/project-bind-dialog";
 import { InvoiceFormDialog } from "@/components/invoice-form-dialog";
-import { FolderTree, Receipt, UserRound, Filter, X, FileText, Trash2 } from "lucide-react";
+import { FolderTree, Receipt, UserRound, Filter, X, FileText, Trash2, Merge } from "lucide-react";
 import { canAccessOrders } from "@/lib/role-guards";
 import { getOrderSourcePublicLabel, getOrderSourceDisplay } from "@/lib/orders/source-labels";
 import { toast } from "sonner";
@@ -135,6 +135,7 @@ function OrdersContent() {
   const [batchInvoiceDefaults, setBatchInvoiceDefaults] = useState<Record<string, unknown>>({});
   const [batchInvoiceExtraPayload, setBatchInvoiceExtraPayload] = useState<Record<string, unknown>>({});
   const [deleteRunning, setDeleteRunning] = useState(false);
+  const [mergeRunning, setMergeRunning] = useState(false);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -370,6 +371,60 @@ function OrdersContent() {
       toast.error("批量删除请求失败");
     } finally {
       setDeleteRunning(false);
+    }
+  }
+
+  async function handleBatchMerge() {
+    const ids = [...selectedIds];
+    if (ids.length < 2) {
+      toast.error("请至少选择 2 条订单进行合并");
+      return;
+    }
+    const selected = orders.filter((o) => selectedIds.has(o.id as string)) as unknown as OrderRow[];
+    const target = selected[0];
+    const sources = selected.slice(1);
+
+    // Pre-flight: reject merged orders
+    const merged = selected.filter((o) => o.mergeSources && o.mergeSources.length > 0);
+    if (merged.length > 0) {
+      toast.error(`以下订单已合并，无法再次合并：${merged.map((o) => o.externalOrderNo || o.orderNo).join("、")}`);
+      return;
+    }
+
+    if (!confirm(`确认将 ${sources.length} 条订单合并到「${target.externalOrderNo || target.orderNo}」？此操作不可撤销。`)) return;
+
+    setMergeRunning(true);
+    try {
+      const res = await fetch("/api/orders/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetOrderId: target.id,
+          sourceOrderIds: sources.map((source) => source.id),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "批量合并失败");
+      }
+
+      const mergedCount = typeof data.merged === "number" ? data.merged : 0;
+      const rawErrors: unknown[] = Array.isArray(data.errors) ? data.errors : [];
+      const failMessages = rawErrors.filter((msg): msg is string => typeof msg === "string");
+      if (failMessages.length === 0) {
+        toast.success(`已成功合并 ${mergedCount} 条订单`);
+      } else {
+        toast.warning(`合并完成：${mergedCount} 条成功，${failMessages.length} 条失败`, {
+          description: failMessages.join("；"),
+          duration: 8000,
+        });
+      }
+      clearSelection();
+      fetchOrders();
+    } catch {
+      toast.error("批量合并请求失败");
+    } finally {
+      setMergeRunning(false);
     }
   }
 
@@ -707,6 +762,9 @@ function OrdersContent() {
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={launchBatchInvoice}>
             <FileText className="h-3 w-3 mr-1" />批量开票
           </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleBatchMerge} disabled={mergeRunning}>
+            <Merge className="h-3 w-3 mr-1" />批量合并
+          </Button>
           <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={handleBatchDelete} disabled={deleteRunning}>
             <Trash2 className="h-3 w-3 mr-1" />批量删除
           </Button>
@@ -724,6 +782,9 @@ function OrdersContent() {
           <span className="text-xs font-medium shrink-0">已选 {selectedIds.size}</span>
           <Button size="sm" variant="outline" className="h-7 text-xs flex-1" onClick={launchBatchInvoice}>
             <FileText className="h-3 w-3 mr-1" />开票
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs flex-1" onClick={handleBatchMerge} disabled={mergeRunning}>
+            <Merge className="h-3 w-3 mr-1" />合并
           </Button>
           <Button size="sm" variant="destructive" className="h-7 text-xs flex-1" onClick={handleBatchDelete} disabled={deleteRunning}>
             <Trash2 className="h-3 w-3 mr-1" />删除

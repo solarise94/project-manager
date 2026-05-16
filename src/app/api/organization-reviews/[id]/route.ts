@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeOrgName } from "@/lib/organization-normalize";
+import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -53,7 +54,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
       }
 
-      await prisma.$transaction(async (tx) => {
+      const bindingAutoActivation = await prisma.$transaction(async (tx) => {
+        let activation: { organizationId: string; representativeEmail: string } | null = null;
+
         await tx.organizationReviewTask.update({
           where: { id },
           data: {
@@ -89,14 +92,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (task.sourceType === "REP_ORG_BINDING_REQUEST") {
           const binding = await tx.representativeOrganization.findUnique({
             where: { id: task.sourceId },
+            include: { representative: { select: { email: true } } },
           });
           if (binding) {
             await tx.representativeOrganization.update({
               where: { id: task.sourceId },
-              data: { organizationId },
+              data: {
+                organizationId,
+                status: "ACTIVE",
+                reviewedByUserId: session.user.id,
+                reviewedAt: new Date(),
+                reviewNote: reviewNote || null,
+              },
             });
-            const { notifyBindingReviewers } = await import("@/lib/crm/supervisor");
-            notifyBindingReviewers(binding.id, binding.representativeId, org.canonicalName).catch(() => {});
+            activation = {
+              organizationId,
+              representativeEmail: binding.representative.email,
+            };
           }
         } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
           const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
@@ -112,7 +124,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             },
           });
         }
+        return activation;
       });
+
+      if (bindingAutoActivation) {
+        await autoAssignOrgCustomersToRep(
+          bindingAutoActivation.organizationId,
+          bindingAutoActivation.representativeEmail,
+          session.user.id,
+        );
+      }
 
       return NextResponse.json({ status: "APPROVED" });
     }
@@ -163,7 +184,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
       }
 
-      await prisma.$transaction(async (tx) => {
+      const bindingAutoActivation = await prisma.$transaction(async (tx) => {
+        let activation: { organizationId: string; representativeEmail: string } | null = null;
+
         const newOrg = await tx.organization.create({
           data: {
             orgCode,
@@ -240,14 +263,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (task.sourceType === "REP_ORG_BINDING_REQUEST") {
           const binding = await tx.representativeOrganization.findUnique({
             where: { id: task.sourceId },
+            include: { representative: { select: { email: true } } },
           });
           if (binding) {
             await tx.representativeOrganization.update({
               where: { id: task.sourceId },
-              data: { organizationId: newOrg.id },
+              data: {
+                organizationId: newOrg.id,
+                status: "ACTIVE",
+                reviewedByUserId: session.user.id,
+                reviewedAt: new Date(),
+                reviewNote: reviewNote || null,
+              },
             });
-            const { notifyBindingReviewers } = await import("@/lib/crm/supervisor");
-            notifyBindingReviewers(binding.id, binding.representativeId, newOrg.canonicalName).catch(() => {});
+            activation = {
+              organizationId: newOrg.id,
+              representativeEmail: binding.representative.email,
+            };
           }
         } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
           const customer = await tx.customer.findUnique({ where: { id: task.sourceId } });
@@ -263,7 +295,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             },
           });
         }
+        return activation;
       });
+
+      if (bindingAutoActivation) {
+        await autoAssignOrgCustomersToRep(
+          bindingAutoActivation.organizationId,
+          bindingAutoActivation.representativeEmail,
+          session.user.id,
+        );
+      }
 
       return NextResponse.json({ status: "APPROVED", orgCode });
     }

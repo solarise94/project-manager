@@ -51,10 +51,18 @@ export function CustomerApplicationFormDialog() {
   const [orgResolving, setOrgResolving] = useState(false);
   const orgResolveAbortRef = useRef<AbortController | null>(null);
 
-  const { data: orgSitesData } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
+  const { data: orgSitesData, error: orgSitesError } = useQuery<{ sites: { id: string; siteName: string; siteType: string }[] }>({
     queryKey: ["organization-sites", form.organizationId],
-    queryFn: () => fetch(`/api/organizations/${form.organizationId}`).then((r) => r.json()).then((d) => ({ sites: d.organization?.sites || [] })),
-    enabled: !!form.organizationId,
+    queryFn: async () => {
+      const res = await fetch(`/api/organizations/${form.organizationId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "加载院区列表失败");
+      }
+      return { sites: data.organization?.sites || [] };
+    },
+    enabled: !!form.organizationId && open,
+    retry: false,
   });
   const orgSites = orgSitesData?.sites || [];
 
@@ -121,15 +129,24 @@ export function CustomerApplicationFormDialog() {
   async function applyOrgResolution(rawName: string, opts?: { onlyIfEmpty?: boolean }) {
     if (!rawName.trim()) return;
     if (opts?.onlyIfEmpty && form.organization?.trim()) return;
+    const nextRawName = rawName.trim();
 
     // Cancel any in-flight resolution to prevent stale responses from overwriting newer input
     orgResolveAbortRef.current?.abort();
     const controller = new AbortController();
     orgResolveAbortRef.current = controller;
 
+    setForm((prev) => ({
+      ...prev,
+      organization: nextRawName,
+      organizationId: "",
+      organizationSiteId: "",
+      organizationRawInput: nextRawName,
+    }));
+    setOrgResolveStatus(null);
     setOrgResolving(true);
     try {
-      const result = await resolveOrgName(rawName.trim(), controller.signal);
+      const result = await resolveOrgName(nextRawName, controller.signal);
 
       setForm((prev) => {
         const next = { ...prev };
@@ -137,16 +154,16 @@ export function CustomerApplicationFormDialog() {
           next.organization = result.canonicalName;
           next.organizationId = result.organizationId;
           next.organizationSiteId = result.organizationSiteId || "";
-          next.organizationRawInput = rawName.trim();
+          next.organizationRawInput = nextRawName;
           if (!prev.address?.trim() && result.address) {
             next.address = result.address;
           }
         } else {
           // candidate or unmatched: keep raw text, don't auto-create
-          next.organization = rawName.trim();
+          next.organization = nextRawName;
           next.organizationId = "";
           next.organizationSiteId = "";
-          next.organizationRawInput = rawName.trim();
+          next.organizationRawInput = nextRawName;
         }
         return next;
       });
@@ -372,6 +389,9 @@ export function CustomerApplicationFormDialog() {
               <p className="text-xs text-muted-foreground">
                 未在单位主数据中精确匹配，已保留原始文本。如需创建新单位，请使用上方选择器的「快速添加单位」。
               </p>
+            )}
+            {orgSitesError instanceof Error && (
+              <p className="text-xs text-destructive">{orgSitesError.message}</p>
             )}
             {form.organizationId && orgSites.length > 0 && (
               <div className="space-y-1">

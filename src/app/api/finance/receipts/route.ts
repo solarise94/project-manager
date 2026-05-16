@@ -162,6 +162,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Intentionally audit-friendly: USER can create receipts, but only ADMIN can edit/delete later.
   if (session.user.role !== "ADMIN" && session.user.role !== "USER") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

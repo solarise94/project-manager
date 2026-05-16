@@ -643,6 +643,29 @@ export default function ProjectDetailPage() {
                 }}
                 className="space-y-4"
               >
+                <DraftInputPanel
+                  formKey="project.edit"
+                  projectId={projectId}
+                  fieldLabels={{
+                    name: "项目名称",
+                    description: "描述",
+                    organization: "单位",
+                    client: "客户",
+                    representative: "代表",
+                    status: "状态",
+                    progress: "进度",
+                    projectType: "项目类型",
+                    projectContent: "项目内容",
+                    quantity: "数量",
+                    procurementSource: "采购来源",
+                    brand: "品牌",
+                    techSupport: "技术支持",
+                  }}
+                  onApply={(fields) => {
+                    setEditForm((prev) => ({ ...prev, ...fields }));
+                  }}
+                  fallbackPlugin="project.smart-fill"
+                />
                 <div className="space-y-2">
                   <label className="text-sm font-medium">项目名称</label>
                   <Input value={editForm.name || ""} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />

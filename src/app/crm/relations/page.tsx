@@ -65,7 +65,7 @@ function RelationsList() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const canManage = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const canDelete = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
   const isMobile = useMediaQuery("(max-width: 767px)");
 
   const FilterPanel = (
@@ -104,7 +104,7 @@ function RelationsList() {
               </SheetContent>
             </Sheet>
           )}
-          {canManage && <RelationCreateDialog />}
+          <RelationCreateDialog />
         </div>
       </div>
 
@@ -172,7 +172,7 @@ function RelationsList() {
                     </div>
                     {r.notes && <p className={cn("text-xs text-muted-foreground mt-1", isMobile && "line-clamp-1")}>{r.notes}</p>}
                   </div>
-                  {canManage && (
+                  {canDelete && (
                     <Button
                       variant="ghost"
                       size="sm"

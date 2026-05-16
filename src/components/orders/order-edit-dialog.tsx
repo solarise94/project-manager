@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectDisplay } from "@/components/ui/select";
 import { CustomerSelect } from "@/components/customer-select";
+import { DraftInputPanel } from "@/components/draft-input-panel";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -220,7 +221,51 @@ export function OrderEditDialog({ orderId, open, onOpenChange, onUpdated }: Orde
         {loading ? (
           <div className="py-8 text-center text-muted-foreground">加载中...</div>
         ) : (
-          <Tabs defaultValue="basic" className="mt-2">
+          <>
+            <DraftInputPanel
+              formKey="order.create"
+              fieldLabels={{
+                title: "订单标题",
+                description: "描述",
+                category: "分类",
+                customer: "客户",
+                buyerNameSnapshot: "收件人",
+                buyerPhoneSnapshot: "电话",
+                buyerWechatSnapshot: "微信",
+                buyerOrgNameSnapshot: "单位",
+                buyerAddressSnapshot: "地址",
+                orderedAt: "下单日期",
+                lines: "明细项",
+                quantity: "数量/例数",
+                unitPrice: "单价",
+                sampleType: "样本类型",
+                totalAmount: "总金额",
+                projectType: "项目类型",
+                procurementSource: "采购渠道",
+                brand: "品牌",
+                techSupport: "技术支持",
+                budgetCost: "项目成本",
+                initialCost: "订单成本",
+                initialCostType: "成本类型",
+                initialCostRemark: "成本备注",
+              }}
+              onApply={(fields) => {
+                setForm((prev) => ({ ...prev, ...fields }));
+                if (Array.isArray(fields.lines)) {
+                  const newLines = (fields.lines as Array<Record<string, unknown>>).map((l) => ({
+                    itemName: String(l.itemName || ""),
+                    spec: String(l.spec || ""),
+                    unit: String(l.unit || ""),
+                    quantity: Number(l.quantity) || 1,
+                    unitPrice: Number(l.unitPrice) || 0,
+                    amount: (Number(l.quantity) || 1) * (Number(l.unitPrice) || 0),
+                  }));
+                  setEditLines(newLines);
+                }
+              }}
+              fallbackPlugin="order.smart-fill"
+            />
+            <Tabs defaultValue="basic" className="mt-2">
             <TabsList className="w-full overflow-x-auto">
               <TabsTrigger value="basic">基本信息</TabsTrigger>
               <TabsTrigger value="customer">客户</TabsTrigger>
@@ -437,6 +482,7 @@ export function OrderEditDialog({ orderId, open, onOpenChange, onUpdated }: Orde
               </TabsContent>
             )}
           </Tabs>
+          </>
         )}
 
         <div className="flex justify-end gap-3 mt-4">

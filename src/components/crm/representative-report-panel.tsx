@@ -51,6 +51,10 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
   const [lines, setLines] = useState<CrmReportLineItem[]>([]);
   const [linesDirty, setLinesDirty] = useState(false);
   const linesLoadedRef = useRef(false);
+  const linesRef = useRef<CrmReportLineItem[]>([]);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const pendingSaveSnapshotRef = useRef<string>("");
 
   // Load from data once
   useEffect(() => {
@@ -83,18 +87,32 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
     },
     onSuccess: (result) => {
       if (result.lines) {
-        setLines((prev) => {
-          if (prev.length === result.lines.length) {
-            return prev.map((l, i) => ({ ...l, id: result.lines[i].id }));
-          }
-          return result.lines;
-        });
-        setLinesDirty(false);
+        const snapshot = pendingSaveSnapshotRef.current;
+        const current = JSON.stringify(linesRef.current);
+        const unchanged = current === snapshot;
+        if (unchanged) {
+          setLines((prev) => {
+            if (prev.length === result.lines.length) {
+              return prev.map((l, i) => ({ ...l, id: result.lines[i].id }));
+            }
+            return result.lines;
+          });
+          setLinesDirty(false);
+          // Reset ref so the next data refresh re-initializes lines with enriched details
+          linesLoadedRef.current = false;
+          queryClient.invalidateQueries({ queryKey: crmKeys.representativeReport(representativeId, period) });
+          toast.success("保存成功");
+          setLastSavedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
+        } else {
+          // Only sync IDs back without overwriting content
+          setLines((prev) => {
+            const idMap = new Map(result.lines.map((l) => [l.customerId, l.id]));
+            return prev.map((l) => ({ ...l, id: idMap.get(l.customerId) || l.id }));
+          });
+          toast.success("保存成功（本地有未保存修改）");
+          setLastSavedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
+        }
       }
-      toast.success("保存成功");
-      // Reset ref so the next data refresh re-initializes lines with enriched details
-      linesLoadedRef.current = false;
-      queryClient.invalidateQueries({ queryKey: crmKeys.representativeReport(representativeId, period) });
     },
     onError: (err: Error) => {
       toast.error(err.message || "保存失败");
@@ -103,12 +121,13 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
 
   const saveLines = useCallback(() => {
     if (readOnly) return;
+    pendingSaveSnapshotRef.current = JSON.stringify(lines);
     saveMutation.mutate({ lines });
   }, [lines, readOnly, saveMutation]);
 
   // --- Add customer ---
   async function handleAddCustomer(_profileId: string, sourceCustomerId: string, customerName: string) {
-    if (readOnly) return;
+    if (readOnly || isSaving) return;
 
     if (lines.some((l) => l.customerId === sourceCustomerId)) {
       toast.info("该客户已在汇报中");
@@ -250,23 +269,25 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
     setLinesDirty(true);
   }
 
+  const isSaving = saveMutation.isPending;
+
   // --- Update line ---
   function updateLine(index: number, updates: Partial<CrmReportLineItem>) {
-    if (readOnly) return;
+    if (readOnly || isSaving) return;
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...updates } : l)));
     setLinesDirty(true);
   }
 
   // --- Delete line ---
   function deleteLine(index: number) {
-    if (readOnly) return;
+    if (readOnly || isSaving) return;
     setLines((prev) => prev.filter((_, i) => i !== index).map((l, i) => ({ ...l, sortOrder: i })));
     setLinesDirty(true);
   }
 
   // --- Move line ---
   function moveLine(index: number, direction: -1 | 1) {
-    if (readOnly) return;
+    if (readOnly || isSaving) return;
     const newIndex = index + direction;
     if (newIndex < 0 || newIndex >= lines.length) return;
     setLines((prev) => {
@@ -280,6 +301,7 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
 
   // --- Fetch demand from interactions ---
   async function fetchDemandForLine(customerId: string, index: number) {
+    if (isSaving) return;
     try {
       const res = await fetch(`/api/crm/representatives/${representativeId}/report/interactions?customerId=${customerId}`);
       if (!res.ok) return;
@@ -304,6 +326,18 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
   useEffect(() => {
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       if (linesDirtyRef.current && !readOnly) {
+        // Best-effort flush via sendBeacon
+        try {
+          const payload = JSON.stringify({
+            periodType: "WEEK",
+            periodKey,
+            lines: linesRef.current,
+          });
+          const blob = new Blob([payload], { type: "application/json" });
+          navigator.sendBeacon(`/api/crm/representatives/${representativeId}/report`, blob);
+        } catch {
+          // ignore
+        }
         e.preventDefault();
         e.returnValue = "";
       }
@@ -321,7 +355,7 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [readOnly]);
+  }, [readOnly, periodKey, representativeId]);
 
   // --- Render ---
   if (isLoading) {
@@ -516,13 +550,13 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
 
                     {!readOnly && (
                       <div className="flex items-center gap-0.5 ml-auto shrink-0">
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveLine(index, -1)} disabled={index === 0}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveLine(index, -1)} disabled={index === 0 || isSaving}>
                           <ArrowUp className="h-3 w-3" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveLine(index, 1)} disabled={index === lines.length - 1}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveLine(index, 1)} disabled={index === lines.length - 1 || isSaving}>
                           <ArrowDown className="h-3 w-3" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:text-red-600" onClick={() => deleteLine(index)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:text-red-600" onClick={() => deleteLine(index)} disabled={isSaving}>
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
@@ -539,6 +573,7 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
                           size="sm"
                           className="h-5 text-xs px-1.5"
                           onClick={() => fetchDemandForLine(line.customerId, index)}
+                          disabled={isSaving}
                         >
                           <Sparkles className="h-3 w-3 mr-1" />
                           从沟通记录拉取
@@ -550,8 +585,8 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
                       onChange={(e) => updateLine(index, { demand: e.target.value })}
                       placeholder="客户需求..."
                       rows={3}
-                      readOnly={readOnly}
-                      className={readOnly ? "bg-muted text-sm" : "text-sm"}
+                      readOnly={readOnly || isSaving}
+                      className={(readOnly || isSaving) ? "bg-muted text-sm" : "text-sm"}
                     />
                   </div>
                 </CardContent>
@@ -561,18 +596,23 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
         )}
       </div>
 
-      {/* Save button */}
+      {/* Save button — sticky bottom bar */}
       {!readOnly && (
-        <div className="flex items-center justify-end gap-2">
-          {linesDirty && (
-            <span className="text-xs text-amber-600">汇报明细有未保存的变更</span>
-          )}
-          {saveMutation.isPending && (
-            <span className="text-sm text-muted-foreground flex items-center gap-1">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              保存中...
-            </span>
-          )}
+        <div className="sticky bottom-0 z-20 -mx-4 px-4 py-3 bg-background/95 backdrop-blur-sm border-t flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {linesDirty && (
+              <span className="text-xs text-amber-600 shrink-0">有未保存变更</span>
+            )}
+            {lastSavedAt && !linesDirty && (
+              <span className="text-xs text-muted-foreground shrink-0">已保存于 {lastSavedAt}</span>
+            )}
+            {saveMutation.isPending && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                保存中...
+              </span>
+            )}
+          </div>
           <Button onClick={saveLines} disabled={saveMutation.isPending} size="sm">
             <Save className="h-4 w-4 mr-1" />
             保存汇报明细

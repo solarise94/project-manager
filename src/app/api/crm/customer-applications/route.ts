@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = {};
 
   // ── Role-based access (allow-list) ──
-  if (session.user.role === "ADMIN") {
+  if (session.user.role === "ADMIN" || session.user.role === "USER") {
     // no restriction
   } else if (session.user.role === "REPRESENTATIVE") {
     where.submittedByUserId = session.user.id;

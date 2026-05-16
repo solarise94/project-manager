@@ -54,6 +54,10 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
 
   const profile = data.profile;
   const customer = profile.sourceCustomer;
+  const canEditCustomer =
+    session?.user?.role === "ADMIN" ||
+    session?.user?.role === "USER" ||
+    (session?.user?.role === "REPRESENTATIVE" && profile.ownerUser?.id === session.user.id);
 
   return (
     <div className="p-6 space-y-6 pb-20 max-w-full overflow-x-hidden">
@@ -77,7 +81,7 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
       <div className="mt-3 flex gap-2 overflow-x-auto sm:mt-0 sm:overflow-visible">
         <StageBadge stage={profile.stage} />
         <ImportanceBadge importance={profile.importance} />
-        {session?.user?.role === "ADMIN" && (
+        {canEditCustomer && (
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
             <Pencil className="h-4 w-4 mr-1" />编辑客户
           </Button>
@@ -192,12 +196,13 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
         </TabsContent>
       </Tabs>
 
-      {session?.user?.role === "ADMIN" && (
+      {canEditCustomer && (
         <CustomerEditDialog
           customerId={customer.id}
           sourceCustomerId={sourceCustomerId}
           open={editOpen}
           onOpenChange={setEditOpen}
+          canEdit={canEditCustomer}
         />
       )}
     </div>
@@ -542,7 +547,7 @@ function RelationsTab({ customerId, customerName }: { customerId: string; custom
   const referredBy = relations.filter((r) => r.type === "REFERRED" && r.toCustomerId === customerId);
   const others = relations.filter((r) => r.type !== "REFERRED");
 
-  const canManage = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
+  const canDelete = session?.user?.role === "ADMIN" || session?.user?.role === "USER";
 
   function RelationCard({ relation, otherCustomer }: { relation: CrmRelationItem; otherCustomer: { id: string; name: string; customerCode: string; organization?: string | null } }) {
     return (
@@ -568,7 +573,7 @@ function RelationsTab({ customerId, customerName }: { customerId: string; custom
               {relation.createdByUser.name} 创建于 {new Date(relation.createdAt).toLocaleDateString("zh-CN")}
             </p>
           </div>
-          {canManage && (
+          {canDelete && (
             <Button variant="ghost" size="sm" className="mt-3 w-full sm:mt-0 sm:w-auto text-red-500" onClick={() => deleteMutation.mutate({ id: relation.id, otherId: otherCustomer.id })} disabled={deleteMutation.isPending}>
               删除
             </Button>
@@ -584,7 +589,7 @@ function RelationsTab({ customerId, customerName }: { customerId: string; custom
     <div>
       <div className="flex justify-between items-center mb-3">
         <h3 className="font-medium">关系网络</h3>
-        {canManage && <RelationFormDialog currentCustomerId={customerId} currentCustomerName={customerName} />}
+        <RelationFormDialog currentCustomerId={customerId} currentCustomerName={customerName} />
       </div>
 
       {relations.length === 0 ? (

@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { isRegionalManagerRole, getCrmProfileScopeWhere } from "@/lib/crm/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { resolveCustomerSelectOptions } from "@/lib/customers/customer-select-options";
 
@@ -35,18 +36,51 @@ async function makeResult(customers: any[]) {
   return resolveCustomerSelectOptions(withOrg);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (isRepresentative(session.user.role)) {
-    const projectIds = await getRepresentativeProjectIds(session.user.id);
-    const projects = await prisma.project.findMany({
-      where: { id: { in: projectIds }, customerId: { not: null } },
-      select: { customerId: true },
-    });
-    const customerIds = [...new Set(projects.map((p) => p.customerId!))];
+  const crmScope = req.nextUrl.searchParams.get("crmScope") === "true";
+  let customerIds: string[] | undefined;
 
+  if (isRepresentative(session.user.role)) {
+    if (crmScope) {
+      // CRM-scoped customers only — must match POST /api/crm/relations gate
+      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+      const crmProfiles = await prisma.crmCustomerProfile.findMany({
+        where: scope as Record<string, unknown>,
+        select: { sourceCustomerId: true },
+      });
+      customerIds = crmProfiles.map((p) => p.sourceCustomerId);
+    } else {
+      // Union of project-linked and CRM-scoped customers
+      const projectIds = await getRepresentativeProjectIds(session.user.id);
+      const projects = await prisma.project.findMany({
+        where: { id: { in: projectIds }, customerId: { not: null } },
+        select: { customerId: true },
+      });
+      const idSet = new Set(projects.map((p) => p.customerId!));
+
+      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+      const crmProfiles = await prisma.crmCustomerProfile.findMany({
+        where: scope as Record<string, unknown>,
+        select: { sourceCustomerId: true },
+      });
+      for (const p of crmProfiles) idSet.add(p.sourceCustomerId);
+
+      customerIds = [...idSet];
+    }
+  } else if (crmScope && isRegionalManagerRole(session.user.role)) {
+    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
+    const crmProfiles = await prisma.crmCustomerProfile.findMany({
+      where: scope as Record<string, unknown>,
+      select: { sourceCustomerId: true },
+    });
+    customerIds = crmProfiles.map((p) => p.sourceCustomerId);
+  }
+
+  if (customerIds !== undefined) {
+    if (customerIds.length === 0) return NextResponse.json({ customers: [] });
     const customers = await prisma.customer.findMany({
       where: { id: { in: customerIds }, deleted: false, archived: false },
       select: CUSTOMER_SELECT,
@@ -56,6 +90,7 @@ export async function GET() {
     return NextResponse.json({ customers: resolved });
   }
 
+  // ADMIN / USER (and REGIONAL_MANAGER without crmScope): all non-deleted, non-archived customers
   const customers = await prisma.customer.findMany({
     where: { deleted: false, archived: false },
     select: CUSTOMER_SELECT,

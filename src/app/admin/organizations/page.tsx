@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, Archive, ArchiveRestore, Trash2, Merge,
-  Building2, Tag, MapPin, X, Users, BarChart3,
+  Building2, Tag, MapPin, X, Users, BarChart3, UserCog, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,6 +72,10 @@ export default function OrganizationsPage() {
   const [editForm, setEditForm] = useState({ canonicalName: "", address: "", taxId: "" });
   const [newAlias, setNewAlias] = useState("");
   const [newSite, setNewSite] = useState({ siteName: "", address: "", siteType: "CAMPUS" });
+  const [assignFilter, setAssignFilter] = useState<"all" | "assigned" | "unassigned">("all");
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [assignTargetOrg, setAssignTargetOrg] = useState<OrgItem | null>(null);
+  const [selectedRepId, setSelectedRepId] = useState<string>("");
 
   const { data, isLoading, error } = useQuery<{ organizations: OrgItem[] }>({
     queryKey: ["organizations"],
@@ -82,6 +86,53 @@ export default function OrganizationsPage() {
       return res.json();
     },
     enabled: status === "authenticated" && session?.user?.role === "ADMIN",
+  });
+
+  const { data: bindingsData } = useQuery<{ bindings: Array<{
+    id: string;
+    status: string;
+    organizationId: string | null;
+    representative: { id: string; name: string; email: string } | null;
+  }> }>({
+    queryKey: ["representative-organizations", "all"],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/representative-organizations");
+      if (!res.ok) return { bindings: [] };
+      return res.json();
+    },
+    enabled: status === "authenticated" && session?.user?.role === "ADMIN",
+  });
+
+  const { data: repsData } = useQuery<{ representatives: Array<{ id: string; name: string; email: string }> }>({
+    queryKey: ["representatives-list"],
+    queryFn: async () => {
+      const res = await fetch("/api/representatives/list");
+      if (!res.ok) return { representatives: [] };
+      return res.json();
+    },
+    enabled: assignDialogOpen && status === "authenticated",
+  });
+
+  const assignRepMutation = useMutation({
+    mutationFn: async ({ orgId, repId }: { orgId: string; repId: string }) => {
+      const res = await fetch("/api/crm/representative-organizations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ representativeId: repId, organizationId: orgId }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "分配失败");
+      return json;
+    },
+    onSuccess: () => {
+      toast.success("代表已分配");
+      setAssignDialogOpen(false);
+      setAssignTargetOrg(null);
+      setSelectedRepId("");
+      queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      queryClient.invalidateQueries({ queryKey: ["representative-organizations", "all"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   useEffect(() => {
@@ -171,12 +222,34 @@ export default function OrganizationsPage() {
   });
 
   const orgs = data?.organizations || [];
-  const filtered = orgs.filter(
-    (o) =>
-      o.canonicalName.toLowerCase().includes(search.toLowerCase()) ||
-      o.orgCode.toLowerCase().includes(search.toLowerCase()) ||
-      o.aliases.some((a) => a.alias.toLowerCase().includes(search.toLowerCase()))
-  );
+  const bindings = bindingsData?.bindings || [];
+  const bindingMap = new Map<string, Array<{ id: string; name: string; email: string }>>();
+  const bindingStatusMap = new Map<string, Set<string>>();
+  for (const b of bindings) {
+    if (b.organizationId) {
+      const statuses = bindingStatusMap.get(b.organizationId) || new Set<string>();
+      statuses.add(b.status);
+      bindingStatusMap.set(b.organizationId, statuses);
+    }
+    if (b.organizationId && b.status === "ACTIVE" && b.representative) {
+      const list = bindingMap.get(b.organizationId) || [];
+      list.push(b.representative);
+      bindingMap.set(b.organizationId, list);
+    }
+  }
+
+  const filtered = orgs
+    .filter(
+      (o) =>
+        o.canonicalName.toLowerCase().includes(search.toLowerCase()) ||
+        o.orgCode.toLowerCase().includes(search.toLowerCase()) ||
+        o.aliases.some((a) => a.alias.toLowerCase().includes(search.toLowerCase()))
+    )
+    .filter((o) => {
+      if (assignFilter === "all") return true;
+      const hasActiveBinding = bindingMap.has(o.id);
+      return assignFilter === "assigned" ? hasActiveBinding : !hasActiveBinding;
+    });
 
   function openCreateDialog(initialName = "") {
     setForm({
@@ -219,6 +292,16 @@ export default function OrganizationsPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input placeholder="搜索机构..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <Select value={assignFilter} onValueChange={(v) => setAssignFilter(v as "all" | "assigned" | "unassigned")}>
+          <SelectTrigger className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部单位</SelectItem>
+            <SelectItem value="assigned">已分配代表</SelectItem>
+            <SelectItem value="unassigned">未分配代表</SelectItem>
+          </SelectContent>
+        </Select>
         <Button onClick={() => openCreateDialog()}>
           <Plus className="mr-2 h-4 w-4" />新增机构
         </Button>
@@ -240,6 +323,13 @@ export default function OrganizationsPage() {
         <div className="space-y-3">
           {filtered.map((o) => (
             <div key={o.id} className={`rounded-lg border bg-card p-4 ${o.archived ? "opacity-60" : ""}`}>
+              {(() => {
+                const activeBindings = bindingMap.get(o.id) || [];
+                const statuses = bindingStatusMap.get(o.id) || new Set<string>();
+                const hasPendingBinding = statuses.has("PENDING");
+                const hasHistoricalBinding = statuses.has("REJECTED") || statuses.has("ARCHIVED");
+
+                return (
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -247,6 +337,25 @@ export default function OrganizationsPage() {
                     <span className="text-xs text-muted-foreground font-mono">{o.orgCode}</span>
                     {o.archived && <Badge variant="outline" className="text-xs"><Archive className="h-3 w-3 mr-1" />已归档</Badge>}
                     <Badge variant="secondary" className="text-xs">{o._count.customers} 客户</Badge>
+                    {activeBindings.length > 0 ? (
+                      activeBindings.map((r) => (
+                        <Badge key={r.id} variant="default" className="text-xs bg-blue-600 hover:bg-blue-700">
+                          <UserCog className="h-3 w-3 mr-1" />{r.name}
+                        </Badge>
+                      ))
+                    ) : hasPendingBinding ? (
+                      <Badge variant="outline" className="text-xs text-sky-700 border-sky-200">
+                        <Link2 className="h-3 w-3 mr-1" />待审核绑定
+                      </Badge>
+                    ) : hasHistoricalBinding ? (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                        <Link2 className="h-3 w-3 mr-1" />当前无生效代表
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs text-amber-600 border-amber-200">
+                        <Link2 className="h-3 w-3 mr-1" />未分配代表
+                      </Badge>
+                    )}
                     <Link href={`/crm/customers?organizationId=${o.id}&organizationName=${encodeURIComponent(o.canonicalName)}`} className="inline-flex items-center gap-1 h-6 px-2 text-xs hover:bg-muted rounded-md"><Users className="h-3 w-3" />客户管理</Link>
                     <Link href={`/admin/organizations/${o.id}/analytics`} className="inline-flex items-center gap-1 h-6 px-2 text-xs hover:bg-muted rounded-md"><BarChart3 className="h-3 w-3" />分析</Link>
                   </div>
@@ -269,6 +378,9 @@ export default function OrganizationsPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <Button variant="ghost" size="sm" title="分配代表"
+                    onClick={() => { setAssignTargetOrg(o); setSelectedRepId(""); setAssignDialogOpen(true); }}
+                  ><UserCog className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="sm" onClick={() => {
                     setEditing(o);
                     setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
@@ -292,10 +404,48 @@ export default function OrganizationsPage() {
                   )}
                 </div>
               </div>
+                );
+              })()}
             </div>
           ))}
         </div>
       )}
+
+      {/* Assign Representative Dialog */}
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>分配代表</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              为单位 <span className="font-medium text-foreground">{assignTargetOrg?.canonicalName}</span> 分配代表
+            </p>
+            <div className="space-y-2">
+              <Label>选择代表</Label>
+              <Select value={selectedRepId} onValueChange={(v) => setSelectedRepId(v || "")}>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择代表..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {repsData?.representatives.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>{r.name} ({r.email})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              className="w-full"
+              disabled={!selectedRepId || assignRepMutation.isPending}
+              onClick={() => {
+                if (assignTargetOrg && selectedRepId) {
+                  assignRepMutation.mutate({ orgId: assignTargetOrg.id, repId: selectedRepId });
+                }
+              }}
+            >
+              {assignRepMutation.isPending ? "分配中..." : "确认分配"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

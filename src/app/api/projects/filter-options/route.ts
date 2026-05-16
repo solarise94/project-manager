@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getUserProjectIds, isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
+import { getReadableProjectIds } from "@/lib/permissions";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -11,11 +11,8 @@ export async function GET() {
   const isAdmin = session.user.role === "ADMIN";
 
   let projectIds: string[] | null = null; // null = no filter (admin)
-  if (isRepresentative(session.user.role)) {
-    projectIds = await getRepresentativeProjectIds(session.user.id);
-    if (projectIds.length === 0) return NextResponse.json({ representatives: [], customers: [] });
-  } else if (!isAdmin) {
-    projectIds = await getUserProjectIds(session.user.id);
+  if (!isAdmin) {
+    projectIds = (await getReadableProjectIds(session.user.id, session.user.role)) ?? [];
     if (projectIds.length === 0) return NextResponse.json({ representatives: [], customers: [] });
   }
 

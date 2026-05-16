@@ -225,7 +225,7 @@ export async function notifyBindingReviewers(
           type: "CRM_ORG_BINDING_REVIEW",
           title: "单位绑定申请",
           content: `代表申请负责单位「${orgName}」，请审核`,
-          link: `/admin/representative-organizations`,
+          link: `/crm/representatives/${representativeId}`,
           dedupeKey: `org-binding-review:${bindingId}:${reviewer.id}`,
         },
       });

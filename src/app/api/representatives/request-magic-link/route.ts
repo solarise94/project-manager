@@ -4,6 +4,46 @@ import { sendMail } from "@/lib/mail";
 import { issueOrReuseRepresentativeMagicLink } from "@/lib/representative-link";
 import { getSafeRedirect } from "@/lib/safe-redirect";
 
+const MAGIC_LINK_COOLDOWN_MS = 60 * 1000;
+
+async function isMagicLinkCoolingDown(identifier: string): Promise<boolean> {
+  const record = await prisma.failedLoginAttempt.findUnique({
+    where: { identifier },
+    select: { lockedUntil: true },
+  });
+  if (!record?.lockedUntil) return false;
+
+  const now = new Date();
+  if (record.lockedUntil > now) {
+    return true;
+  }
+
+  await prisma.failedLoginAttempt.delete({
+    where: { identifier },
+  }).catch(() => {});
+  return false;
+}
+
+async function markMagicLinkCooldown(identifier: string): Promise<void> {
+  const now = new Date();
+  const lockedUntil = new Date(now.getTime() + MAGIC_LINK_COOLDOWN_MS);
+
+  await prisma.failedLoginAttempt.upsert({
+    where: { identifier },
+    create: {
+      identifier,
+      attempts: 0,
+      lastAttempt: now,
+      lockedUntil,
+    },
+    update: {
+      attempts: 0,
+      lastAttempt: now,
+      lockedUntil,
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -14,6 +54,7 @@ export async function POST(req: NextRequest) {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const cooldownIdentifier = `magic-link:${normalizedEmail}`;
 
     const rep = await prisma.representative.findUnique({
       where: { email: normalizedEmail },
@@ -28,10 +69,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "该代表账号已归档，无法登录" }, { status: 403 });
     }
 
+    if (await isMagicLinkCoolingDown(cooldownIdentifier)) {
+      return NextResponse.json({ success: true });
+    }
+
     // Only accept same-origin safe paths. Empty fallback means invalid redirects are omitted.
     const rawRedirect = typeof body.redirect === "string" ? body.redirect : undefined;
     const redirect = getSafeRedirect(rawRedirect, "", req.nextUrl.origin) || undefined;
     const { magicLink } = await issueOrReuseRepresentativeMagicLink(rep.id, redirect);
+    await markMagicLinkCooldown(cooldownIdentifier);
 
     // Send email in background — token is already saved, delivery failure is non-fatal
     sendMail({

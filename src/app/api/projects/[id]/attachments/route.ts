@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { assertProjectMember, isRepresentative } from "@/lib/permissions";
+import { canContributeProject, isRepresentative } from "@/lib/permissions";
 import { writeFile } from "fs/promises";
 import { mkdir } from "fs/promises";
 import path from "path";
@@ -22,9 +22,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (project.deleted) return NextResponse.json({ error: "项目已删除，无法上传文件" }, { status: 400 });
 
   if (session.user.role !== "ADMIN") {
-    try {
-      await assertProjectMember(id, session.user.id);
-    } catch {
+    const canContribute = await canContributeProject(id, session.user.id, session.user.role);
+    if (!canContribute) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }

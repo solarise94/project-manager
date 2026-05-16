@@ -101,12 +101,11 @@ export default function CrmCustomerApplicationsPage() {
 }
 
 function ApplicationPageInner() {
-  const { status, data: session } = useSession();
+  const { status } = useSession();
   const router = useRouter();
 
   if (status === "unauthenticated") { router.push("/login"); return null; }
   if (status === "loading") return <div className="p-6">加载中...</div>;
-  if (session?.user?.role === "USER") { router.push("/crm"); return null; }
 
   return <ApplicationList />;
 }
@@ -129,19 +128,26 @@ function ApplicationList() {
   const [batchReviewNote, setBatchReviewNote] = useState("");
 
   const isAdmin = session?.user?.role === "ADMIN";
+  const isUser = session?.user?.role === "USER";
   const isRegionalManager = session?.user?.role === "REGIONAL_MANAGER";
   const canAdminCreate = isAdmin;
   const canSupervisorReview = isAdmin || isRegionalManager;
+  const canBrowseApplications = canSupervisorReview || isUser;
   const isRep = session?.user?.role === "REPRESENTATIVE";
 
   const filterMode = useMemo<"pending" | "review" | "all">(() => {
     if (isRep) return "all";
+    if (isUser) {
+      const view = searchParams.get("view");
+      if (view === "review" || view === "pending" || view === "all") return view;
+      return "all";
+    }
     const view = searchParams.get("view");
     if (view === "review" || view === "pending" || view === "all") return view;
     if (searchParams.get("review") === "PENDING") return "review";
     // Regional managers default to review view; admins default to pending
     return isRegionalManager ? "review" : "pending";
-  }, [searchParams, isRep, isRegionalManager]);
+  }, [searchParams, isRep, isRegionalManager, isUser]);
 
   const { data, isLoading } = useQuery<{ applications: ApplicationItem[] }>({
     queryKey: ["crm-customer-applications", filterMode],
@@ -420,23 +426,27 @@ function ApplicationList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">
-            {canSupervisorReview ? "客户申请与主管复核" : "我的客户申请"}
+            {canSupervisorReview ? "客户申请与主管复核" : isUser ? "客户申请记录" : "我的客户申请"}
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
             {canSupervisorReview
               ? (filterMode === "pending" ? `待创建 ${applications.length} 条` : filterMode === "review" ? `待复核 ${applications.length} 条` : `共 ${applications.length} 条`)
-              : "申请将自动通过并创建客户档案，主管会进行复核"}
+              : isUser
+                ? `当前视图共 ${applications.length} 条`
+                : "申请将自动通过并创建客户档案，主管会进行复核"}
           </p>
-          {(canAdminCreate || canSupervisorReview) && (
+          {(canAdminCreate || canBrowseApplications) && (
             <div className="flex items-center gap-2 mt-2">
-              {canAdminCreate && (
+              {(canAdminCreate || canBrowseApplications) && (
                 <Button size="sm" variant={filterMode === "pending" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=pending"); }}>
                   待创建
                 </Button>
               )}
-              <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=review"); }}>
-                待复核
-              </Button>
+              {canBrowseApplications && (
+                <Button size="sm" variant={filterMode === "review" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=review"); }}>
+                  待复核
+                </Button>
+              )}
               <Button size="sm" variant={filterMode === "all" ? "default" : "outline"} onClick={() => { setSelectedIds(new Set()); router.replace("/crm/customer-applications?view=all"); }}>
                 全部
               </Button>

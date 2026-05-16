@@ -116,6 +116,7 @@ export function RelationFormDialog({ currentCustomerId, currentCustomerName }: P
             <CustomerSelect
               value={targetCustomerId}
               onChange={(id) => setTargetCustomerId(id || "")}
+              crmScopeOnly
             />
           </div>
           <div>

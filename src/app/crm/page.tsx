@@ -262,6 +262,14 @@ function CrmDashboard() {
               description="填写本周工作汇报"
             />
           )}
+          {isRep && (
+            <QuickNavCard
+              href="/crm/my-organizations"
+              icon={<Building2 className="h-8 w-8" />}
+              label="我的单位"
+              description="查看和申请绑定单位"
+            />
+          )}
           <QuickNavCard
             href="/crm/relations"
             icon={<Network className="h-8 w-8" />}
@@ -280,6 +288,14 @@ function CrmDashboard() {
               icon={<Building2 className="h-8 w-8" />}
               label="机构管理"
               description="机构主数据管理与去重审核"
+            />
+          )}
+          {isAdmin && (
+            <QuickNavCard
+              href="/admin/representative-organizations"
+              icon={<Inbox className="h-8 w-8" />}
+              label="绑定审核"
+              description="审核代表的单位绑定申请"
             />
           )}
           {(isAdmin || isRegionalManager) && (

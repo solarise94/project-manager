@@ -1,17 +1,25 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, Plus, Building2 } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Building2, Link2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { toast } from "sonner";
 
 interface OrgOption {
@@ -22,11 +30,287 @@ interface OrgOption {
   taxId: string | null;
 }
 
+interface RepBinding {
+  id: string;
+  status: string;
+  organizationId: string | null;
+  requestedOrganizationName: string | null;
+  organization: {
+    id: string;
+    canonicalName: string;
+    address: string | null;
+  } | null;
+}
+
 interface OrganizationSelectProps {
   value: string;
   displayValue?: string;
   disabled?: boolean;
   onChange: (id: string | null, canonicalName: string, address?: string | null, taxId?: string | null) => void;
+}
+
+function OrgList({
+  value,
+  search,
+  onSearchChange,
+  orgs,
+  onSelect,
+  quickName,
+  onQuickNameChange,
+  showQuickAdd,
+  onToggleQuickAdd,
+  quickCreateMutation,
+}: {
+  value: string;
+  search: string;
+  onSearchChange: (v: string) => void;
+  orgs: OrgOption[];
+  onSelect: (o: OrgOption) => void;
+  quickName: string;
+  onQuickNameChange: (v: string) => void;
+  showQuickAdd: boolean;
+  onToggleQuickAdd: (show: boolean) => void;
+  quickCreateMutation: {
+    isPending: boolean;
+    mutate: (name: string) => void;
+  };
+}) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="p-3 border-b">
+        <Input
+          placeholder="搜索单位..."
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="h-9 text-sm"
+          autoFocus
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto min-w-0">
+        <button
+          type="button"
+          className="w-full text-left px-3 py-2.5 text-sm hover:bg-accent flex items-center gap-2 min-w-0"
+          onClick={() => onSelect({ id: "", orgCode: "", canonicalName: "", address: null, taxId: null } as OrgOption)}
+        >
+          <Check className={cn("h-4 w-4 shrink-0", !value ? "opacity-100" : "opacity-0")} />
+          <span>不选择单位</span>
+        </button>
+        {orgs.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className="w-full text-left px-3 py-2.5 text-sm hover:bg-accent flex items-center gap-2 min-w-0"
+            onClick={() => onSelect(o)}
+          >
+            <Check className={cn("h-4 w-4 shrink-0", value === o.id ? "opacity-100" : "opacity-0")} />
+            <div className="flex flex-col min-w-0">
+              <span className="truncate">{o.canonicalName} <span className="text-xs text-muted-foreground">({o.orgCode})</span></span>
+              {o.address && <span className="text-xs text-muted-foreground truncate">{o.address}</span>}
+            </div>
+          </button>
+        ))}
+        {orgs.length === 0 && search && (
+          <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+            未找到匹配单位
+          </div>
+        )}
+      </div>
+      <div className="border-t p-3">
+        {showQuickAdd ? (
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="单位名称"
+              value={quickName}
+              onChange={(e) => onQuickNameChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && quickName.trim()) {
+                  e.preventDefault();
+                  quickCreateMutation.mutate(quickName.trim());
+                }
+                if (e.key === "Escape") onToggleQuickAdd(false);
+              }}
+              className="h-9 text-sm"
+              autoFocus
+            />
+            <Button
+              size="sm"
+              className="h-9 shrink-0"
+              disabled={!quickName.trim() || quickCreateMutation.isPending}
+              onClick={() => quickName.trim() && quickCreateMutation.mutate(quickName.trim())}
+            >
+              {quickCreateMutation.isPending ? "..." : "添加"}
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent rounded-sm w-full"
+            onClick={() => onToggleQuickAdd(true)}
+          >
+            <Plus className="h-4 w-4" />
+            快速添加单位
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function normalizeOrgName(text: string): string {
+  return text.replace(/\s+/g, "").toLowerCase();
+}
+
+function RepOrgList({
+  value,
+  displayValue,
+  search,
+  onSearchChange,
+  bindings,
+  onSelect,
+  onUseRawName,
+  onRequestBinding,
+  requestPending,
+  isLoading,
+  loadError,
+}: {
+  value: string;
+  displayValue?: string;
+  search: string;
+  onSearchChange: (v: string) => void;
+  bindings: RepBinding[];
+  onSelect: (binding: RepBinding) => void;
+  onUseRawName: (name: string) => void;
+  onRequestBinding: (name: string) => void;
+  requestPending: boolean;
+  isLoading: boolean;
+  loadError: string | null;
+}) {
+  const trimmedSearch = search.trim();
+  const normalizedSearch = normalizeOrgName(trimmedSearch);
+
+  const activeBindings = bindings.filter((binding) => binding.status === "ACTIVE" && binding.organization);
+  const pendingBindings = bindings.filter((binding) => binding.status === "PENDING");
+  const filteredActiveBindings = trimmedSearch
+    ? activeBindings.filter((binding) => normalizeOrgName(binding.organization?.canonicalName || "").includes(normalizedSearch))
+    : activeBindings;
+
+  const exactActiveBinding = trimmedSearch
+    ? activeBindings.find((binding) => normalizeOrgName(binding.organization?.canonicalName || "") === normalizedSearch)
+    : null;
+  const exactPendingBinding = trimmedSearch
+    ? pendingBindings.find((binding) => normalizeOrgName(binding.organization?.canonicalName || binding.requestedOrganizationName || "") === normalizedSearch)
+    : null;
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b p-3">
+        <Input
+          placeholder="搜索已绑定单位或输入新单位"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="h-9 text-sm"
+          autoFocus
+        />
+      </div>
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <button
+          type="button"
+          className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-accent"
+          onClick={() => onUseRawName("")}
+        >
+          <Check className={cn("h-4 w-4 shrink-0", !value && !(displayValue || "").trim() ? "opacity-100" : "opacity-0")} />
+          <span>不选择单位</span>
+        </button>
+        {filteredActiveBindings.map((binding) => {
+          const organization = binding.organization;
+          if (!organization) return null;
+          return (
+            <button
+              key={binding.id}
+              type="button"
+              className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-accent"
+              onClick={() => onSelect(binding)}
+            >
+              <Check className={cn("h-4 w-4 shrink-0", value === organization.id ? "opacity-100" : "opacity-0")} />
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate">{organization.canonicalName}</span>
+                {organization.address && (
+                  <span className="truncate text-xs text-muted-foreground">{organization.address}</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>正在加载已绑定单位...</span>
+          </div>
+        ) : null}
+        {loadError ? (
+          <div className="px-3 py-4 text-center text-sm text-destructive">
+            {loadError}
+          </div>
+        ) : null}
+        {!isLoading && !loadError && filteredActiveBindings.length === 0 && (
+          <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+            {trimmedSearch ? "未找到已绑定单位" : "暂无已绑定单位"}
+          </div>
+        )}
+        {!isLoading && !loadError && pendingBindings.length > 0 && !trimmedSearch && (
+          <div className="border-t px-3 py-3">
+            <p className="mb-2 text-xs text-muted-foreground">待审核绑定</p>
+            <div className="space-y-2">
+              {pendingBindings.slice(0, 4).map((binding) => (
+                <div key={binding.id} className="flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-sm">
+                  <span className="truncate">{binding.organization?.canonicalName || binding.requestedOrganizationName || "未命名单位"}</span>
+                  <Badge variant="secondary">审核中</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="border-t p-3">
+        {trimmedSearch ? (
+          <div className="space-y-2">
+            {exactPendingBinding ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                该单位的绑定申请已提交，正在等待审核。
+              </div>
+            ) : null}
+            {!exactActiveBinding ? (
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="justify-start"
+                  onClick={() => onUseRawName(trimmedSearch)}
+                >
+                  直接使用“{trimmedSearch}”
+                </Button>
+                <Button
+                  type="button"
+                  className="justify-start"
+                  disabled={requestPending || !!exactPendingBinding}
+                  onClick={() => onRequestBinding(trimmedSearch)}
+                >
+                  {requestPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}
+                  申请绑定“{trimmedSearch}”
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">已在上方已绑定机构中找到精确匹配，可直接选择。</p>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            只能搜索自己已绑定的机构。若未找到，可输入名称后提交绑定申请。
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function OrganizationSelect({ value, displayValue, disabled, onChange }: OrganizationSelectProps) {
@@ -36,8 +320,24 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
   const [search, setSearch] = useState("");
   const [quickName, setQuickName] = useState("");
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 767px)");
 
   const isRep = session?.user?.role === "REPRESENTATIVE";
+
+  const {
+    data: repBindingsData,
+    isLoading: repBindingsLoading,
+    error: repBindingsQueryError,
+  } = useQuery<{ bindings: RepBinding[] }>({
+    queryKey: ["representative-organizations", "self"],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/representative-organizations");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load representative organizations");
+      return data;
+    },
+    enabled: isRep && open,
+  });
 
   const { data } = useQuery<{ organizations: OrgOption[] }>({
     queryKey: ["organizations-list", search],
@@ -77,29 +377,69 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const requestBindingMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await fetch("/api/crm/representative-organizations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ canonicalName: name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const error = data.error || "申请绑定失败";
+        const err = new Error(error) as Error & { status?: number; payload?: unknown };
+        err.status = res.status;
+        err.payload = data;
+        throw err;
+      }
+      return data as { binding?: RepBinding };
+    },
+    onSuccess: (data, requestedName) => {
+      const bindingName = data.binding?.organization?.canonicalName || data.binding?.requestedOrganizationName || requestedName;
+      toast.success(`已提交“${bindingName}”的绑定申请`);
+      onChange(null, bindingName);
+      setOpen(false);
+      setSearch("");
+      queryClient.invalidateQueries({ queryKey: ["representative-organizations"] });
+      queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
+    },
+    onError: (err: Error & { status?: number; payload?: { binding?: RepBinding } }) => {
+      if (err.status === 409) {
+        const existingName = err.payload?.binding?.organization?.canonicalName || err.payload?.binding?.requestedOrganizationName || search.trim();
+        toast.info(`“${existingName}”已有绑定申请或绑定记录`);
+        onChange(null, existingName);
+        setOpen(false);
+        setSearch("");
+        queryClient.invalidateQueries({ queryKey: ["representative-organizations"] });
+        queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
+        return;
+      }
+      toast.error(err.message);
+    },
+  });
+
   const orgs = data?.organizations || [];
   const selected = orgs.find((o) => o.id === value);
+  const repBindings = repBindingsData?.bindings || [];
+  const repBindingsError = repBindingsQueryError instanceof Error ? repBindingsQueryError.message : null;
+  const selectedRepBinding = repBindings.find((binding) => binding.organizationId === value && binding.organization);
 
-  // Rep-only: uncontrolled input, resolution triggered on blur to avoid calling resolve on every keystroke
-  const repInputRef = useRef<HTMLInputElement>(null);
+  const handleSelect = (o: OrgOption) => {
+    onChange(o.id || null, o.canonicalName, o.address, o.taxId);
+    setOpen(false);
+    setSearch("");
+    setShowQuickAdd(false);
+    setQuickName("");
+  };
 
-  if (isRep) {
-    return (
-      <Input
-        ref={repInputRef}
-        key={displayValue || "__rep_empty__"}
-        placeholder="输入单位名称"
-        defaultValue={displayValue || ""}
-        onBlur={() => {
-          const v = repInputRef.current?.value?.trim() || "";
-          if (v !== (displayValue || "")) {
-            onChange(null, v);
-          }
-        }}
-        disabled={disabled}
-      />
-    );
-  }
+  const handleOpenChange = (v: boolean) => {
+    setOpen(v);
+    if (!v) {
+      setSearch("");
+      setShowQuickAdd(false);
+      setQuickName("");
+    }
+  };
 
   if (disabled) {
     return (
@@ -110,100 +450,166 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
     );
   }
 
-  return (
-    <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setSearch(""); setShowQuickAdd(false); } }}>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            className="w-full justify-between"
-          />
-        }
+  if (isRep) {
+    const repDesktopTrigger = (
+      <Button
+        variant="outline"
+        role="combobox"
+        aria-expanded={open}
+        className="w-full justify-between"
       >
-          <span className="truncate">
-            {selected ? `${selected.canonicalName} (${selected.orgCode})` : displayValue || "选择单位..."}
-          </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-      </PopoverTrigger>
+        <span className="truncate">
+          {selectedRepBinding?.organization?.canonicalName || displayValue || "选择或输入单位..."}
+        </span>
+        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+      </Button>
+    );
+
+    const repMobileTrigger = (
+      <Button
+        variant="outline"
+        role="combobox"
+        aria-expanded={open}
+        className="w-full justify-between"
+        onClick={() => setOpen(true)}
+      >
+        <span className="truncate">
+          {selectedRepBinding?.organization?.canonicalName || displayValue || "选择或输入单位..."}
+        </span>
+        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+      </Button>
+    );
+
+    const repList = (
+      <RepOrgList
+        value={value}
+        displayValue={displayValue}
+        search={search}
+        onSearchChange={setSearch}
+        bindings={repBindings}
+        onSelect={(binding) => {
+          const organization = binding.organization;
+          if (!organization) return;
+          onChange(organization.id, organization.canonicalName, organization.address, null);
+          setOpen(false);
+          setSearch("");
+        }}
+        onUseRawName={(name) => {
+          onChange(null, name);
+          setOpen(false);
+          setSearch("");
+        }}
+        onRequestBinding={(name) => requestBindingMutation.mutate(name)}
+        requestPending={requestBindingMutation.isPending}
+        isLoading={repBindingsLoading}
+        loadError={repBindingsError}
+      />
+    );
+
+    if (isMobile) {
+      return (
+        <>
+          {repMobileTrigger}
+          <Sheet open={open} onOpenChange={handleOpenChange}>
+            <SheetContent side="bottom" className="h-[70vh] p-0">
+              <SheetHeader className="px-4 pt-4 pb-2">
+                <SheetTitle>选择单位</SheetTitle>
+              </SheetHeader>
+              {repList}
+            </SheetContent>
+          </Sheet>
+        </>
+      );
+    }
+
+    return (
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger render={repDesktopTrigger} />
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+          {repList}
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
+  const desktopTrigger = (
+    <Button
+      variant="outline"
+      role="combobox"
+      aria-expanded={open}
+      className="w-full justify-between"
+    >
+      <span className="truncate">
+        {selected ? `${selected.canonicalName} (${selected.orgCode})` : displayValue || "选择单位..."}
+      </span>
+      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+    </Button>
+  );
+
+  const mobileTrigger = (
+    <Button
+      variant="outline"
+      role="combobox"
+      aria-expanded={open}
+      className="w-full justify-between"
+      onClick={() => setOpen(true)}
+    >
+      <span className="truncate">
+        {selected ? `${selected.canonicalName} (${selected.orgCode})` : displayValue || "选择单位..."}
+      </span>
+      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+    </Button>
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        {mobileTrigger}
+        <Sheet open={open} onOpenChange={handleOpenChange}>
+          <SheetContent side="bottom" className="h-[70vh] p-0">
+            <SheetHeader className="px-4 pt-4 pb-2">
+              <SheetTitle>选择单位</SheetTitle>
+            </SheetHeader>
+            <OrgList
+              value={value}
+              search={search}
+              onSearchChange={setSearch}
+              orgs={orgs}
+              onSelect={handleSelect}
+              quickName={quickName}
+              onQuickNameChange={setQuickName}
+              showQuickAdd={showQuickAdd}
+              onToggleQuickAdd={(v) => setShowQuickAdd(v)}
+              quickCreateMutation={{
+                isPending: quickCreateMutation.isPending,
+                mutate: (name: string) => quickCreateMutation.mutate(name),
+              }}
+            />
+          </SheetContent>
+        </Sheet>
+      </>
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger render={desktopTrigger} />
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-        <div className="p-2">
-          <Input
-            placeholder="搜索单位..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 text-sm"
-            autoFocus
-          />
-        </div>
-        <div className="max-h-60 overflow-y-auto">
-          <div
-            className="px-2 py-1.5 text-sm cursor-pointer hover:bg-accent rounded-sm mx-1"
-            onClick={() => { onChange(null, ""); setOpen(false); }}
-          >
-            <div className="flex items-center gap-2">
-              <Check className={cn("h-4 w-4", !value ? "opacity-100" : "opacity-0")} />
-              不选择单位
-            </div>
-          </div>
-          {orgs.map((o) => (
-            <div
-              key={o.id}
-              className="px-2 py-1.5 text-sm cursor-pointer hover:bg-accent rounded-sm mx-1"
-              onClick={() => { onChange(o.id, o.canonicalName, o.address, o.taxId); setOpen(false); }}
-            >
-              <div className="flex items-center gap-2">
-                <Check className={cn("h-4 w-4", value === o.id ? "opacity-100" : "opacity-0")} />
-                <div className="flex flex-col min-w-0">
-                  <span className="truncate">{o.canonicalName} <span className="text-xs text-muted-foreground">({o.orgCode})</span></span>
-                  {o.address && <span className="text-xs text-muted-foreground truncate">{o.address}</span>}
-                </div>
-              </div>
-            </div>
-          ))}
-          {orgs.length === 0 && search && (
-            <div className="px-2 py-3 text-center text-sm text-muted-foreground">
-              未找到匹配单位
-            </div>
-          )}
-        </div>
-        <div className="border-t p-2">
-          {showQuickAdd ? (
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="单位名称"
-                value={quickName}
-                onChange={(e) => setQuickName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && quickName.trim()) {
-                    e.preventDefault();
-                    quickCreateMutation.mutate(quickName.trim());
-                  }
-                  if (e.key === "Escape") setShowQuickAdd(false);
-                }}
-                className="h-8 text-sm"
-                autoFocus
-              />
-              <Button
-                size="sm"
-                className="h-8 shrink-0"
-                disabled={!quickName.trim() || quickCreateMutation.isPending}
-                onClick={() => quickName.trim() && quickCreateMutation.mutate(quickName.trim())}
-              >
-                {quickCreateMutation.isPending ? "..." : "添加"}
-              </Button>
-            </div>
-          ) : (
-            <div
-              className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-accent rounded-sm"
-              onClick={() => setShowQuickAdd(true)}
-            >
-              <Plus className="h-4 w-4" />
-              快速添加单位
-            </div>
-          )}
-        </div>
+        <OrgList
+          value={value}
+          search={search}
+          onSearchChange={setSearch}
+          orgs={orgs}
+          onSelect={handleSelect}
+          quickName={quickName}
+          onQuickNameChange={setQuickName}
+          showQuickAdd={showQuickAdd}
+          onToggleQuickAdd={(v) => setShowQuickAdd(v)}
+          quickCreateMutation={{
+            isPending: quickCreateMutation.isPending,
+            mutate: (name: string) => quickCreateMutation.mutate(name),
+          }}
+        />
       </PopoverContent>
     </Popover>
   );
