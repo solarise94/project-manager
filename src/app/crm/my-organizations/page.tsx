@@ -1,14 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Building2, Loader2, Send, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { OrganizationSelect } from "@/components/organization-select";
 import { toast } from "sonner";
 
 interface RepBinding {
@@ -41,7 +41,8 @@ export default function MyOrganizationsPage() {
 function MyOrganizations() {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
-  const [newOrgName, setNewOrgName] = useState("");
+  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
+  const [selectedOrgName, setSelectedOrgName] = useState("");
   const [showRejected, setShowRejected] = useState(false);
 
   const isRep = session?.user?.role === "REPRESENTATIVE";
@@ -56,12 +57,18 @@ function MyOrganizations() {
     enabled: isRep,
   });
 
+  const excludedOrgIds = useMemo(() => {
+    return (data?.bindings || [])
+      .filter((b) => b.organizationId && (b.status === "ACTIVE" || b.status === "PENDING"))
+      .map((b) => b.organizationId!);
+  }, [data]);
+
   const requestMutation = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (payload: { organizationId?: string; canonicalName?: string }) => {
       const res = await fetch("/api/crm/representative-organizations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canonicalName: name }),
+        body: JSON.stringify(payload),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -73,7 +80,8 @@ function MyOrganizations() {
     },
     onSuccess: () => {
       toast.success("绑定申请已提交，等待审核");
-      setNewOrgName("");
+      setSelectedOrgId("");
+      setSelectedOrgName("");
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "self"] });
     },
     onError: (err: Error & { status?: number }) => {
@@ -103,30 +111,42 @@ function MyOrganizations() {
         </p>
       </div>
 
-      <div className="flex items-center gap-2">
-        <Input
-          placeholder="输入单位名称申请绑定..."
-          value={newOrgName}
-          onChange={(e) => setNewOrgName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && newOrgName.trim()) {
-              e.preventDefault();
-              requestMutation.mutate(newOrgName.trim());
-            }
-          }}
-          className="flex-1"
-        />
-        <Button
-          disabled={!newOrgName.trim() || requestMutation.isPending}
-          onClick={() => newOrgName.trim() && requestMutation.mutate(newOrgName.trim())}
-        >
-          {requestMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-          <span className="ml-2">申请绑定</span>
-        </Button>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <OrganizationSelect
+              value={selectedOrgId}
+              displayValue={selectedOrgName || undefined}
+              excludeIds={excludedOrgIds}
+              showAllOrgs
+              onChange={(id, name) => {
+                setSelectedOrgId(id || "");
+                setSelectedOrgName(name);
+              }}
+            />
+          </div>
+          <Button
+            disabled={!selectedOrgName.trim() || requestMutation.isPending}
+            onClick={() => {
+              if (!selectedOrgName.trim()) return;
+              if (selectedOrgId) {
+                requestMutation.mutate({ organizationId: selectedOrgId });
+              } else {
+                requestMutation.mutate({ canonicalName: selectedOrgName.trim() });
+              }
+            }}
+          >
+            {requestMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            <span className="ml-2">申请绑定</span>
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          从机构库中选择已有单位，或搜索后快速创建新单位
+        </p>
       </div>
 
       {isLoading ? (

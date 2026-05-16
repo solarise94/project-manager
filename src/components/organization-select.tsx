@@ -46,6 +46,8 @@ interface OrganizationSelectProps {
   value: string;
   displayValue?: string;
   disabled?: boolean;
+  excludeIds?: string[];
+  showAllOrgs?: boolean;
   onChange: (id: string | null, canonicalName: string, address?: string | null, taxId?: string | null) => void;
 }
 
@@ -313,7 +315,7 @@ function RepOrgList({
   );
 }
 
-export function OrganizationSelect({ value, displayValue, disabled, onChange }: OrganizationSelectProps) {
+export function OrganizationSelect({ value, displayValue, disabled, excludeIds, showAllOrgs, onChange }: OrganizationSelectProps) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -348,7 +350,7 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
       if (!res.ok) throw new Error("Failed to load organizations");
       return res.json();
     },
-    enabled: !isRep && open,
+    enabled: (!isRep || showAllOrgs) && open,
   });
 
   const quickCreateMutation = useMutation({
@@ -418,7 +420,7 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
     },
   });
 
-  const orgs = data?.organizations || [];
+  const orgs = (data?.organizations || []).filter((o) => !excludeIds?.includes(o.id));
   const selected = orgs.find((o) => o.id === value);
   const repBindings = repBindingsData?.bindings || [];
   const repBindingsError = repBindingsQueryError instanceof Error ? repBindingsQueryError.message : null;
@@ -450,7 +452,7 @@ export function OrganizationSelect({ value, displayValue, disabled, onChange }: 
     );
   }
 
-  if (isRep) {
+  if (isRep && !showAllOrgs) {
     const repDesktopTrigger = (
       <Button
         variant="outline"

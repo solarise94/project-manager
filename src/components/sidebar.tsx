@@ -128,7 +128,7 @@ export function Sidebar({ mobile, onNavClick }: { mobile?: boolean; onNavClick?:
               {group.title}
             </p>
             {group.items.map((item) => {
-              const isActive = pathname.startsWith(item.href);
+              const isActive = item.href === "/crm" ? pathname === "/crm" : pathname.startsWith(item.href);
               return (
                 <NavLink
                   key={item.href}
