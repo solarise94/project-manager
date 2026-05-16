@@ -16,7 +16,7 @@ import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
   MessageSquare, ClipboardCheck, Building2,
-  Inbox,
+  Inbox, UserRound, FishSymbol,
 } from "lucide-react";
 import Link from "next/link";
 import { CrmEmptyState } from "@/components/crm/empty-state";
@@ -231,23 +231,29 @@ function CrmDashboard() {
           <QuickNavCard
             href="/crm/customers"
             icon={<Users className="h-8 w-8" />}
-            label="客户档案库"
+            label="客户档案"
             description="管理全部客户资料与阶段"
           />
+          <QuickNavCard
+            href="/customers"
+            icon={<UserRound className="h-8 w-8" />}
+            label="客户管理"
+            description="客户主数据维护与合并"
+          />
+          {!isRep && (
+            <QuickNavCard
+              href="/crm/customer-pool"
+              icon={<FishSymbol className="h-8 w-8" />}
+              label="公海池"
+              description="客户分配与回收流转记录"
+            />
+          )}
           <QuickNavCard
             href="/crm/follow-ups"
             icon={<CalendarClock className="h-8 w-8" />}
             label="跟进任务"
             description="待处理、已逾期、已完成的跟进任务"
           />
-          {!isRep && !isAdmin && (
-            <QuickNavCard
-              href="/crm/customer-pool"
-              icon={<Users className="h-8 w-8" />}
-              label="客户流转池"
-              description="客户分配与回收流转记录"
-            />
-          )}
           <QuickNavCard
             href="/crm/customer-applications"
             icon={<ClipboardCheck className="h-8 w-8" />}

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 import {
   LayoutDashboard,
   FolderKanban,
@@ -18,11 +17,6 @@ import {
   UserCog,
   MapPin,
   Link2,
-  UserRound,
-  FishSymbol,
-  ChevronDown,
-  ChevronRight,
-  UsersRound,
   Radio,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
@@ -37,14 +31,7 @@ interface NavGroup {
   items: NavItem[];
 }
 
-interface SubNavGroup {
-  title: string;
-  href: string;
-  icon: React.ElementType;
-  children: NavItem[];
-}
-
-function useNavGroups(): { groups: NavGroup[]; subGroups: SubNavGroup[]; standalone: NavItem[] } {
+function useNavGroups(): NavGroup[] {
   const { data: session } = useSession();
   const role = session?.user?.role;
 
@@ -60,31 +47,18 @@ function useNavGroups(): { groups: NavGroup[]; subGroups: SubNavGroup[]; standal
     { href: "/tickets", label: "工单", icon: Ticket }
   );
 
-  // CRM collapsible sub-group
-  const crmChildren: NavItem[] = [
-    { href: "/crm/customers", label: "客户档案库", icon: UsersRound },
-    { href: "/customers", label: "客户主数据", icon: UserRound },
-  ];
-  if (role !== "REPRESENTATIVE") {
-    crmChildren.push({ href: "/crm/customer-pool", label: "客户公海池", icon: FishSymbol });
-  }
-
-  const crmSubGroup: SubNavGroup = {
-    title: "CRM 管理",
-    href: "/crm",
-    icon: HeartHandshake,
-    children: crmChildren,
+  const ops: NavGroup = {
+    title: "运营模块",
+    items: [
+      { href: "/crm", label: "CRM 管理", icon: HeartHandshake },
+      { href: "/crm/representatives", label: "代表运营", icon: Radio },
+    ],
   };
-
-  const standalone: NavItem[] = [
-    { href: "/crm/representatives", label: "代表运营", icon: Radio },
-  ];
-
   if (canAccessFinance(role)) {
-    standalone.push({ href: "/finance", label: "财务管理", icon: Banknote });
+    ops.items.push({ href: "/finance", label: "财务管理", icon: Banknote });
   }
 
-  const groups: NavGroup[] = [core];
+  const groups: NavGroup[] = [core, ops];
 
   if (role === "ADMIN") {
     groups.push({
@@ -99,7 +73,7 @@ function useNavGroups(): { groups: NavGroup[]; subGroups: SubNavGroup[]; standal
     });
   }
 
-  return { groups, subGroups: [crmSubGroup], standalone };
+  return groups;
 }
 
 function NavLink({
@@ -134,21 +108,7 @@ function NavLink({
 
 export function Sidebar({ mobile, onNavClick }: { mobile?: boolean; onNavClick?: () => void }) {
   const pathname = usePathname();
-  const { groups, subGroups, standalone } = useNavGroups();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    // Auto-expand if any child is active
-    const initial: Record<string, boolean> = {};
-    for (const sg of subGroups) {
-      if (pathname.startsWith(sg.href) || sg.children.some((c) => pathname.startsWith(c.href))) {
-        initial[sg.href] = true;
-      }
-    }
-    return initial;
-  });
-
-  const toggle = (href: string) => {
-    setExpanded((prev) => ({ ...prev, [href]: !prev[href] }));
-  };
+  const groups = useNavGroups();
 
   return (
     <aside
@@ -180,65 +140,6 @@ export function Sidebar({ mobile, onNavClick }: { mobile?: boolean; onNavClick?:
             })}
           </div>
         ))}
-
-        {/* Ops module: collapsible sub-groups + standalone */}
-        {(subGroups.length > 0 || standalone.length > 0) && (
-          <div className="space-y-1">
-            <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              运营模块
-            </p>
-            {subGroups.map((sg) => {
-              const isActive = pathname === sg.href;
-              const anyChildActive = sg.children.some((c) => pathname.startsWith(c.href));
-              const isOpen = !!expanded[sg.href] || isActive || anyChildActive;
-              const Icon = sg.icon;
-              return (
-                <div key={sg.href}>
-                  <button
-                    onClick={() => toggle(sg.href)}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                      isActive || anyChildActive
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                  >
-                    <span className="flex items-center gap-3">
-                      <Icon className="h-4 w-4" />
-                      {sg.title}
-                    </span>
-                    {isOpen ? (
-                      <ChevronDown className="h-4 w-4 shrink-0" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 shrink-0" />
-                    )}
-                  </button>
-                  {isOpen && (
-                    <div className="space-y-0.5">
-                      {sg.children.map((child) => (
-                        <NavLink
-                          key={child.href}
-                          item={child}
-                          isActive={pathname.startsWith(child.href)}
-                          onClick={onNavClick}
-                          indent
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {standalone.map((item) => (
-              <NavLink
-                key={item.href}
-                item={item}
-                isActive={pathname.startsWith(item.href)}
-                onClick={onNavClick}
-              />
-            ))}
-          </div>
-        )}
       </nav>
       <div className="border-t p-4 space-y-1">
         <Link
