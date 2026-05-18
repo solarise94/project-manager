@@ -4,7 +4,10 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveBindingReviewers } from "@/lib/crm/supervisor";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
-import { findRepresentativeBindingByScope } from "@/lib/crm/representative-binding";
+import {
+  findRepresentativeBindingByScope,
+  validateRepresentativeBindingScope,
+} from "@/lib/crm/representative-binding";
 
 async function canReviewBinding(userId: string, role: string, representativeId: string): Promise<boolean> {
   if (role === "ADMIN") return true;
@@ -21,9 +24,10 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await req.json();
-  const { action, reviewNote } = body as {
-    action: "approve" | "reject" | "archive" | "reactivate" | "set-primary";
+  const { action, reviewNote, organizationSiteId } = body as {
+    action: "approve" | "reject" | "archive" | "reactivate" | "set-primary" | "change-scope";
     reviewNote?: string;
+    organizationSiteId?: string | null;
   };
 
   const binding = await prisma.representativeOrganization.findUnique({
@@ -159,6 +163,60 @@ export async function PATCH(
       },
     });
     return NextResponse.json({ binding: updated });
+  }
+
+  if (action === "change-scope") {
+    if (binding.status !== "ACTIVE") {
+      return NextResponse.json({ error: "只能修改活跃状态的绑定范围" }, { status: 400 });
+    }
+    if (!binding.organizationId) {
+      return NextResponse.json({ error: "绑定缺少单位信息，无法修改范围" }, { status: 400 });
+    }
+
+    const nextSiteId = typeof organizationSiteId === "string" && organizationSiteId.trim()
+      ? organizationSiteId.trim()
+      : null;
+    const scopeValidation = await validateRepresentativeBindingScope(prisma, binding.organizationId, nextSiteId);
+    if (!scopeValidation.ok) {
+      return NextResponse.json({ error: scopeValidation.error }, { status: 400 });
+    }
+
+    const existingAtScope = await findRepresentativeBindingByScope(prisma, {
+      representativeId: binding.representativeId,
+      organizationId: binding.organizationId,
+      organizationSiteId: nextSiteId,
+    });
+    if (existingAtScope && existingAtScope.id !== binding.id) {
+      return NextResponse.json({ error: "该代表在此绑定范围已有记录" }, { status: 409 });
+    }
+
+    const hasOtherActiveAtTarget = await prisma.representativeOrganization.findFirst({
+      where: {
+        organizationId: binding.organizationId,
+        organizationSiteId: nextSiteId,
+        status: "ACTIVE",
+        id: { not: binding.id },
+      },
+      select: { id: true },
+    });
+
+    const updated = await prisma.representativeOrganization.update({
+      where: { id },
+      data: {
+        organizationSiteId: nextSiteId,
+        isPrimary: !hasOtherActiveAtTarget,
+        reviewNote: reviewNote?.trim() || null,
+      },
+    });
+
+    const autoAssigned = await autoAssignOrgCustomersToRep(
+      binding.organizationId,
+      binding.representative.email,
+      session.user.id,
+      nextSiteId,
+    );
+
+    return NextResponse.json({ binding: updated, autoAssigned });
   }
 
   if (action === "set-primary") {

@@ -55,6 +55,16 @@ interface OrgItem {
   _count: { customers: number };
 }
 
+interface ActiveBindingItem {
+  bindingId: string;
+  representativeId: string;
+  name: string;
+  email: string;
+  organizationSiteId: string | null;
+  organizationSiteName: string | null;
+  isPrimary: boolean;
+}
+
 const emptyCreate = { canonicalName: "", address: "", aliases: [""], sites: [{ siteName: "", address: "", siteType: "CAMPUS" }] };
 
 export default function OrganizationsPage() {
@@ -77,6 +87,7 @@ export default function OrganizationsPage() {
   const [assignTargetOrg, setAssignTargetOrg] = useState<OrgItem | null>(null);
   const [selectedRepId, setSelectedRepId] = useState<string>("");
   const [selectedAssignSiteId, setSelectedAssignSiteId] = useState<string>("__org__");
+  const [editingBindingSite, setEditingBindingSite] = useState<Record<string, string>>({});
 
   const { data, isLoading, error } = useQuery<{ organizations: OrgItem[] }>({
     queryKey: ["organizations"],
@@ -138,6 +149,43 @@ export default function OrganizationsPage() {
       setAssignTargetOrg(null);
       setSelectedRepId("");
       setSelectedAssignSiteId("__org__");
+      setEditingBindingSite({});
+      queryClient.invalidateQueries({ queryKey: ["organizations"] });
+      queryClient.invalidateQueries({ queryKey: ["representative-organizations", "all"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const bindingActionMutation = useMutation({
+    mutationFn: async ({
+      bindingId,
+      action,
+      siteId,
+    }: {
+      bindingId: string;
+      action: "archive" | "change-scope";
+      siteId?: string | null;
+    }) => {
+      const res = await fetch(`/api/crm/representative-organizations/${bindingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          organizationSiteId: siteId,
+          reviewNote: action === "archive" ? "admin_cancel_assignment" : "admin_change_assignment_scope",
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "操作失败");
+      return { ...json, action };
+    },
+    onSuccess: (data) => {
+      if (data.action === "archive") {
+        toast.success("已取消分配");
+      } else {
+        const count = typeof data.autoAssigned === "number" ? data.autoAssigned : 0;
+        toast.success(count > 0 ? `已修改分配范围，并自动分配 ${count} 个客户` : "已修改分配范围");
+      }
       queryClient.invalidateQueries({ queryKey: ["organizations"] });
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "all"] });
     },
@@ -232,14 +280,7 @@ export default function OrganizationsPage() {
 
   const orgs = data?.organizations || [];
   const bindings = bindingsData?.bindings || [];
-  const bindingMap = new Map<string, Array<{
-    id: string;
-    name: string;
-    email: string;
-    organizationSiteId: string | null;
-    organizationSiteName: string | null;
-    isPrimary: boolean;
-  }>>();
+  const bindingMap = new Map<string, ActiveBindingItem[]>();
   const bindingStatusMap = new Map<string, Set<string>>();
   for (const b of bindings) {
     if (b.organizationId) {
@@ -250,7 +291,8 @@ export default function OrganizationsPage() {
     if (b.organizationId && b.status === "ACTIVE" && b.representative) {
       const list = bindingMap.get(b.organizationId) || [];
       list.push({
-        id: b.representative.id,
+        bindingId: b.id,
+        representativeId: b.representative.id,
         name: b.representative.name,
         email: b.representative.email,
         organizationSiteId: b.organizationSiteId || null,
@@ -273,6 +315,7 @@ export default function OrganizationsPage() {
       const hasActiveBinding = bindingMap.has(o.id);
       return assignFilter === "assigned" ? hasActiveBinding : !hasActiveBinding;
     });
+  const assignActiveBindings = assignTargetOrg ? bindingMap.get(assignTargetOrg.id) || [] : [];
 
   function openCreateDialog(initialName = "") {
     setForm({
@@ -362,7 +405,7 @@ export default function OrganizationsPage() {
                     <Badge variant="secondary" className="text-xs">{o._count.customers} 客户</Badge>
                     {activeBindings.length > 0 ? (
                       activeBindings.map((r) => (
-                        <Badge key={r.id} variant="default" className="text-xs bg-blue-600 hover:bg-blue-700">
+                        <Badge key={r.bindingId} variant="default" className="text-xs bg-blue-600 hover:bg-blue-700">
                           <UserCog className="h-3 w-3 mr-1" />
                           {r.name}
                           {r.organizationSiteName ? ` · ${r.organizationSiteName}` : " · 全机构"}
@@ -409,6 +452,9 @@ export default function OrganizationsPage() {
                       setAssignTargetOrg(o);
                       setSelectedRepId("");
                       setSelectedAssignSiteId("__org__");
+                      setEditingBindingSite(
+                        Object.fromEntries((bindingMap.get(o.id) || []).map((b) => [b.bindingId, b.organizationSiteId || "__org__"])),
+                      );
                       setAssignDialogOpen(true);
                     }}
                   ><UserCog className="h-3 w-3" /></Button>
@@ -443,15 +489,107 @@ export default function OrganizationsPage() {
       )}
 
       {/* Assign Representative Dialog */}
-      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>分配代表</DialogTitle></DialogHeader>
+      <Dialog
+        open={assignDialogOpen}
+        onOpenChange={(open) => {
+          setAssignDialogOpen(open);
+          if (!open) {
+            setAssignTargetOrg(null);
+            setSelectedRepId("");
+            setSelectedAssignSiteId("__org__");
+            setEditingBindingSite({});
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>管理代表分配</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              为单位 <span className="font-medium text-foreground">{assignTargetOrg?.canonicalName}</span> 分配代表
+              管理单位 <span className="font-medium text-foreground">{assignTargetOrg?.canonicalName}</span> 的代表绑定。取消分配会归档绑定记录，不会批量改动已有客户负责人。
             </p>
             <div className="space-y-2">
-              <Label>选择代表</Label>
+              <Label>当前分配</Label>
+              {assignActiveBindings.length > 0 ? (
+                <div className="space-y-2">
+                  {assignActiveBindings.map((binding) => {
+                    const selectedSite = editingBindingSite[binding.bindingId] ?? (binding.organizationSiteId || "__org__");
+                    const originalSite = binding.organizationSiteId || "__org__";
+                    return (
+                      <div key={binding.bindingId} className="rounded-md border p-3 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-medium text-sm">{binding.name}</span>
+                              {binding.isPrimary && <Badge variant="secondary" className="text-[10px]">主代表</Badge>}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">{binding.email}</div>
+                          </div>
+                          <Badge variant="outline" className="shrink-0">
+                            {binding.organizationSiteName || "整个单位"}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Select
+                            value={selectedSite}
+                            onValueChange={(v) => setEditingBindingSite((prev) => ({
+                              ...prev,
+                              [binding.bindingId]: v || "__org__",
+                            }))}
+                          >
+                            <SelectTrigger className="flex-1">
+                              <SelectValue placeholder="选择绑定范围..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__org__">整个单位</SelectItem>
+                              {assignTargetOrg?.sites.map((site) => (
+                                <SelectItem key={site.id} value={site.id}>
+                                  {site.siteName}
+                                  {site.siteType ? ` (${SITE_TYPE_LABELS[site.siteType] || site.siteType})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={selectedSite === originalSite || bindingActionMutation.isPending}
+                            onClick={() => {
+                              bindingActionMutation.mutate({
+                                bindingId: binding.bindingId,
+                                action: "change-scope",
+                                siteId: selectedSite === "__org__" ? null : selectedSite,
+                              });
+                            }}
+                          >
+                            保存范围
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700"
+                            disabled={bindingActionMutation.isPending}
+                            onClick={() => {
+                              if (confirm(`确定取消 ${binding.name} 对 ${assignTargetOrg?.canonicalName} 的分配？`)) {
+                                bindingActionMutation.mutate({ bindingId: binding.bindingId, action: "archive" });
+                              }
+                            }}
+                          >
+                            取消分配
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  当前没有生效代表绑定。
+                </div>
+              )}
+            </div>
+            <hr />
+            <div className="space-y-2">
+              <Label>新增分配</Label>
               <Select value={selectedRepId} onValueChange={(v) => setSelectedRepId(v || "")}>
                 <SelectTrigger>
                   <SelectValue placeholder="选择代表..." />
