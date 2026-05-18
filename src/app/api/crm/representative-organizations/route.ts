@@ -12,6 +12,11 @@ import {
 import { resolveOrganization } from "@/lib/organization-resolver";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
 import { notifyBindingReviewers } from "@/lib/crm/supervisor";
+import {
+  findRepresentativeBindingByScope,
+  hasActiveBindingAtLevel,
+  validateRepresentativeBindingScope,
+} from "@/lib/crm/representative-binding";
 
 type BindingWarningCode =
   | "ORG_BOUND_BY_OTHER_REP"
@@ -43,6 +48,7 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         organization: { select: { id: true, canonicalName: true, address: true } },
+        organizationSite: { select: { id: true, siteName: true, siteType: true } },
         representative: { select: { id: true, name: true, email: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -70,6 +76,7 @@ export async function GET(req: NextRequest) {
       where,
       include: {
         organization: { select: { id: true, canonicalName: true, address: true } },
+        organizationSite: { select: { id: true, siteName: true, siteType: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -83,6 +90,7 @@ export async function GET(req: NextRequest) {
     where: { representativeId: ownRepresentativeId },
     include: {
       organization: { select: { id: true, canonicalName: true, address: true } },
+      organizationSite: { select: { id: true, siteName: true, siteType: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -96,11 +104,14 @@ function normalizeOrgName(text: string): string {
 async function collectExistingOrgWarnings(
   representativeId: string,
   organizationId: string,
+  organizationSiteId: string | null,
 ): Promise<BindingWarningCode[]> {
   const warnings: BindingWarningCode[] = [];
+
   const otherActive = await prisma.representativeOrganization.findFirst({
     where: {
       organizationId,
+      organizationSiteId: organizationSiteId ?? null,
       status: "ACTIVE",
       representativeId: { not: representativeId },
     },
@@ -111,6 +122,7 @@ async function collectExistingOrgWarnings(
   const otherPending = await prisma.representativeOrganization.findFirst({
     where: {
       organizationId,
+      organizationSiteId: organizationSiteId ?? null,
       status: "PENDING",
       representativeId: { not: representativeId },
     },
@@ -149,11 +161,13 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { organizationId, canonicalName, representativeId: bodyRepId } = body as Record<string, unknown>;
+  const { organizationId, canonicalName, representativeId: bodyRepId, organizationSiteId } = body as Record<string, unknown>;
 
   if (!organizationId && !canonicalName) {
     return NextResponse.json({ error: "organizationId or canonicalName is required" }, { status: 400 });
   }
+
+  const siteId = (typeof organizationSiteId === "string" && organizationSiteId.trim()) ? organizationSiteId.trim() : null;
 
   const isSales = isRepresentative(session.user.role) || isRegionalManagerRole(session.user.role);
   const isAdmin = session.user.role === "ADMIN";
@@ -202,6 +216,9 @@ export async function POST(req: NextRequest) {
       // to prevent orphan OrganizationReviewTask if binding creation fails.
       const newRequestedOrgName = canonicalName.trim();
       const newRequestedOrgNormalizedName = normalizeOrgName(newRequestedOrgName);
+      if (siteId) {
+        return NextResponse.json({ error: "新单位绑定申请不能指定院区" }, { status: 400 });
+      }
       requestedOrgName = newRequestedOrgName;
       requestedOrganizationNormalizedName = newRequestedOrgNormalizedName;
       warningCodes = await collectRequestedNameWarnings(rep.id, newRequestedOrgNormalizedName);
@@ -238,6 +255,7 @@ export async function POST(req: NextRequest) {
             data: {
               representativeId: rep.id,
               organizationId: null,
+              organizationSiteId: null,
               requestedOrganizationName: newRequestedOrgName,
               requestedOrganizationNormalizedName: newRequestedOrgNormalizedName,
               organizationReviewTaskId: task.id,
@@ -269,20 +287,32 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  let isPrimary = false;
+
   // Existing-org flow below
   if (orgId) {
-    warningCodes = await collectExistingOrgWarnings(rep.id, orgId);
+    const scopeValidation = await validateRepresentativeBindingScope(prisma, orgId, siteId);
+    if (!scopeValidation.ok) {
+      return NextResponse.json({ error: scopeValidation.error }, { status: 400 });
+    }
 
-    const existing = await prisma.representativeOrganization.findUnique({
-      where: { representativeId_organizationId: { representativeId: rep.id, organizationId: orgId } },
+    warningCodes = await collectExistingOrgWarnings(rep.id, orgId, siteId);
+
+    // Service-layer uniqueness check: same rep + same org + same site level
+    const existing = await findRepresentativeBindingByScope(prisma, {
+      representativeId: rep.id,
+      organizationId: orgId,
+      organizationSiteId: siteId ?? null,
     });
     if (existing) {
       if (existing.status === "REJECTED" || existing.status === "ARCHIVED") {
+        const hasExistingActive = await hasActiveBindingAtLevel(prisma, orgId, siteId ?? null);
         // Re-activate: update existing row
         const updated = await prisma.representativeOrganization.update({
           where: { id: existing.id },
           data: {
             status,
+            isPrimary: status === "ACTIVE" ? !hasExistingActive : false,
             reviewNote: null,
             reviewedByUserId: null,
             reviewedAt: null,
@@ -292,13 +322,17 @@ export async function POST(req: NextRequest) {
         if (status === "PENDING") {
           notifyBindingReviewers(updated.id, rep.id, updated.organization?.canonicalName || orgId, warningCodes).catch(() => {});
         }
-        if (status === "ACTIVE") {
-          autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
+        if (status === "ACTIVE" && orgId) {
+          autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id, siteId).catch(() => {});
         }
         return NextResponse.json({ binding: updated, warningCodes }, { status: 200 });
       }
       return NextResponse.json({ error: "绑定已存在", binding: existing }, { status: 409 });
     }
+
+    // Determine isPrimary: first ACTIVE binding at this level → auto primary
+    const hasExistingActive = await hasActiveBindingAtLevel(prisma, orgId, siteId ?? null);
+    isPrimary = !hasExistingActive;
   }
 
   let binding: Prisma.RepresentativeOrganizationGetPayload<{
@@ -309,6 +343,8 @@ export async function POST(req: NextRequest) {
       data: {
         representativeId: rep.id,
         organizationId: orgId,
+        organizationSiteId: siteId,
+        isPrimary,
         requestedOrganizationName: requestedOrgName,
         requestedOrganizationNormalizedName,
         organizationReviewTaskId: reviewTaskId,
@@ -332,7 +368,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (status === "ACTIVE" && orgId) {
-    autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id).catch(() => {});
+    autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id, siteId).catch(() => {});
   }
 
   return NextResponse.json({ binding, warningCodes }, { status: 201 });

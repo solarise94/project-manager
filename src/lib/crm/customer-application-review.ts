@@ -161,6 +161,7 @@ export async function findDuplicateCustomers(input: {
 export async function checkOrgOwnership(
   submittedByUserId: string,
   organizationId: string | null,
+  organizationSiteId?: string | null,
 ): Promise<boolean> {
   if (!organizationId) return false;
 
@@ -176,14 +177,29 @@ export async function checkOrgOwnership(
   });
   if (!rep) return true;
 
-  const binding = await prisma.representativeOrganization.findFirst({
+  // If site is specified, prefer site-level binding first
+  if (organizationSiteId) {
+    const siteBinding = await prisma.representativeOrganization.findFirst({
+      where: {
+        representativeId: rep.id,
+        organizationId,
+        organizationSiteId,
+        status: "ACTIVE",
+      },
+    });
+    if (siteBinding) return false; // site-level binding found → no conflict
+  }
+
+  // Fall back to org-level binding (organizationSiteId = null)
+  const orgBinding = await prisma.representativeOrganization.findFirst({
     where: {
       representativeId: rep.id,
       organizationId,
+      organizationSiteId: null,
       status: "ACTIVE",
     },
   });
-  return !binding; // true = conflict (org not in rep's bindings)
+  return !orgBinding; // true = conflict (org not in rep's bindings)
 }
 
 export function checkCustomerOwnershipConflict(
@@ -201,6 +217,7 @@ export async function autoAssignOrgCustomersToRep(
   organizationId: string,
   representativeEmail: string,
   assignerUserId: string,
+  organizationSiteId?: string | null,
 ): Promise<number> {
   const repUser = await prisma.user.findFirst({
     where: { email: representativeEmail, role: { in: ["REPRESENTATIVE", "REGIONAL_MANAGER"] } },
@@ -208,9 +225,19 @@ export async function autoAssignOrgCustomersToRep(
   });
   if (!repUser) return 0;
 
+  // Conservative strategy:
+  // - Site-level binding: only assign customers with that exact organizationSiteId
+  // - Org-level binding: only assign customers without organizationSiteId (unscoped)
+  const sourceCustomerWhere: Record<string, unknown> = { organizationId, deleted: false };
+  if (organizationSiteId) {
+    sourceCustomerWhere.organizationSiteId = organizationSiteId;
+  } else {
+    sourceCustomerWhere.organizationSiteId = null;
+  }
+
   const unassigned = await prisma.crmCustomerProfile.findMany({
     where: {
-      sourceCustomer: { organizationId, deleted: false },
+      sourceCustomer: sourceCustomerWhere,
       OR: [
         { assignmentStatus: { not: "ASSIGNED" } },
         { ownerUserId: { not: repUser.id } },

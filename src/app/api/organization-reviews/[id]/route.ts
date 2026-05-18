@@ -4,6 +4,11 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizeOrgName } from "@/lib/organization-normalize";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
+import {
+  findRepresentativeBindingByScope,
+  hasActiveBindingAtLevel,
+  validateRepresentativeBindingScope,
+} from "@/lib/crm/representative-binding";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -47,15 +52,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return NextResponse.json({ error: "目标机构不存在或已归档" }, { status: 400 });
       }
 
-      if (organizationSiteId) {
-        const site = await prisma.organizationSite.findUnique({ where: { id: organizationSiteId } });
-        if (!site || site.organizationId !== organizationId) {
-          return NextResponse.json({ error: "院区不属于指定机构" }, { status: 400 });
-        }
+      const scopeValidation = await validateRepresentativeBindingScope(prisma, organizationId, organizationSiteId || null);
+      if (!scopeValidation.ok) {
+        return NextResponse.json({ error: scopeValidation.error }, { status: 400 });
       }
 
       const bindingAutoActivation = await prisma.$transaction(async (tx) => {
-        let activation: { organizationId: string; representativeEmail: string } | null = null;
+        let activation: { organizationId: string; representativeEmail: string; organizationSiteId?: string | null } | null = null;
 
         await tx.organizationReviewTask.update({
           where: { id },
@@ -95,19 +98,52 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             include: { representative: { select: { email: true } } },
           });
           if (binding) {
-            await tx.representativeOrganization.update({
-              where: { id: task.sourceId },
-              data: {
-                organizationId,
-                status: "ACTIVE",
-                reviewedByUserId: session.user.id,
-                reviewedAt: new Date(),
-                reviewNote: reviewNote || null,
-              },
+            const existingAtScope = await findRepresentativeBindingByScope(tx, {
+              representativeId: binding.representativeId,
+              organizationId,
+              organizationSiteId: organizationSiteId || null,
             });
+
+            const finalSiteId = organizationSiteId || null;
+            if (existingAtScope && existingAtScope.id !== binding.id) {
+              await tx.representativeOrganization.update({
+                where: { id: existingAtScope.id },
+                data: {
+                  status: "ACTIVE",
+                  reviewedByUserId: session.user.id,
+                  reviewedAt: new Date(),
+                  reviewNote: reviewNote || null,
+                },
+              });
+              await tx.representativeOrganization.update({
+                where: { id: binding.id },
+                data: {
+                  status: "ARCHIVED",
+                  isPrimary: false,
+                  reviewedByUserId: session.user.id,
+                  reviewedAt: new Date(),
+                  reviewNote: reviewNote || "duplicate_binding_reused",
+                },
+              });
+            } else {
+              const hasExistingActive = await hasActiveBindingAtLevel(tx, organizationId, finalSiteId);
+              await tx.representativeOrganization.update({
+                where: { id: task.sourceId },
+                data: {
+                  organizationId,
+                  organizationSiteId: finalSiteId,
+                  status: "ACTIVE",
+                  isPrimary: binding.isPrimary || !hasExistingActive,
+                  reviewedByUserId: session.user.id,
+                  reviewedAt: new Date(),
+                  reviewNote: reviewNote || null,
+                },
+              });
+            }
             activation = {
               organizationId,
               representativeEmail: binding.representative.email,
+              organizationSiteId: finalSiteId,
             };
           }
         } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
@@ -132,6 +168,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           bindingAutoActivation.organizationId,
           bindingAutoActivation.representativeEmail,
           session.user.id,
+          bindingAutoActivation.organizationSiteId,
         );
       }
 
@@ -185,7 +222,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
 
       const bindingAutoActivation = await prisma.$transaction(async (tx) => {
-        let activation: { organizationId: string; representativeEmail: string } | null = null;
+        let activation: { organizationId: string; representativeEmail: string; organizationSiteId?: string | null } | null = null;
 
         const newOrg = await tx.organization.create({
           data: {
@@ -266,11 +303,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             include: { representative: { select: { email: true } } },
           });
           if (binding) {
+            const hasExistingActive = await hasActiveBindingAtLevel(tx, newOrg.id, bindSiteId);
             await tx.representativeOrganization.update({
               where: { id: task.sourceId },
               data: {
                 organizationId: newOrg.id,
+                organizationSiteId: bindSiteId,
                 status: "ACTIVE",
+                isPrimary: binding.isPrimary || !hasExistingActive,
                 reviewedByUserId: session.user.id,
                 reviewedAt: new Date(),
                 reviewNote: reviewNote || null,
@@ -279,6 +319,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             activation = {
               organizationId: newOrg.id,
               representativeEmail: binding.representative.email,
+              organizationSiteId: bindSiteId,
             };
           }
         } else if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
@@ -303,6 +344,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           bindingAutoActivation.organizationId,
           bindingAutoActivation.representativeEmail,
           session.user.id,
+          bindingAutoActivation.organizationSiteId,
         );
       }
 

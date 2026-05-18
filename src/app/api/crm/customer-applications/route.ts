@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Conflict checks ──
-  const hasOrgConflict = await checkOrgOwnership(session.user.id, orgValidation.organizationId);
+  const hasOrgConflict = await checkOrgOwnership(session.user.id, orgValidation.organizationId, orgValidation.organizationSiteId);
   const hasCustConflict = checkCustomerOwnershipConflict(allCandidates, session.user.id);
 
   let conflictType: string | null = null;

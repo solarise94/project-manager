@@ -151,8 +151,9 @@ model OrganizationSite {
   address            String?
   archived           Boolean                  @default(false)
   createdAt          DateTime                 @default(now())
-  customers          Customer[]
-  reviewTasks        OrganizationReviewTask[]
+  customers              Customer[]
+  reviewTasks            OrganizationReviewTask[]
+  representativeBindings RepresentativeOrganization[]
 
   @@unique([organizationId, normalizedSiteName])
   @@index([normalizedSiteName])
@@ -1322,6 +1323,9 @@ model RepresentativeOrganization {
   representative                   Representative        @relation(fields: [representativeId], references: [id], onDelete: Cascade)
   organizationId                   String?               // null during new-org request flow
   organization                     Organization?         @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationSiteId               String?               // null = org-level binding; non-null = site-level binding
+  organizationSite                 OrganizationSite?     @relation(fields: [organizationSiteId], references: [id], onDelete: SetNull)
+  isPrimary                        Boolean               @default(false)
   requestedOrganizationName        String?
   requestedOrganizationNormalizedName String?
   organizationReviewTaskId         String?
@@ -1337,10 +1341,13 @@ model RepresentativeOrganization {
   createdAt                        DateTime              @default(now())
   updatedAt                        DateTime              @updatedAt
 
-  @@unique([representativeId, organizationId])
   @@unique([representativeId, requestedOrganizationNormalizedName])
   @@unique([organizationReviewTaskId])
+  @@unique([representativeId, organizationSiteId])
   @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationSiteId, status])
+  @@index([organizationId, organizationSiteId])
   @@index([status])
 }
 

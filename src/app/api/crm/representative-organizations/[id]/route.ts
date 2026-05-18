@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveBindingReviewers } from "@/lib/crm/supervisor";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
+import { findRepresentativeBindingByScope } from "@/lib/crm/representative-binding";
 
 async function canReviewBinding(userId: string, role: string, representativeId: string): Promise<boolean> {
   if (role === "ADMIN") return true;
@@ -20,7 +21,10 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await req.json();
-  const { action, reviewNote } = body as { action: "approve" | "reject"; reviewNote?: string };
+  const { action, reviewNote } = body as {
+    action: "approve" | "reject" | "archive" | "reactivate" | "set-primary";
+    reviewNote?: string;
+  };
 
   const binding = await prisma.representativeOrganization.findUnique({
     where: { id },
@@ -33,6 +37,9 @@ export async function PATCH(
   }
 
   if (action === "approve") {
+    let finalOrganizationId = binding.organizationId;
+    let finalOrganizationSiteId = binding.organizationSiteId;
+
     // If organizationId is null (new-org request), it must be resolved first
     if (!binding.organizationId) {
       if (!binding.organizationReviewTaskId) {
@@ -40,39 +47,73 @@ export async function PATCH(
       }
       const task = await prisma.organizationReviewTask.findUnique({
         where: { id: binding.organizationReviewTaskId },
-        select: { suggestedOrganizationId: true, status: true },
+        select: { suggestedOrganizationId: true, suggestedSiteId: true, status: true },
       });
       if (task?.status !== "APPROVED" || !task.suggestedOrganizationId) {
         return NextResponse.json({ error: "单位审核任务尚未完成，请先通过单位主数据审核" }, { status: 400 });
       }
-      // Backfill organizationId
-      await prisma.representativeOrganization.update({
-        where: { id },
-        data: { organizationId: task.suggestedOrganizationId },
-      });
-      binding.organizationId = task.suggestedOrganizationId;
+      finalOrganizationId = task.suggestedOrganizationId;
+      finalOrganizationSiteId = task.suggestedSiteId || null;
     }
 
-    const updated = await prisma.representativeOrganization.update({
-      where: { id },
-      data: {
-        status: "ACTIVE",
-        reviewedByUserId: session.user.id,
-        reviewedAt: new Date(),
-        reviewNote: reviewNote?.trim() || null,
-      },
+    if (!finalOrganizationId) {
+      return NextResponse.json({ error: "绑定缺少单位信息，无法审批" }, { status: 400 });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const existingAtScope = await findRepresentativeBindingByScope(tx, {
+        representativeId: binding.representativeId,
+        organizationId: finalOrganizationId,
+        organizationSiteId: finalOrganizationSiteId,
+      });
+
+      if (existingAtScope && existingAtScope.id !== binding.id) {
+        const reused = await tx.representativeOrganization.update({
+          where: { id: existingAtScope.id },
+          data: {
+            status: "ACTIVE",
+            reviewedByUserId: session.user.id,
+            reviewedAt: new Date(),
+            reviewNote: reviewNote?.trim() || null,
+          },
+        });
+        await tx.representativeOrganization.update({
+          where: { id },
+          data: {
+            status: "ARCHIVED",
+            isPrimary: false,
+            reviewedByUserId: session.user.id,
+            reviewedAt: new Date(),
+            reviewNote: reviewNote?.trim() || "duplicate_binding_reused",
+          },
+        });
+        return reused;
+      }
+
+      return tx.representativeOrganization.update({
+        where: { id },
+        data: {
+          organizationId: finalOrganizationId,
+          organizationSiteId: finalOrganizationSiteId,
+          status: "ACTIVE",
+          reviewedByUserId: session.user.id,
+          reviewedAt: new Date(),
+          reviewNote: reviewNote?.trim() || null,
+        },
+      });
     });
 
     let autoAssigned = 0;
-    if (binding.organizationId) {
+    if (finalOrganizationId) {
       autoAssigned = await autoAssignOrgCustomersToRep(
-        binding.organizationId,
+        finalOrganizationId,
         binding.representative.email,
         session.user.id,
+        finalOrganizationSiteId,
       );
     }
 
-    return NextResponse.json({ binding: updated, autoAssigned });
+    return NextResponse.json({ binding: result, autoAssigned });
   }
 
   if (action === "reject") {
@@ -85,6 +126,65 @@ export async function PATCH(
         reviewNote: reviewNote?.trim() || null,
       },
     });
+    return NextResponse.json({ binding: updated });
+  }
+
+  if (action === "archive") {
+    if (binding.status !== "ACTIVE") {
+      return NextResponse.json({ error: "只能归档活跃状态的绑定" }, { status: 400 });
+    }
+
+    const updated = await prisma.representativeOrganization.update({
+      where: { id },
+      data: {
+        status: "ARCHIVED",
+        isPrimary: false,
+        reviewNote: reviewNote?.trim() || null,
+      },
+    });
+    return NextResponse.json({ binding: updated });
+  }
+
+  if (action === "reactivate") {
+    if (binding.status !== "ARCHIVED") {
+      return NextResponse.json({ error: "只能恢复已归档的绑定" }, { status: 400 });
+    }
+
+    const updated = await prisma.representativeOrganization.update({
+      where: { id },
+      data: {
+        status: "ACTIVE",
+        isPrimary: false, // don't auto-restore primary
+        reviewNote: reviewNote?.trim() || null,
+      },
+    });
+    return NextResponse.json({ binding: updated });
+  }
+
+  if (action === "set-primary") {
+    if (binding.status !== "ACTIVE") {
+      return NextResponse.json({ error: "只有活跃状态的绑定才能设为主代表" }, { status: 400 });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Clear other primary at same level
+      await tx.representativeOrganization.updateMany({
+        where: {
+          organizationId: binding.organizationId,
+          organizationSiteId: binding.organizationSiteId ?? null,
+          status: "ACTIVE",
+          isPrimary: true,
+          id: { not: binding.id },
+        },
+        data: { isPrimary: false },
+      });
+
+      return tx.representativeOrganization.update({
+        where: { id },
+        data: { isPrimary: true },
+      });
+    });
+
     return NextResponse.json({ binding: updated });
   }
 
