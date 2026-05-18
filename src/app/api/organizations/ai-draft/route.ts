@@ -15,12 +15,13 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const query = (body.query || "").trim();
+  const mode = body.mode === "supplement" ? "supplement" : "create";
   if (!query) {
     return NextResponse.json({ error: "查询内容不能为空" }, { status: 400 });
   }
 
   try {
-    const result = await enrichOrganization(query);
+    const result = await enrichOrganization(query, { skipLocalResolve: mode === "supplement" });
 
     if (result.kind === "existing") {
       return NextResponse.json({

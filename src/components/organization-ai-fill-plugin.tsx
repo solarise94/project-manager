@@ -26,9 +26,10 @@ interface Props {
   query: string;
   onApply: (draft: OrganizationDraftPreview) => void;
   disabled?: boolean;
+  mode?: "create" | "supplement";
 }
 
-export function OrganizationAiFillPlugin({ query, onApply, disabled }: Props) {
+export function OrganizationAiFillPlugin({ query, onApply, disabled, mode = "create" }: Props) {
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState<OrganizationDraftPreview | null>(null);
   const [candidates, setCandidates] = useState<CandidateItem[]>([]);
@@ -46,7 +47,7 @@ export function OrganizationAiFillPlugin({ query, onApply, disabled }: Props) {
       const res = await fetch("/api/organizations/ai-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({ query: query.trim(), mode }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -78,7 +79,9 @@ export function OrganizationAiFillPlugin({ query, onApply, disabled }: Props) {
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm">
           <div className="font-medium">AI 预填插件</div>
-          <div className="text-muted-foreground text-xs">只生成草稿，不会自动建档或提交复核</div>
+          <div className="text-muted-foreground text-xs">
+            {mode === "supplement" ? "只生成补充草稿，不会覆盖已有信息" : "只生成草稿，不会自动建档或提交复核"}
+          </div>
         </div>
         <Button type="button" variant="outline" size="sm" disabled={disabled || loading || !query.trim()} onClick={handleDraft}>
           {loading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}

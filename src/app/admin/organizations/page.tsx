@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, Archive, ArchiveRestore, Trash2, Merge,
-  Building2, Tag, MapPin, X, Users, BarChart3, UserCog, Link2,
+  Building2, Tag, MapPin, X, Users, BarChart3, UserCog, Link2, Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +82,7 @@ export default function OrganizationsPage() {
   const [editForm, setEditForm] = useState({ canonicalName: "", address: "", taxId: "" });
   const [newAlias, setNewAlias] = useState("");
   const [newSite, setNewSite] = useState({ siteName: "", address: "", siteType: "CAMPUS" });
+  const [supplementDraft, setSupplementDraft] = useState<OrganizationDraftPreview | null>(null);
   const [assignFilter, setAssignFilter] = useState<"all" | "assigned" | "unassigned">("all");
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [assignTargetOrg, setAssignTargetOrg] = useState<OrgItem | null>(null);
@@ -339,6 +340,38 @@ export default function OrganizationsPage() {
     toast.success("已应用 AI 草稿，请检查后再保存");
   }
 
+  function applyDraftToEditSupplement(draft: OrganizationDraftPreview) {
+    if (!editing) return;
+
+    const normalizedAliases = new Set(editing.aliases.map((a) => a.alias.trim().toLowerCase()));
+    const aliasesToAdd = draft.aliases
+      .map((alias) => alias.trim())
+      .filter((alias) => alias && !normalizedAliases.has(alias.toLowerCase()));
+
+    const normalizedSites = new Set(editing.sites.map((site) => site.siteName.trim().toLowerCase()));
+    const sitesToAdd = draft.sites
+      .map((site) => ({
+        siteName: site.siteName.trim(),
+        address: site.address?.trim() || "",
+        siteType: "CAMPUS",
+      }))
+      .filter((site) => site.siteName && !normalizedSites.has(site.siteName.toLowerCase()));
+
+    const addressToApply = !editForm.address.trim() && draft.address?.trim() ? draft.address.trim() : undefined;
+    if (!addressToApply && aliasesToAdd.length === 0 && sitesToAdd.length === 0) {
+      toast.info("AI 草稿没有发现可新增的信息");
+      return;
+    }
+
+    setSupplementDraft(draft);
+    updateMutation.mutate({
+      id: editing.id,
+      ...(addressToApply ? { address: addressToApply } : {}),
+      ...(aliasesToAdd.length > 0 ? { addAliases: aliasesToAdd } : {}),
+      ...(sitesToAdd.length > 0 ? { addSites: sitesToAdd } : {}),
+    });
+  }
+
   if (status === "loading") return null;
   if (!session || session.user.role !== "ADMIN") return null;
   if (error?.message === "无权访问") return null;
@@ -463,6 +496,7 @@ export default function OrganizationsPage() {
                     setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
                     setNewAlias("");
                     setNewSite({ siteName: "", address: "", siteType: "CAMPUS" });
+                    setSupplementDraft(null);
                     setEditOpen(true);
                   }}><Pencil className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="sm" onClick={() => { setMergeSource(o); setMergeTargetId(""); setMergeOpen(true); }}>
@@ -690,10 +724,33 @@ export default function OrganizationsPage() {
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog
+        open={editOpen}
+        onOpenChange={(open) => {
+          setEditOpen(open);
+          if (!open) setSupplementDraft(null);
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>编辑机构</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            {editing && (
+              <OrganizationAiFillPlugin
+                query={editForm.canonicalName || editing.canonicalName}
+                mode="supplement"
+                onApply={applyDraftToEditSupplement}
+                disabled={updateMutation.isPending}
+              />
+            )}
+            {supplementDraft && (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  已按补充规则应用 AI 草稿
+                </div>
+                <div className="mt-1">仅补充空地址、新别名和新院区；标准名称和已有字段不会被覆盖。</div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>标准名称</Label>
               <Input value={editForm.canonicalName} onChange={(e) => setEditForm({ ...editForm, canonicalName: e.target.value })} />

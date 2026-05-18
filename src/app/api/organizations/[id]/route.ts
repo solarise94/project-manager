@@ -51,7 +51,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     const body = await req.json();
-    const { canonicalName, address, taxId, archived, addAlias, removeAliasId, addSite, removeSiteId } = body;
+    const {
+      canonicalName,
+      address,
+      taxId,
+      archived,
+      addAlias,
+      addAliases,
+      removeAliasId,
+      addSite,
+      addSites,
+      removeSiteId,
+    } = body;
 
     const data: Record<string, unknown> = {};
     if (canonicalName !== undefined) {
@@ -67,15 +78,28 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     await prisma.organization.update({ where: { id }, data });
 
-    // Add alias
-    if (addAlias?.trim()) {
-      await prisma.organizationAlias.create({
-        data: {
-          organizationId: id,
-          alias: addAlias.trim(),
-          normalizedAlias: normalizeOrgName(addAlias.trim()),
-        },
+    // Add aliases
+    const aliasesToAdd = [
+      ...(addAlias?.trim() ? [addAlias.trim()] : []),
+      ...(Array.isArray(addAliases) ? addAliases : []),
+    ]
+      .map((alias) => (typeof alias === "string" ? alias.trim() : ""))
+      .filter(Boolean);
+    for (const alias of aliasesToAdd) {
+      const normalizedAlias = normalizeOrgName(alias);
+      const exists = await prisma.organizationAlias.findFirst({
+        where: { organizationId: id, normalizedAlias },
+        select: { id: true },
       });
+      if (!exists) {
+        await prisma.organizationAlias.create({
+          data: {
+            organizationId: id,
+            alias,
+            normalizedAlias,
+          },
+        });
+      }
     }
 
     // Remove alias (verify it belongs to this organization)
@@ -87,16 +111,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       await prisma.organizationAlias.delete({ where: { id: removeAliasId } });
     }
 
-    // Add site
-    if (addSite?.siteName?.trim()) {
+    // Add sites
+    const sitesToAdd = [
+      ...(addSite?.siteName?.trim() ? [addSite] : []),
+      ...(Array.isArray(addSites) ? addSites : []),
+    ].filter((site) => site?.siteName?.trim());
+    for (const siteToAdd of sitesToAdd) {
       // Validate parentSiteId belongs to the same organization
-      if (addSite.parentSiteId) {
-        const parentSite = await prisma.organizationSite.findUnique({ where: { id: addSite.parentSiteId }, select: { organizationId: true } });
+      if (siteToAdd.parentSiteId) {
+        const parentSite = await prisma.organizationSite.findUnique({ where: { id: siteToAdd.parentSiteId }, select: { organizationId: true } });
         if (!parentSite || parentSite.organizationId !== id) {
           return NextResponse.json({ error: "父级院区不属于同一单位" }, { status: 400 });
         }
       }
-      const normalizedSiteName = normalizeOrgName(addSite.siteName.trim());
+      const normalizedSiteName = normalizeOrgName(siteToAdd.siteName.trim());
       const existingSite = await prisma.organizationSite.findFirst({
         where: { organizationId: id, normalizedSiteName },
       });
@@ -107,17 +135,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         // Un-archive the existing site
         await prisma.organizationSite.update({
           where: { id: existingSite.id },
-          data: { archived: false, siteName: addSite.siteName.trim(), siteType: addSite.siteType || "CAMPUS", parentSiteId: addSite.parentSiteId || null, address: addSite.address?.trim() || null },
+          data: { archived: false, siteName: siteToAdd.siteName.trim(), siteType: siteToAdd.siteType || "CAMPUS", parentSiteId: siteToAdd.parentSiteId || null, address: siteToAdd.address?.trim() || null },
         });
       } else {
         await prisma.organizationSite.create({
           data: {
             organizationId: id,
-            siteName: addSite.siteName.trim(),
+            siteName: siteToAdd.siteName.trim(),
             normalizedSiteName,
-            siteType: addSite.siteType || "CAMPUS",
-            parentSiteId: addSite.parentSiteId || null,
-            address: addSite.address?.trim() || null,
+            siteType: siteToAdd.siteType || "CAMPUS",
+            parentSiteId: siteToAdd.parentSiteId || null,
+            address: siteToAdd.address?.trim() || null,
           },
         });
       }

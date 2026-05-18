@@ -36,14 +36,19 @@ export function isEnrichmentConfigured(): boolean {
  * 2. If no exact match, search Tavily for web evidence
  * 3. Pass evidence to MiniMax for structured extraction
  */
-export async function enrichOrganization(query: string): Promise<EnrichmentResult> {
+export async function enrichOrganization(
+  query: string,
+  options: { skipLocalResolve?: boolean } = {},
+): Promise<EnrichmentResult> {
   // Step 1: Try local resolve
-  const resolved = await resolveOrganization(query);
-  if (resolved.status === "exact") {
-    return { kind: "existing", resolveResult: resolved };
-  }
-  if (resolved.status === "candidate" && resolved.candidates.length > 0) {
-    return { kind: "candidates", resolveResult: resolved };
+  if (!options.skipLocalResolve) {
+    const resolved = await resolveOrganization(query);
+    if (resolved.status === "exact") {
+      return { kind: "existing", resolveResult: resolved };
+    }
+    if (resolved.status === "candidate" && resolved.candidates.length > 0) {
+      return { kind: "candidates", resolveResult: resolved };
+    }
   }
 
   if (!TAVILY_API_KEY) {
