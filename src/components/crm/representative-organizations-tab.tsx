@@ -15,6 +15,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import Link from "next/link";
 import { OrganizationSelect } from "@/components/organization-select";
@@ -23,6 +30,8 @@ interface Binding {
   id: string;
   status: string;
   organizationId: string | null;
+  organizationSiteId: string | null;
+  isPrimary?: boolean;
   requestedOrganizationName: string | null;
   organizationReviewTaskId: string | null;
   reviewNote: string | null;
@@ -31,6 +40,11 @@ interface Binding {
     id: string;
     canonicalName: string;
     address: string | null;
+  } | null;
+  organizationSite?: {
+    id: string;
+    siteName: string;
+    siteType: string;
   } | null;
 }
 
@@ -52,6 +66,17 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
   const [reviewNote, setReviewNote] = useState("");
   const [addOrgId, setAddOrgId] = useState("");
   const [addOrgName, setAddOrgName] = useState("");
+  const [addSiteId, setAddSiteId] = useState("__org__");
+
+  const { data: addOrgDetail } = useQuery<{ organization: { sites: { id: string; siteName: string; siteType: string }[] } }>({
+    queryKey: ["organization-detail-for-binding", addOrgId],
+    queryFn: async () => {
+      const res = await fetch(`/api/organizations/${addOrgId}`);
+      if (!res.ok) throw new Error("加载单位院区失败");
+      return res.json();
+    },
+    enabled: !!addOrgId,
+  });
 
   const { data, isLoading } = useQuery<{ bindings: Binding[] }>({
     queryKey: ["representative-organizations", representativeId],
@@ -90,10 +115,11 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
   });
 
   const addMutation = useMutation({
-    mutationFn: async ({ orgId, orgName }: { orgId: string; orgName: string }) => {
+    mutationFn: async ({ orgId, orgName, siteId }: { orgId: string; orgName: string; siteId: string | null }) => {
       const payload: Record<string, string> = { representativeId };
       if (orgId) {
         payload.organizationId = orgId;
+        if (siteId) payload.organizationSiteId = siteId;
       } else {
         payload.canonicalName = orgName;
       }
@@ -110,6 +136,7 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
       toast.success("绑定已添加");
       setAddOrgId("");
       setAddOrgName("");
+      setAddSiteId("__org__");
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", representativeId] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -141,13 +168,35 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
             onChange={(id, name) => {
               setAddOrgId(id || "");
               setAddOrgName(name);
+              setAddSiteId("__org__");
             }}
           />
         </div>
+        {addOrgId && (
+          <div className="w-48">
+            <Select value={addSiteId} onValueChange={(v) => setAddSiteId(v || "__org__")}>
+              <SelectTrigger>
+                <SelectValue placeholder="绑定范围" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__org__">整个单位</SelectItem>
+                {addOrgDetail?.organization.sites.map((site) => (
+                  <SelectItem key={site.id} value={site.id}>
+                    {site.siteName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <Button
           size="sm"
           disabled={!addOrgName.trim() || addMutation.isPending}
-          onClick={() => addOrgName.trim() && addMutation.mutate({ orgId: addOrgId, orgName: addOrgName.trim() })}
+          onClick={() => addOrgName.trim() && addMutation.mutate({
+            orgId: addOrgId,
+            orgName: addOrgName.trim(),
+            siteId: addSiteId === "__org__" ? null : addSiteId,
+          })}
         >
           {addMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
           添加绑定
@@ -168,7 +217,11 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
                     <div className="flex items-center gap-2">
                       <span className="font-medium truncate">{orgName}</span>
                       {statusBadge(b.status)}
+                      {b.isPrimary && <Badge variant="outline">主代表</Badge>}
                     </div>
+                    {b.organizationSite?.siteName && (
+                      <p className="text-xs text-muted-foreground mt-0.5">院区: {b.organizationSite.siteName}</p>
+                    )}
                     {b.organization?.address && (
                       <p className="text-xs text-muted-foreground mt-0.5">{b.organization.address}</p>
                     )}

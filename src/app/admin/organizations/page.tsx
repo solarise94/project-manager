@@ -76,6 +76,7 @@ export default function OrganizationsPage() {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [assignTargetOrg, setAssignTargetOrg] = useState<OrgItem | null>(null);
   const [selectedRepId, setSelectedRepId] = useState<string>("");
+  const [selectedAssignSiteId, setSelectedAssignSiteId] = useState<string>("__org__");
 
   const { data, isLoading, error } = useQuery<{ organizations: OrgItem[] }>({
     queryKey: ["organizations"],
@@ -92,6 +93,9 @@ export default function OrganizationsPage() {
     id: string;
     status: string;
     organizationId: string | null;
+    organizationSiteId: string | null;
+    isPrimary?: boolean;
+    organizationSite?: { id: string; siteName: string; siteType: string } | null;
     representative: { id: string; name: string; email: string } | null;
   }> }>({
     queryKey: ["representative-organizations", "all"],
@@ -114,11 +118,15 @@ export default function OrganizationsPage() {
   });
 
   const assignRepMutation = useMutation({
-    mutationFn: async ({ orgId, repId }: { orgId: string; repId: string }) => {
+    mutationFn: async ({ orgId, repId, siteId }: { orgId: string; repId: string; siteId: string | null }) => {
       const res = await fetch("/api/crm/representative-organizations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ representativeId: repId, organizationId: orgId }),
+        body: JSON.stringify({
+          representativeId: repId,
+          organizationId: orgId,
+          organizationSiteId: siteId,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "分配失败");
@@ -129,6 +137,7 @@ export default function OrganizationsPage() {
       setAssignDialogOpen(false);
       setAssignTargetOrg(null);
       setSelectedRepId("");
+      setSelectedAssignSiteId("__org__");
       queryClient.invalidateQueries({ queryKey: ["organizations"] });
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "all"] });
     },
@@ -223,7 +232,14 @@ export default function OrganizationsPage() {
 
   const orgs = data?.organizations || [];
   const bindings = bindingsData?.bindings || [];
-  const bindingMap = new Map<string, Array<{ id: string; name: string; email: string }>>();
+  const bindingMap = new Map<string, Array<{
+    id: string;
+    name: string;
+    email: string;
+    organizationSiteId: string | null;
+    organizationSiteName: string | null;
+    isPrimary: boolean;
+  }>>();
   const bindingStatusMap = new Map<string, Set<string>>();
   for (const b of bindings) {
     if (b.organizationId) {
@@ -233,7 +249,14 @@ export default function OrganizationsPage() {
     }
     if (b.organizationId && b.status === "ACTIVE" && b.representative) {
       const list = bindingMap.get(b.organizationId) || [];
-      list.push(b.representative);
+      list.push({
+        id: b.representative.id,
+        name: b.representative.name,
+        email: b.representative.email,
+        organizationSiteId: b.organizationSiteId || null,
+        organizationSiteName: b.organizationSite?.siteName || null,
+        isPrimary: !!b.isPrimary,
+      });
       bindingMap.set(b.organizationId, list);
     }
   }
@@ -340,7 +363,10 @@ export default function OrganizationsPage() {
                     {activeBindings.length > 0 ? (
                       activeBindings.map((r) => (
                         <Badge key={r.id} variant="default" className="text-xs bg-blue-600 hover:bg-blue-700">
-                          <UserCog className="h-3 w-3 mr-1" />{r.name}
+                          <UserCog className="h-3 w-3 mr-1" />
+                          {r.name}
+                          {r.organizationSiteName ? ` · ${r.organizationSiteName}` : " · 全机构"}
+                          {r.isPrimary ? " · 主代表" : ""}
                         </Badge>
                       ))
                     ) : hasPendingBinding ? (
@@ -379,7 +405,12 @@ export default function OrganizationsPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button variant="ghost" size="sm" title="分配代表"
-                    onClick={() => { setAssignTargetOrg(o); setSelectedRepId(""); setAssignDialogOpen(true); }}
+                    onClick={() => {
+                      setAssignTargetOrg(o);
+                      setSelectedRepId("");
+                      setSelectedAssignSiteId("__org__");
+                      setAssignDialogOpen(true);
+                    }}
                   ><UserCog className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="sm" onClick={() => {
                     setEditing(o);
@@ -432,12 +463,33 @@ export default function OrganizationsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label>绑定范围</Label>
+              <Select value={selectedAssignSiteId} onValueChange={(v) => setSelectedAssignSiteId(v || "__org__")}>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择绑定范围..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__org__">整个单位</SelectItem>
+                  {assignTargetOrg?.sites.map((site) => (
+                    <SelectItem key={site.id} value={site.id}>
+                      {site.siteName}
+                      {site.siteType ? ` (${SITE_TYPE_LABELS[site.siteType] || site.siteType})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               className="w-full"
               disabled={!selectedRepId || assignRepMutation.isPending}
               onClick={() => {
                 if (assignTargetOrg && selectedRepId) {
-                  assignRepMutation.mutate({ orgId: assignTargetOrg.id, repId: selectedRepId });
+                  assignRepMutation.mutate({
+                    orgId: assignTargetOrg.id,
+                    repId: selectedRepId,
+                    siteId: selectedAssignSiteId === "__org__" ? null : selectedAssignSiteId,
+                  });
                 }
               }}
             >
