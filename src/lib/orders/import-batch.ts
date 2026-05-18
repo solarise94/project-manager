@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { normalizeOrderSource } from "@/lib/orders/constants";
-import { generateImportOrderNo, computeOrderAmount, withRetry } from "@/lib/orders/import-commit";
+import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, normalizeImportDate, resolveImportRefDate, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import type { NormalizedOrderRow } from "@/lib/external-order";
@@ -61,23 +61,13 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const normalizedSource = normalizeOrderSource(row.source);
-    const refDate = row.orderAt ?? row.paidAt ?? new Date();
+    const orderAt = normalizeImportDate(row.orderAt);
+    const paidAt = normalizeImportDate(row.paidAt);
+    const refDate = resolveImportRefDate(orderAt, paidAt);
 
     try {
       const action = await withRetry(async () => {
-        const existingSrc = await prisma.orderSourceRecord.findUnique({
-          where: {
-            source_externalOrderNo: {
-              source: normalizedSource,
-              externalOrderNo: row.externalOrderNo,
-            },
-          },
-          select: {
-            id: true,
-            orderId: true,
-            order: { select: { deleted: true, mergeTargets: { select: { id: true }, take: 1 } } },
-          },
-        });
+        const existingSrc = await findExistingImportOrder(prisma, normalizedSource, row.externalOrderNo);
 
         if (existingSrc?.orderId) {
           // If the linked order is a merge target (source records were moved here
@@ -99,19 +89,22 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               buyerAddressSnapshot: row.receiverAddress ?? undefined,
               buyerWechatSnapshot: row.orderUser ?? undefined,
               buyerOrgNameSnapshot: row.storeName ?? undefined,
-              orderedAt: row.orderAt ?? undefined,
-              confirmedAt: row.paidAt ?? undefined,
+              orderedAt: orderAt ?? undefined,
+              confirmedAt: paidAt ?? undefined,
               title: row.productNamesRaw ?? undefined,
               // Re-import restores soft-deleted orders only
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
           });
-          if (sourceRemark !== undefined) {
-            await prisma.orderSourceRecord.update({
-              where: { id: existingSrc.id },
-              data: { sourceRemark },
-            });
-          }
+          await upsertImportSourceRecord(prisma, {
+            orderId: existingSrc.orderId,
+            source: normalizedSource,
+            sourceRemark,
+            platform: row.platform || source,
+            externalOrderNo: row.externalOrderNo,
+            merchantOrderNo: row.merchantOrderNo,
+            rawJson: JSON.stringify(row),
+          });
           return "updated" as const;
         }
 
@@ -154,9 +147,9 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               category: "UNKNOWN",
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
-              orderedAt: row.orderAt ?? null,
-              confirmedAt: row.paidAt ?? null,
-              deliveredAt: row.paidAt ?? new Date(),
+              orderedAt: orderAt,
+              confirmedAt: paidAt,
+              deliveredAt: paidAt ?? new Date(),
               buyerNameSnapshot: row.receiverName,
               buyerPhoneSnapshot: row.receiverPhone,
               buyerAddressSnapshot: row.receiverAddress,
@@ -171,16 +164,14 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
             },
           });
 
-          await tx.orderSourceRecord.create({
-            data: {
-              orderId: order.id,
-              source: normalizedSource,
-              sourceRemark,
-              platform: row.platform || source,
-              externalOrderNo: row.externalOrderNo,
-              merchantOrderNo: row.merchantOrderNo,
-              rawJson,
-            },
+          await upsertImportSourceRecord(tx, {
+            orderId: order.id,
+            source: normalizedSource,
+            sourceRemark,
+            platform: row.platform || source,
+            externalOrderNo: row.externalOrderNo,
+            merchantOrderNo: row.merchantOrderNo,
+            rawJson,
           });
 
           const itemName = row.productNamesRaw || row.externalOrderNo || "导入订单";

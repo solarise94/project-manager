@@ -1,12 +1,170 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import type { NormalizedOrderRow } from "@/lib/external-order";
+
+export type ImportDateLike = Date | string | null | undefined;
+
+export function normalizeImportDate(value: ImportDateLike): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function resolveImportRefDate(...candidates: ImportDateLike[]): Date {
+  for (const candidate of candidates) {
+    const normalized = normalizeImportDate(candidate);
+    if (normalized) return normalized;
+  }
+  return new Date();
+}
+
+type ImportDbClient = PrismaClient | Prisma.TransactionClient;
+
+const IMPORT_ORDER_MATCH_SELECT = {
+  id: true,
+  orderId: true,
+  order: { select: { deleted: true, mergeTargets: { select: { id: true }, take: 1 } } },
+} satisfies Prisma.OrderSourceRecordSelect;
+
+export interface ExistingImportOrderMatch {
+  orderId: string;
+  exactSourceRecordId: string | null;
+  order: {
+    deleted: boolean;
+    mergeTargets: Array<{ id: string }>;
+  } | null;
+}
+
+function choosePreferredOrderMatch<T extends { order: { mergeTargets: Array<{ id: string }> } | null }>(matches: T[]): T | null {
+  return matches.find((match) => (match.order?.mergeTargets.length ?? 0) === 0) ?? matches[0] ?? null;
+}
+
+function choosePreferredMergedCandidate<T extends { mergeTargets: Array<{ id: string }> }>(matches: T[]): T | null {
+  return matches.find((match) => match.mergeTargets.length === 0) ?? matches[0] ?? null;
+}
+
+export async function findExistingImportOrder(
+  db: ImportDbClient,
+  normalizedSource: string,
+  externalOrderNo: string,
+): Promise<ExistingImportOrderMatch | null> {
+  const exactSourceRecord = await db.orderSourceRecord.findUnique({
+    where: {
+      source_externalOrderNo: {
+        source: normalizedSource,
+        externalOrderNo,
+      },
+    },
+    select: IMPORT_ORDER_MATCH_SELECT,
+  });
+  if (exactSourceRecord?.orderId) {
+    return {
+      orderId: exactSourceRecord.orderId,
+      exactSourceRecordId: exactSourceRecord.id,
+      order: exactSourceRecord.order,
+    };
+  }
+
+  const crossSourceMatches = await db.orderSourceRecord.findMany({
+    where: {
+      externalOrderNo,
+      orderId: { not: null },
+    },
+    orderBy: { createdAt: "asc" },
+    select: IMPORT_ORDER_MATCH_SELECT,
+  });
+  const preferredSourceRecord = choosePreferredOrderMatch(crossSourceMatches);
+  if (preferredSourceRecord?.orderId) {
+    return {
+      orderId: preferredSourceRecord.orderId,
+      exactSourceRecordId: null,
+      order: preferredSourceRecord.order,
+    };
+  }
+
+  const directOrderMatches = await db.order.findMany({
+    where: { externalOrderNo },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      deleted: true,
+      mergeTargets: { select: { id: true }, take: 1 },
+    },
+  });
+  const preferredOrder = choosePreferredMergedCandidate(directOrderMatches);
+  if (!preferredOrder) return null;
+
+  return {
+    orderId: preferredOrder.id,
+    exactSourceRecordId: null,
+    order: {
+      deleted: preferredOrder.deleted,
+      mergeTargets: preferredOrder.mergeTargets,
+    },
+  };
+}
+
+export async function upsertImportSourceRecord(
+  db: ImportDbClient,
+  params: {
+    orderId: string;
+    source: string;
+    sourceRemark?: string;
+    platform?: string | null;
+    externalOrderNo: string;
+    merchantOrderNo?: string | null;
+    rawJson?: string;
+  },
+): Promise<void> {
+  const {
+    orderId,
+    source,
+    sourceRemark,
+    platform,
+    externalOrderNo,
+    merchantOrderNo,
+    rawJson,
+  } = params;
+
+  await db.orderSourceRecord.upsert({
+    where: {
+      source_externalOrderNo: {
+        source,
+        externalOrderNo,
+      },
+    },
+    update: {
+      orderId,
+      sourceRemark,
+      platform,
+      merchantOrderNo,
+      rawJson,
+    },
+    create: {
+      orderId,
+      source,
+      sourceRemark,
+      platform,
+      externalOrderNo,
+      merchantOrderNo,
+      rawJson,
+    },
+  });
+}
 
 export async function generateImportOrderNo(
   tx: Prisma.TransactionClient,
-  refDate: Date,
+  refDate: ImportDateLike,
   prefix = "PO",
 ): Promise<string> {
-  const dateStr = `${refDate.getFullYear()}${String(refDate.getMonth() + 1).padStart(2, "0")}${String(refDate.getDate()).padStart(2, "0")}`;
+  const normalizedRefDate = resolveImportRefDate(refDate);
+  const dateStr = `${normalizedRefDate.getFullYear()}${String(normalizedRefDate.getMonth() + 1).padStart(2, "0")}${String(normalizedRefDate.getDate()).padStart(2, "0")}`;
   const lastOrder = await tx.order.findFirst({
     where: { orderNo: { startsWith: `${prefix}-${dateStr}` } },
     orderBy: { orderNo: "desc" },

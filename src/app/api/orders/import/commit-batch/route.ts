@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { processImportRows, BATCH_SIZE } from "@/lib/orders/import-batch";
+import { normalizeImportDate } from "@/lib/orders/import-commit";
 import type { NormalizedOrderRow } from "@/lib/external-order";
+
+type CommitBatchRow = Omit<NormalizedOrderRow, "orderAt" | "paidAt"> & {
+  orderAt: Date | string | null;
+  paidAt: Date | string | null;
+};
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -25,7 +31,7 @@ export async function POST(req: NextRequest) {
   } = body as {
     source: string;
     sourceRemark?: string;
-    rows: NormalizedOrderRow[];
+    rows: CommitBatchRow[];
     customerMode?: string;
     organizationMode?: string;
     ownerUserId?: string | null;
@@ -51,10 +57,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "createCrmProfile 需要指定 ownerUserId" }, { status: 400 });
   }
 
+  const normalizedRows: NormalizedOrderRow[] = rows.map((row) => ({
+    ...row,
+    orderAt: normalizeImportDate(row.orderAt),
+    paidAt: normalizeImportDate(row.paidAt),
+  }));
+
   const result = await processImportRows({
     source: source.trim(),
     sourceRemark: sourceRemark?.trim() || undefined,
-    rows,
+    rows: normalizedRows,
     userId: session.user.id,
     customerMode: safeCustomerMode as "MATCH_ONLY" | "CREATE_IF_MISSING" | "SKIP",
     organizationMode: safeOrgMode as "RESOLVE_ONLY" | "CREATE_IF_MISSING" | "SKIP",
@@ -66,6 +78,6 @@ export async function POST(req: NextRequest) {
     ...result,
     batchIndex,
     totalBatches,
-    processed: rows.length,
+    processed: normalizedRows.length,
   }, { status: 201 });
 }

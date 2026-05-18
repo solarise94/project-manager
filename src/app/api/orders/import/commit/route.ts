@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource } from "@/lib/orders/constants";
-import { generateImportOrderNo, computeOrderAmount, withRetry } from "@/lib/orders/import-commit";
+import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import * as XLSX from "xlsx";
@@ -152,14 +152,7 @@ export async function POST(req: NextRequest) {
     try {
       const action = await withRetry(async () => {
         // Dedup check inside retry so concurrent imports see committed records on retry
-        const existingSrc = await prisma.orderSourceRecord.findUnique({
-          where: { source_externalOrderNo: { source: normalizedSource, externalOrderNo: row.externalOrderNo } },
-          select: {
-            id: true,
-            orderId: true,
-            order: { select: { deleted: true, mergeTargets: { select: { id: true }, take: 1 } } },
-          },
-        });
+        const existingSrc = await findExistingImportOrder(prisma, normalizedSource, row.externalOrderNo);
         if (existingSrc?.orderId) {
           // Skip merge targets — source records were moved here during merge,
           // updating would corrupt the consolidated target order.
@@ -186,12 +179,15 @@ export async function POST(req: NextRequest) {
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
           });
-          if (sourceRemark !== undefined) {
-            await prisma.orderSourceRecord.update({
-              where: { id: existingSrc.id },
-              data: { sourceRemark },
-            });
-          }
+          await upsertImportSourceRecord(prisma, {
+            orderId: existingSrc.orderId,
+            source: normalizedSource,
+            sourceRemark,
+            platform: row.platform || source,
+            externalOrderNo: row.externalOrderNo,
+            merchantOrderNo: row.merchantOrderNo,
+            rawJson: JSON.stringify(row),
+          });
           return "updated" as const;
         }
 
@@ -244,16 +240,14 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          await tx.orderSourceRecord.create({
-            data: {
-              orderId: order.id,
-              source: normalizedSource,
-              sourceRemark,
-              platform: row.platform || source,
-              externalOrderNo: row.externalOrderNo,
-              merchantOrderNo: row.merchantOrderNo,
-              rawJson,
-            },
+          await upsertImportSourceRecord(tx, {
+            orderId: order.id,
+            source: normalizedSource,
+            sourceRemark,
+            platform: row.platform || source,
+            externalOrderNo: row.externalOrderNo,
+            merchantOrderNo: row.merchantOrderNo,
+            rawJson,
           });
 
           const itemName = row.productNamesRaw || row.externalOrderNo || "导入订单";

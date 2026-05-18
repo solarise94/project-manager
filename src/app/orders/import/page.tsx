@@ -40,6 +40,7 @@ function ImportContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { status } = useSession();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [source] = useState(searchParams.get("source") || DEFAULT_SOURCE);
   const [sourceRemark, setSourceRemark] = useState("");
   const [rawText, setRawText] = useState("");
@@ -72,6 +73,11 @@ function ImportContent() {
   if (status === "unauthenticated") { router.push("/login"); return null; }
 
   const isFormData = (p: unknown): p is FormData => p instanceof FormData;
+
+  const openFilePicker = () => {
+    setMode("file");
+    window.setTimeout(() => fileInputRef.current?.click(), 0);
+  };
 
   const handlePreview = async () => {
     setLoading(true);
@@ -301,14 +307,15 @@ function ImportContent() {
 
           <div className="flex gap-2">
             <Button variant={mode === "text" ? "default" : "outline"} size="sm" onClick={() => setMode("text")}>粘贴文本</Button>
-            <Button variant={mode === "file" ? "default" : "outline"} size="sm" onClick={() => setMode("file")}>上传文件</Button>
+            <Button variant={mode === "file" ? "default" : "outline"} size="sm" onClick={openFilePicker}>上传文件</Button>
           </div>
 
           {mode === "text" ? (
             <textarea className="w-full border rounded p-3 text-sm font-mono h-64" value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="粘贴 CSV/TSV 内容..." />
           ) : (
-            <div>
-              <input type="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain" onChange={(e) => setFile(e.target.files?.[0] || null)} className="text-sm" />
+            <div className="space-y-2">
+              <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain" onChange={(e) => setFile(e.target.files?.[0] || null)} className="text-sm" />
+              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>选择文件</Button>
               {file && <div className="text-sm text-muted-foreground mt-1">已选择: {file.name} ({(file.size / 1024).toFixed(1)} KB)</div>}
             </div>
           )}

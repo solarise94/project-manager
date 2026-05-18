@@ -122,7 +122,9 @@ function OrdersContent() {
   const [category, setCategory] = useState(sp.get("category") || "");
   const [matchStatus, setMatchStatus] = useState(sp.get("customerMatchStatus") || "");
   const [treatment, setTreatment] = useState(sp.get("financeTreatment") || "");
-  const [page, setPage] = useState(Number(sp.get("page")) || 1);
+  const initialPage = Number(sp.get("page")) || 1;
+  const [page, setPage] = useState(initialPage);
+  const [pageInput, setPageInput] = useState(String(initialPage));
   const [orders, setOrders] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -265,6 +267,17 @@ function OrdersContent() {
       category: setCategory, customerMatchStatus: setMatchStatus, financeTreatment: setTreatment,
     };
     setters[key]?.("");
+  }
+
+  function commitPageInput() {
+    const parsed = Number.parseInt(pageInput.trim(), 10);
+    if (Number.isNaN(parsed)) {
+      setPageInput(String(page));
+      return;
+    }
+    const bounded = Math.min(Math.max(parsed, 1), Math.max(totalPages, 1));
+    setPage(bounded);
+    setPageInput(String(bounded));
   }
 
   // Shared filter controls for both desktop and mobile
@@ -748,6 +761,22 @@ function OrdersContent() {
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>上一页</Button>
                 <span className="text-sm">第 {page}/{totalPages} 页</span>
+                <div className="flex items-center gap-1">
+                  <Input
+                    value={pageInput}
+                    onChange={(e) => setPageInput(e.target.value.replace(/[^\d]/g, ""))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitPageInput();
+                    }}
+                    onBlur={commitPageInput}
+                    onFocus={() => setPageInput(String(page))}
+                    className="h-8 w-16 text-center text-sm"
+                    inputMode="numeric"
+                    aria-label="跳转页码"
+                    placeholder={String(page)}
+                  />
+                  <Button variant="outline" size="sm" onClick={commitPageInput}>跳转</Button>
+                </div>
                 <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>下一页</Button>
               </div>
             </div>
