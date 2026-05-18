@@ -65,6 +65,12 @@ interface ActiveBindingItem {
   isPrimary: boolean;
 }
 
+interface AiSupplementForm {
+  address: string;
+  aliases: string[];
+  sites: SiteForm[];
+}
+
 const emptyCreate = { canonicalName: "", address: "", aliases: [""], sites: [{ siteName: "", address: "", siteType: "CAMPUS" }] };
 
 export default function OrganizationsPage() {
@@ -83,6 +89,7 @@ export default function OrganizationsPage() {
   const [newAlias, setNewAlias] = useState("");
   const [newSite, setNewSite] = useState({ siteName: "", address: "", siteType: "CAMPUS" });
   const [supplementDraft, setSupplementDraft] = useState<OrganizationDraftPreview | null>(null);
+  const [aiSupplement, setAiSupplement] = useState<AiSupplementForm | null>(null);
   const [assignFilter, setAssignFilter] = useState<"all" | "assigned" | "unassigned">("all");
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [assignTargetOrg, setAssignTargetOrg] = useState<OrgItem | null>(null);
@@ -364,11 +371,47 @@ export default function OrganizationsPage() {
     }
 
     setSupplementDraft(draft);
+    setAiSupplement({
+      address: addressToApply || "",
+      aliases: aliasesToAdd.length > 0 ? aliasesToAdd : [""],
+      sites: sitesToAdd.length > 0 ? sitesToAdd : [{ siteName: "", address: "", siteType: "CAMPUS" }],
+    });
+    toast.success("AI 补充草稿已填入表单，请检查后再保存");
+  }
+
+  function saveAiSupplement() {
+    if (!editing || !aiSupplement) return;
+
+    const aliasesToAdd = aiSupplement.aliases.map((alias) => alias.trim()).filter(Boolean);
+    const sitesToAdd = aiSupplement.sites
+      .map((site) => ({
+        siteName: site.siteName.trim(),
+        address: site.address.trim(),
+        siteType: site.siteType || "CAMPUS",
+      }))
+      .filter((site) => site.siteName);
+    const addressToApply = !editForm.address.trim() && aiSupplement.address.trim()
+      ? aiSupplement.address.trim()
+      : undefined;
+
+    if (!addressToApply && aliasesToAdd.length === 0 && sitesToAdd.length === 0) {
+      toast.info("没有可保存的 AI 补充内容");
+      return;
+    }
+
     updateMutation.mutate({
       id: editing.id,
       ...(addressToApply ? { address: addressToApply } : {}),
       ...(aliasesToAdd.length > 0 ? { addAliases: aliasesToAdd } : {}),
       ...(sitesToAdd.length > 0 ? { addSites: sitesToAdd } : {}),
+    }, {
+      onSuccess: () => {
+        if (addressToApply) {
+          setEditForm((prev) => ({ ...prev, address: addressToApply }));
+        }
+        setSupplementDraft(null);
+        setAiSupplement(null);
+      },
     });
   }
 
@@ -497,6 +540,7 @@ export default function OrganizationsPage() {
                     setNewAlias("");
                     setNewSite({ siteName: "", address: "", siteType: "CAMPUS" });
                     setSupplementDraft(null);
+                    setAiSupplement(null);
                     setEditOpen(true);
                   }}><Pencil className="h-3 w-3" /></Button>
                   <Button variant="ghost" size="sm" onClick={() => { setMergeSource(o); setMergeTargetId(""); setMergeOpen(true); }}>
@@ -728,7 +772,10 @@ export default function OrganizationsPage() {
         open={editOpen}
         onOpenChange={(open) => {
           setEditOpen(open);
-          if (!open) setSupplementDraft(null);
+          if (!open) {
+            setSupplementDraft(null);
+            setAiSupplement(null);
+          }
         }}
       >
         <DialogContent className="sm:max-w-lg">
@@ -743,12 +790,130 @@ export default function OrganizationsPage() {
               />
             )}
             {supplementDraft && (
-              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <div className="space-y-3 rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
                   <Sparkles className="h-3.5 w-3.5" />
-                  已按补充规则应用 AI 草稿
+                  AI 补充草稿
                 </div>
-                <div className="mt-1">仅补充空地址、新别名和新院区；标准名称和已有字段不会被覆盖。</div>
+                <div>请检查后再保存。仅补充空地址、新别名和新院区；标准名称和已有字段不会被覆盖。</div>
+                {aiSupplement && (
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">地址补充（仅当前地址为空时保存）</Label>
+                      <Input
+                        value={aiSupplement.address}
+                        onChange={(e) => setAiSupplement({ ...aiSupplement, address: e.target.value })}
+                        placeholder="无地址补充"
+                        disabled={!!editForm.address.trim()}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">新增别名</Label>
+                      {aiSupplement.aliases.map((alias, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <Input
+                            value={alias}
+                            onChange={(e) => {
+                              const aliases = [...aiSupplement.aliases];
+                              aliases[idx] = e.target.value;
+                              setAiSupplement({ ...aiSupplement, aliases });
+                            }}
+                            placeholder="别名"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setAiSupplement({
+                              ...aiSupplement,
+                              aliases: aiSupplement.aliases.filter((_, i) => i !== idx),
+                            })}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAiSupplement({ ...aiSupplement, aliases: [...aiSupplement.aliases, ""] })}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />添加别名
+                      </Button>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">新增院区/校区</Label>
+                      {aiSupplement.sites.map((site, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <Input
+                            value={site.siteName}
+                            onChange={(e) => {
+                              const sites = [...aiSupplement.sites];
+                              sites[idx] = { ...sites[idx], siteName: e.target.value };
+                              setAiSupplement({ ...aiSupplement, sites });
+                            }}
+                            placeholder="院区名称"
+                            className="flex-1"
+                          />
+                          <Select
+                            value={site.siteType || "CAMPUS"}
+                            onValueChange={(v) => {
+                              const sites = [...aiSupplement.sites];
+                              sites[idx] = { ...sites[idx], siteType: v || "CAMPUS" };
+                              setAiSupplement({ ...aiSupplement, sites });
+                            }}
+                          >
+                            <SelectTrigger className="w-[100px]"><span>{SITE_TYPE_LABELS[site.siteType] || "类型"}</span></SelectTrigger>
+                            <SelectContent>
+                              {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={site.address}
+                            onChange={(e) => {
+                              const sites = [...aiSupplement.sites];
+                              sites[idx] = { ...sites[idx], address: e.target.value };
+                              setAiSupplement({ ...aiSupplement, sites });
+                            }}
+                            placeholder="地址"
+                            className="flex-1"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setAiSupplement({
+                              ...aiSupplement,
+                              sites: aiSupplement.sites.filter((_, i) => i !== idx),
+                            })}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAiSupplement({
+                          ...aiSupplement,
+                          sites: [...aiSupplement.sites, { siteName: "", address: "", siteType: "CAMPUS" }],
+                        })}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />添加院区
+                      </Button>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => { setSupplementDraft(null); setAiSupplement(null); }}>
+                        取消草稿
+                      </Button>
+                      <Button type="button" size="sm" disabled={updateMutation.isPending} onClick={saveAiSupplement}>
+                        {updateMutation.isPending ? "保存中..." : "保存 AI 补充"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <div className="space-y-2">
