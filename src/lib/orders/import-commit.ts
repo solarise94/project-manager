@@ -179,7 +179,7 @@ export async function generateImportOrderNo(
 }
 
 export function computeOrderAmount(row: NormalizedOrderRow): number {
-  if (row.paidAmount != null && row.paidAmount > 0) return row.paidAmount;
+  if (row.paidAmount != null) return row.paidAmount;
   const sum = (row.grossAmount ?? 0) + (row.priceAdjustment ?? 0) + (row.shippingFee ?? 0);
   return sum > 0 ? sum : 0;
 }

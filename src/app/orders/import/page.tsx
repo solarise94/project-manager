@@ -76,7 +76,13 @@ function ImportContent() {
 
   const openFilePicker = () => {
     setMode("file");
-    window.setTimeout(() => fileInputRef.current?.click(), 0);
+    window.requestAnimationFrame(() => {
+      const input = fileInputRef.current;
+      if (input) {
+        input.value = "";
+        input.click();
+      }
+    });
   };
 
   const handlePreview = async () => {
@@ -310,12 +316,19 @@ function ImportContent() {
             <Button variant={mode === "file" ? "default" : "outline"} size="sm" onClick={openFilePicker}>上传文件</Button>
           </div>
 
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="hidden"
+          />
+
           {mode === "text" ? (
             <textarea className="w-full border rounded p-3 text-sm font-mono h-64" value={rawText} onChange={(e) => setRawText(e.target.value)} placeholder="粘贴 CSV/TSV 内容..." />
           ) : (
             <div className="space-y-2">
-              <input ref={fileInputRef} type="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain" onChange={(e) => setFile(e.target.files?.[0] || null)} className="text-sm" />
-              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>选择文件</Button>
+              <Button type="button" variant="outline" size="sm" onClick={openFilePicker}>重新选择文件</Button>
               {file && <div className="text-sm text-muted-foreground mt-1">已选择: {file.name} ({(file.size / 1024).toFixed(1)} KB)</div>}
             </div>
           )}
