@@ -211,7 +211,9 @@ export default function DevLogsPage() {
             <div className="space-y-2">
               <Label>类型</Label>
               <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v || "UPDATE" })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>{{ UPDATE: "更新", FIX: "修复", RELEASE: "发版", NOTICE: "公告" }[form.type] || form.type}</SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="UPDATE">更新</SelectItem>
                   <SelectItem value="FIX">修复</SelectItem>
@@ -251,7 +253,9 @@ export default function DevLogsPage() {
               <div className="space-y-2">
                 <Label>类型</Label>
                 <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v || "UPDATE" })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue>{{ UPDATE: "更新", FIX: "修复", RELEASE: "发版", NOTICE: "公告" }[form.type] || form.type}</SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="UPDATE">更新</SelectItem>
                     <SelectItem value="FIX">修复</SelectItem>

@@ -182,7 +182,9 @@ function AdminRepOrgReview() {
       <div className="flex items-center gap-3">
         <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value ?? "ALL")}>
           <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="状态" />
+            <SelectValue placeholder="状态">
+              {STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label || statusFilter}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {STATUS_OPTIONS.map((opt) => (

@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { OrganizationSelect } from "@/components/organization-select";
 import { CrmVoiceInput } from "@/components/crm/crm-voice-input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { crmKeys } from "@/lib/crm/query-keys";
 import { toast } from "sonner";
 import { UserPlus, MapPin, Wand2, Loader2, AlertCircle } from "lucide-react";
@@ -397,7 +397,11 @@ export function CustomerApplicationFormDialog() {
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">院区/学院/大楼</Label>
                 <Select value={form.organizationSiteId || "__none__"} onValueChange={(v) => setForm({ ...form, organizationSiteId: (v === "__none__" || v === null) ? "" : v })}>
-                  <SelectTrigger className="h-9 text-sm"><span>{form.organizationSiteId ? (orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId) : "不选择（可选）"}</span></SelectTrigger>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="不选择（可选）">
+                      {form.organizationSiteId ? orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId : "不选择（可选）"}
+                    </SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">不选择</SelectItem>
                     {orgSites.map((s) => (
@@ -494,7 +498,6 @@ export function CustomerApplicationFormDialog() {
                   onClick={() => {
                     setDupCandidates(null);
                     setOpen(false);
-                    setForm({ ...emptyForm });
                   }}
                 >
                   取消，去客户档案库查看

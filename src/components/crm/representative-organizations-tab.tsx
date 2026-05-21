@@ -176,7 +176,9 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
           <div className="w-48">
             <Select value={addSiteId} onValueChange={(v) => setAddSiteId(v || "__org__")}>
               <SelectTrigger>
-                <SelectValue placeholder="绑定范围" />
+                <SelectValue placeholder="绑定范围">
+                  {addSiteId === "__org__" ? "整个单位" : addOrgDetail?.organization.sites.find((s) => s.id === addSiteId)?.siteName || addSiteId}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__org__">整个单位</SelectItem>

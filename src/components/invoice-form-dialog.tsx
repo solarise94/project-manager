@@ -635,7 +635,9 @@ function FormBody({
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">发票类型</label>
           <Select value={invoiceType} onValueChange={(v: string) => v && setInvoiceType(v)}>
-            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue>{invoiceType === "SPECIAL" ? "专票" : "普票"}</SelectValue>
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="NORMAL">普票</SelectItem>
               <SelectItem value="SPECIAL">专票</SelectItem>

@@ -200,7 +200,9 @@ export function ActivateProfileDialog() {
             <div>
               <label className="text-sm font-medium">阶段</label>
               <Select value={stage} onValueChange={(v) => setStage(v || "NEW")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>{STAGE_LABELS[stage] || stage}</SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {CRM_STAGES.map((s) => (
                     <SelectItem key={s} value={s}>{STAGE_LABELS[s]}</SelectItem>
@@ -211,7 +213,9 @@ export function ActivateProfileDialog() {
             <div>
               <label className="text-sm font-medium">重要度</label>
               <Select value={importance} onValueChange={(v) => setImportance(v || "NORMAL")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>{IMPORTANCE_LABELS[importance] || importance}</SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {CRM_IMPORTANCE.map((i) => (
                     <SelectItem key={i} value={i}>{IMPORTANCE_LABELS[i]}</SelectItem>

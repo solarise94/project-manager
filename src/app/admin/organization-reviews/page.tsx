@@ -15,9 +15,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select, SelectContent, SelectDisplay, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
+import { CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
 
 interface ReviewTask {
@@ -63,7 +64,7 @@ export default function OrganizationReviewsPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const [statusFilter, setStatusFilter] = useState("PENDING");
-  const REVIEW_STATUS_LABELS: Record<string, string> = { PENDING: "待审核", APPROVED: "已通过", REJECTED: "已拒绝", CANCELLED: "已取消" };
+
   const [search, setSearch] = useState("");
   const [approveOpen, setApproveOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -72,8 +73,8 @@ export default function OrganizationReviewsPage() {
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [selectedSiteId, setSelectedSiteId] = useState("");
   const [reviewNote, setReviewNote] = useState("");
-  const [bindSiteName, setBindSiteName] = useState("");
-  const [newOrg, setNewOrg] = useState({ canonicalName: "", address: "", aliases: "", sites: [{ siteName: "", address: "" }] as Array<{ siteName: string; address: string }> });
+  const [bindSiteTempId, setBindSiteTempId] = useState("");
+  const [newOrg, setNewOrg] = useState({ canonicalName: "", address: "", aliases: "", sites: [{ siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }] as Array<{ siteName: string; address: string; siteType: string; tempId: string }> });
 
   const { data, isLoading, error } = useQuery<{ tasks: ReviewTask[] }>({
     queryKey: ["org-reviews", statusFilter, search],
@@ -108,7 +109,7 @@ export default function OrganizationReviewsPage() {
   });
 
   const approveMutation = useMutation({
-    mutationFn: async (payload: { id: string; action: string; organizationId?: string; organizationSiteId?: string; reviewNote?: string; canonicalName?: string; address?: string; aliases?: string[]; sites?: Array<{ siteName: string; address: string }>; bindSiteName?: string; siteName?: string; siteAddress?: string }) => {
+    mutationFn: async (payload: { id: string; action: string; organizationId?: string; organizationSiteId?: string; reviewNote?: string; canonicalName?: string; address?: string; aliases?: string[]; sites?: Array<{ siteName: string; address: string; siteType?: string }>; bindSiteName?: string; siteName?: string; siteAddress?: string }) => {
       const { id, ...body } = payload;
       const res = await fetch(`/api/organization-reviews/${id}`, {
         method: "PATCH",
@@ -142,8 +143,8 @@ export default function OrganizationReviewsPage() {
       address: draft.address || "",
       aliases: draft.aliases.join(", "),
       sites: draft.sites.length > 0
-        ? draft.sites.map((site) => ({ siteName: site.siteName, address: site.address || "" }))
-        : [{ siteName: "", address: "" }],
+        ? draft.sites.map((site) => ({ siteName: site.siteName, address: site.address || "", siteType: "CAMPUS", tempId: crypto.randomUUID() }))
+        : [{ siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }],
     });
     toast.success("已应用 AI 草稿，请检查后再保存");
   }
@@ -168,7 +169,11 @@ export default function OrganizationReviewsPage() {
           <Input placeholder="搜索..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v || "PENDING")}>
-          <SelectTrigger className="w-32"><SelectDisplay label="状态" valueLabel={REVIEW_STATUS_LABELS[statusFilter] || "未知"} /></SelectTrigger>
+          <SelectTrigger className="w-32">
+            <SelectValue placeholder="选择状态...">
+              {{ PENDING: "待审核", APPROVED: "已通过", REJECTED: "已拒绝", CANCELLED: "已取消" }[statusFilter] || statusFilter}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="PENDING">待审核</SelectItem>
             <SelectItem value="APPROVED">已通过</SelectItem>
@@ -239,7 +244,7 @@ export default function OrganizationReviewsPage() {
                     <Button size="sm" variant="outline" onClick={() => {
                       setActiveTask(t);
                       let aliases = "";
-                      let sites: Array<{ siteName: string; address: string }> = [];
+                      let sites: Array<{ siteName: string; address: string; siteType: string; tempId: string }> = [];
                       try {
                         if (t.suggestedAliasesJson) {
                           const a = JSON.parse(t.suggestedAliasesJson) as string[];
@@ -249,13 +254,13 @@ export default function OrganizationReviewsPage() {
                       try {
                         if (t.suggestedSitesJson) {
                           const s = JSON.parse(t.suggestedSitesJson) as Array<{ siteName: string; address?: string }>;
-                          sites = s.filter((x) => x.siteName).map((x) => ({ siteName: x.siteName, address: x.address || "" }));
+                          sites = s.filter((x) => x.siteName).map((x) => ({ siteName: x.siteName, address: x.address || "", siteType: "CAMPUS", tempId: crypto.randomUUID() }));
                         }
                       } catch { /* ignore */ }
-                      if (sites.length === 0) sites = [{ siteName: "", address: "" }];
+                      if (sites.length === 0) sites = [{ siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }];
                       setNewOrg({ canonicalName: t.suggestedCanonicalName || t.rawInput, address: t.suggestedAddress || "", aliases, sites });
                       setReviewNote("");
-                      setBindSiteName("");
+                      setBindSiteTempId("");
                       setCreateOpen(true);
                     }}>
                       <Plus className="h-3 w-3 mr-1" />新建机构
@@ -284,7 +289,11 @@ export default function OrganizationReviewsPage() {
             <div className="space-y-2">
               <Label>选择机构</Label>
               <Select value={selectedOrgId} onValueChange={(v) => { setSelectedOrgId(v || ""); setSelectedSiteId(""); }}>
-                <SelectTrigger><SelectValue placeholder="选择机构..." /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择机构...">
+                    {selectedOrgId ? orgs.find((o) => o.id === selectedOrgId)?.canonicalName || selectedOrgId : "选择机构..."}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {orgs.map((o) => <SelectItem key={o.id} value={o.id}>{o.canonicalName} ({o.orgCode})</SelectItem>)}
                 </SelectContent>
@@ -294,7 +303,11 @@ export default function OrganizationReviewsPage() {
               <div className="space-y-2">
                 <Label>院区（可选）</Label>
                 <Select value={selectedSiteId} onValueChange={(v) => setSelectedSiteId(v || "")}>
-                  <SelectTrigger><SelectValue placeholder="不选择院区" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="不选择院区">
+                      {selectedSiteId ? selectedOrg?.sites.find((s) => s.id === selectedSiteId)?.siteName || selectedSiteId : "不选择院区"}
+                    </SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">不选择院区</SelectItem>
                     {selectedOrg.sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.siteName}</SelectItem>)}
@@ -323,10 +336,11 @@ export default function OrganizationReviewsPage() {
 
       {/* Approve and create new org */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg">
           <DialogHeader><DialogTitle>新建机构并绑定</DialogTitle></DialogHeader>
+          <div className="-mx-4 min-h-0 overflow-y-auto px-4 pb-1">
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">原始输入: <span className="font-medium text-foreground">{activeTask?.rawInput}</span></p>
+            <p className="text-sm text-muted-foreground">原始输入: <span className="font-medium text-foreground break-words">{activeTask?.rawInput}</span></p>
             <OrganizationAiFillPlugin
               query={newOrg.canonicalName || activeTask?.rawInput || ""}
               onApply={applyDraftToNewOrg}
@@ -347,12 +361,12 @@ export default function OrganizationReviewsPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>院区/分支</Label>
-                <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setNewOrg({ ...newOrg, sites: [...newOrg.sites, { siteName: "", address: "" }] })}>
+                <Button type="button" variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setNewOrg({ ...newOrg, sites: [...newOrg.sites, { siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }] })}>
                   <Plus className="h-3 w-3 mr-1" />添加
                 </Button>
               </div>
               {newOrg.sites.map((site, idx) => (
-                <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                <div key={site.tempId} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_90px_auto] sm:items-end">
                   <Input placeholder="名称" value={site.siteName} onChange={(e) => {
                     const sites = [...newOrg.sites];
                     sites[idx] = { ...sites[idx], siteName: e.target.value };
@@ -363,8 +377,22 @@ export default function OrganizationReviewsPage() {
                     sites[idx] = { ...sites[idx], address: e.target.value };
                     setNewOrg({ ...newOrg, sites });
                   }} />
+                  <Select value={site.siteType || "CAMPUS"} onValueChange={(v) => {
+                    const sites = [...newOrg.sites];
+                    sites[idx] = { ...sites[idx], siteType: v || "CAMPUS" };
+                    setNewOrg({ ...newOrg, sites });
+                  }}>
+                    <SelectTrigger className="w-[90px]">
+                      <SelectValue placeholder="类型">{SITE_TYPE_LABELS[site.siteType] || "类型"}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
                   {newOrg.sites.length > 1 && (
                     <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => {
+                      const removed = newOrg.sites[idx];
+                      if (removed && removed.tempId === bindSiteTempId) setBindSiteTempId("");
                       setNewOrg({ ...newOrg, sites: newOrg.sites.filter((_, i) => i !== idx) });
                     }}>
                       <XCircle className="h-3.5 w-3.5" />
@@ -376,11 +404,15 @@ export default function OrganizationReviewsPage() {
             {activeTask && (activeTask.sourceType === "CUSTOMER_CREATE" || activeTask.sourceType === "CUSTOMER_EDIT") && newOrg.sites.some((s) => s.siteName.trim()) && (
               <div className="space-y-2">
                 <Label>绑定客户到院区（可选）</Label>
-                <Select value={bindSiteName} onValueChange={(v) => setBindSiteName(v || "")}>
-                  <SelectTrigger><SelectValue placeholder="不绑定院区" /></SelectTrigger>
+                <Select value={bindSiteTempId} onValueChange={(v) => setBindSiteTempId(v || "")}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="不绑定院区">
+                      {bindSiteTempId ? newOrg.sites.find((s) => s.tempId === bindSiteTempId)?.siteName.trim() || bindSiteTempId : "不绑定院区"}
+                    </SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">不绑定院区</SelectItem>
-                    {newOrg.sites.map((s, i) => s.siteName.trim() ? <SelectItem key={i} value={s.siteName.trim()}>{s.siteName}</SelectItem> : null)}
+                    {newOrg.sites.map((s) => s.siteName.trim() ? <SelectItem key={s.tempId} value={s.tempId}>{s.siteName.trim()}</SelectItem> : null)}
                   </SelectContent>
                 </Select>
               </div>
@@ -389,14 +421,19 @@ export default function OrganizationReviewsPage() {
               <Label>备注</Label>
               <Input value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} placeholder="可选" />
             </div>
+          </div>
+          </div>
+          <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
             <Button className="w-full" disabled={!newOrg.canonicalName.trim() || approveMutation.isPending}
               onClick={() => activeTask && approveMutation.mutate({
                 id: activeTask.id, action: "approveAndCreate",
                 canonicalName: newOrg.canonicalName,
                 address: newOrg.address || undefined,
                 aliases: newOrg.aliases ? newOrg.aliases.split(",").map((a) => a.trim()).filter(Boolean) : undefined,
-                sites: newOrg.sites.filter((s) => s.siteName.trim()),
-                bindSiteName: bindSiteName || undefined,
+                sites: newOrg.sites
+                  .map((s) => ({ siteName: s.siteName.trim(), address: s.address.trim(), siteType: s.siteType || "CAMPUS" }))
+                  .filter((s) => s.siteName),
+                bindSiteName: bindSiteTempId ? newOrg.sites.find((s) => s.tempId === bindSiteTempId)?.siteName.trim() : undefined,
                 reviewNote: reviewNote || undefined,
               })}
             >

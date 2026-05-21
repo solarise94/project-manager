@@ -200,7 +200,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (!orgCode) orgCode = `ORG-${String(Date.now() % 100000).padStart(5, "0")}`;
 
       // Merge sites array with legacy siteName/siteAddress, deduplicate by normalized name
-      const allSites: Array<{ siteName: string; address?: string }> = [];
+      const allSites: Array<{ siteName: string; address?: string; siteType?: string }> = [];
       const seenSiteNames = new Set<string>();
       if (Array.isArray(sites)) {
         for (const s of sites) {
@@ -208,7 +208,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             const norm = normalizeOrgName(s.siteName.trim());
             if (!seenSiteNames.has(norm)) {
               seenSiteNames.add(norm);
-              allSites.push({ siteName: s.siteName.trim(), address: s.address?.trim() });
+              allSites.push({ siteName: s.siteName.trim(), address: s.address?.trim(), siteType: s.siteType || "CAMPUS" });
             }
           }
         }
@@ -217,7 +217,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         const norm = normalizeOrgName(siteName.trim());
         if (!seenSiteNames.has(norm)) {
           seenSiteNames.add(norm);
-          allSites.push({ siteName: siteName.trim(), address: siteAddress?.trim() });
+          allSites.push({ siteName: siteName.trim(), address: siteAddress?.trim(), siteType: "CAMPUS" });
         }
       }
 
@@ -247,6 +247,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
               organizationId: newOrg.id,
               siteName: s.siteName,
               normalizedSiteName: normalizeOrgName(s.siteName),
+              siteType: s.siteType || undefined,
               address: s.address || null,
             },
           });

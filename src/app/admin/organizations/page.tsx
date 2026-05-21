@@ -65,7 +65,7 @@ interface ActiveBindingItem {
   isPrimary: boolean;
 }
 
-const emptyCreate = { canonicalName: "", address: "", aliases: [""], sites: [{ siteName: "", address: "", siteType: "CAMPUS" }] };
+const emptyCreate = { canonicalName: "", address: "", taxId: "", aliases: [""], sites: [{ siteName: "", address: "", siteType: "CAMPUS" }] };
 
 export default function OrganizationsPage() {
   const queryClient = useQueryClient();
@@ -88,6 +88,7 @@ export default function OrganizationsPage() {
   const [selectedRepId, setSelectedRepId] = useState<string>("");
   const [selectedAssignSiteId, setSelectedAssignSiteId] = useState<string>("__org__");
   const [editingBindingSite, setEditingBindingSite] = useState<Record<string, string>>({});
+  const [actingBindingId, setActingBindingId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<{ organizations: OrgItem[] }>({
     queryKey: ["organizations"],
@@ -166,6 +167,7 @@ export default function OrganizationsPage() {
       action: "archive" | "change-scope";
       siteId?: string | null;
     }) => {
+      setActingBindingId(bindingId);
       const res = await fetch(`/api/crm/representative-organizations/${bindingId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -180,6 +182,7 @@ export default function OrganizationsPage() {
       return { ...json, action };
     },
     onSuccess: (data) => {
+      setActingBindingId(null);
       if (data.action === "archive") {
         toast.success("已取消分配");
       } else {
@@ -189,7 +192,10 @@ export default function OrganizationsPage() {
       queryClient.invalidateQueries({ queryKey: ["organizations"] });
       queryClient.invalidateQueries({ queryKey: ["representative-organizations", "all"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => {
+      setActingBindingId(null);
+      toast.error(err.message);
+    },
   });
 
   useEffect(() => {
@@ -209,6 +215,7 @@ export default function OrganizationsPage() {
         body: JSON.stringify({
           canonicalName: payload.canonicalName,
           address: payload.address || null,
+          taxId: payload.taxId || null,
           aliases: payload.aliases.filter(Boolean),
           sites: (payload.sites as SiteForm[]).filter((s) => s.siteName).map((s) => ({ siteName: s.siteName, address: s.address, siteType: s.siteType || "CAMPUS" })),
         }),
@@ -321,6 +328,7 @@ export default function OrganizationsPage() {
     setForm({
       canonicalName: initialName,
       address: "",
+      taxId: "",
       aliases: [""],
       sites: [{ siteName: "", address: "", siteType: "CAMPUS" }],
     });
@@ -331,6 +339,7 @@ export default function OrganizationsPage() {
     setForm({
       canonicalName: draft.canonicalName,
       address: draft.address || "",
+      taxId: "",
       aliases: draft.aliases.length > 0 ? draft.aliases : [""],
       sites: draft.sites.length > 0
         ? draft.sites.map((site) => ({ siteName: site.siteName, address: site.address || "", siteType: "CAMPUS" }))
@@ -395,7 +404,9 @@ export default function OrganizationsPage() {
         </div>
         <Select value={assignFilter} onValueChange={(v) => setAssignFilter(v as "all" | "assigned" | "unassigned")}>
           <SelectTrigger className="w-36">
-            <SelectValue />
+            <SelectValue>
+              {assignFilter === "assigned" ? "已分配代表" : assignFilter === "unassigned" ? "未分配代表" : "全部单位"}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部单位</SelectItem>
@@ -493,24 +504,28 @@ export default function OrganizationsPage() {
                       setAssignDialogOpen(true);
                     }}
                   ><UserCog className="h-3 w-3" /></Button>
-                  <Button variant="ghost" size="sm" onClick={() => {
-                    setEditing(o);
-                    setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
-                    setNewAliases([""]);
-                    setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
-                    setEditOpen(true);
-                  }}><Pencil className="h-3 w-3" /></Button>
-                  <Button variant="ghost" size="sm" onClick={() => { setMergeSource(o); setMergeTargetId(""); setMergeOpen(true); }}>
+                  <Button variant="ghost" size="sm" title="编辑"
+                    onClick={() => {
+                      setEditing(o);
+                      setEditForm({ canonicalName: o.canonicalName, address: o.address || "", taxId: o.taxId || "" });
+                      setNewAliases([""]);
+                      setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
+                      setEditOpen(true);
+                    }}
+                  ><Pencil className="h-3 w-3" /></Button>
+                  <Button variant="ghost" size="sm" title="合并"
+                    onClick={() => { setMergeSource(o); setMergeTargetId(""); setMergeOpen(true); }}
+                  >
                     <Merge className="h-3 w-3" />
                   </Button>
-                  <Button variant="ghost" size="sm"
+                  <Button variant="ghost" size="sm" title={o.archived ? "恢复" : "归档"}
                     className={o.archived ? "text-green-600" : "text-amber-600"}
                     onClick={() => updateMutation.mutate({ id: o.id, archived: !o.archived })}
                   >
                     {o.archived ? <ArchiveRestore className="h-3 w-3" /> : <Archive className="h-3 w-3" />}
                   </Button>
                   {o._count.customers === 0 && (
-                    <Button variant="ghost" size="sm" className="text-red-600"
+                    <Button variant="ghost" size="sm" title="删除" className="text-red-600"
                       onClick={() => { if (confirm(`确定删除 "${o.canonicalName}"？`)) deleteMutation.mutate(o.id); }}
                     ><Trash2 className="h-3 w-3" /></Button>
                   )}
@@ -572,7 +587,9 @@ export default function OrganizationsPage() {
                             }))}
                           >
                             <SelectTrigger className="flex-1">
-                              <SelectValue placeholder="选择绑定范围..." />
+                              <SelectValue placeholder="选择绑定范围...">
+                                {selectedSite === "__org__" ? "整个单位" : assignTargetOrg?.sites.find((s) => s.id === selectedSite)?.siteName || selectedSite}
+                              </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__org__">整个单位</SelectItem>
@@ -587,7 +604,7 @@ export default function OrganizationsPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={selectedSite === originalSite || bindingActionMutation.isPending}
+                            disabled={selectedSite === originalSite || (bindingActionMutation.isPending && actingBindingId === binding.bindingId)}
                             onClick={() => {
                               bindingActionMutation.mutate({
                                 bindingId: binding.bindingId,
@@ -602,7 +619,7 @@ export default function OrganizationsPage() {
                             variant="outline"
                             size="sm"
                             className="text-red-600 hover:text-red-700"
-                            disabled={bindingActionMutation.isPending}
+                            disabled={bindingActionMutation.isPending && actingBindingId === binding.bindingId}
                             onClick={() => {
                               if (confirm(`确定取消 ${binding.name} 对 ${assignTargetOrg?.canonicalName} 的分配？`)) {
                                 bindingActionMutation.mutate({ bindingId: binding.bindingId, action: "archive" });
@@ -627,7 +644,9 @@ export default function OrganizationsPage() {
               <Label>新增分配</Label>
               <Select value={selectedRepId} onValueChange={(v) => setSelectedRepId(v || "")}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择代表..." />
+                  <SelectValue placeholder="选择代表...">
+                    {selectedRepId ? repsData?.representatives.find((r) => r.id === selectedRepId)?.name || selectedRepId : "选择代表..."}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {repsData?.representatives.map((r) => (
@@ -640,7 +659,9 @@ export default function OrganizationsPage() {
               <Label>绑定范围</Label>
               <Select value={selectedAssignSiteId} onValueChange={(v) => setSelectedAssignSiteId(v || "__org__")}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择绑定范围..." />
+                  <SelectValue placeholder="选择绑定范围...">
+                    {selectedAssignSiteId === "__org__" ? "整个单位" : assignTargetOrg?.sites.find((s) => s.id === selectedAssignSiteId)?.siteName || selectedAssignSiteId}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__org__">整个单位</SelectItem>
@@ -674,9 +695,11 @@ export default function OrganizationsPage() {
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg">
           <DialogHeader><DialogTitle>新增机构</DialogTitle></DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); if (!form.canonicalName.trim()) return; createMutation.mutate(form); }} className="space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); if (!form.canonicalName.trim()) return; createMutation.mutate(form); }} className="contents">
+            <div className="-mx-4 min-h-0 overflow-y-auto px-4 pb-1">
+            <div className="space-y-4">
             <OrganizationAiFillPlugin query={form.canonicalName} onApply={applyDraftToCreateForm} disabled={createMutation.isPending} />
             <div className="space-y-2">
               <Label>标准名称 *</Label>
@@ -687,9 +710,18 @@ export default function OrganizationsPage() {
               <Input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
             <div className="space-y-2">
+              <Label>税号</Label>
+              <TaxIdLookupInput
+                value={form.taxId}
+                onChange={(v) => setForm({ ...form, taxId: v })}
+                orgName={form.canonicalName}
+                placeholder="统一社会信用代码/纳税人识别号"
+              />
+            </div>
+            <div className="space-y-2">
               <Label>别名（简称、旧名等）</Label>
               {form.aliases.map((a, i) => (
-                <div key={i} className="flex gap-2">
+                <div key={i} className="flex min-w-0 gap-2">
                   <Input value={a} onChange={(e) => { const arr = [...form.aliases]; arr[i] = e.target.value; setForm({ ...form, aliases: arr }); }} placeholder="如：浙一" />
                   {form.aliases.length > 1 && <Button type="button" variant="ghost" size="sm" onClick={() => setForm({ ...form, aliases: form.aliases.filter((_, j) => j !== i) })}><X className="h-3 w-3" /></Button>}
                 </div>
@@ -701,10 +733,12 @@ export default function OrganizationsPage() {
             <div className="space-y-2">
               <Label>院区/校区</Label>
               {form.sites.map((s, i) => (
-                <div key={i} className="flex gap-2">
+                <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_90px_minmax(0,1fr)_auto]">
                   <Input value={s.siteName} onChange={(e) => { const arr = [...form.sites]; arr[i] = { ...arr[i], siteName: e.target.value }; setForm({ ...form, sites: arr }); }} placeholder="院区名称" className="flex-1" />
                   <Select value={(s as SiteForm).siteType || "CAMPUS"} onValueChange={(v) => { const arr = [...form.sites]; arr[i] = { ...arr[i], siteType: v || "CAMPUS" }; setForm({ ...form, sites: arr }); }}>
-                    <SelectTrigger className="w-[90px]"><span>{SITE_TYPE_LABELS[(s as SiteForm).siteType] || "类型"}</span></SelectTrigger>
+                    <SelectTrigger className="w-[90px]">
+                      <SelectValue placeholder="类型">{SITE_TYPE_LABELS[(s as SiteForm).siteType] || "类型"}</SelectValue>
+                    </SelectTrigger>
                     <SelectContent>
                       {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
                     </SelectContent>
@@ -717,15 +751,19 @@ export default function OrganizationsPage() {
                 <Plus className="h-3 w-3 mr-1" />添加院区
               </Button>
             </div>
-            <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "创建中..." : "创建机构"}
-            </Button>
+            </div>
+            </div>
+            <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "创建中..." : "创建机构"}
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditing(null); setEditForm({ canonicalName: "", address: "", taxId: "" }); setNewAliases([""]); setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]); } }}>
         <DialogContent className="sm:max-w-lg max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>编辑机构</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -754,11 +792,6 @@ export default function OrganizationsPage() {
                 placeholder="统一社会信用代码/纳税人识别号"
               />
             </div>
-            <Button size="sm" disabled={updateMutation.isPending} onClick={() => {
-              if (!editing) return;
-              updateMutation.mutate({ id: editing.id, canonicalName: editForm.canonicalName, address: editForm.address, taxId: editForm.taxId });
-            }}>保存基本信息</Button>
-
             <hr />
             <div className="space-y-2">
               <Label>别名</Label>
@@ -795,16 +828,9 @@ export default function OrganizationsPage() {
                     </Button>
                   </div>
                 ))}
-                <div className="flex justify-between gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setNewAliases([...newAliases, ""])}>
-                    <Plus className="h-3 w-3 mr-1" />添加一行
-                  </Button>
-                  <Button size="sm" disabled={!newAliases.some((alias) => alias.trim()) || updateMutation.isPending} onClick={() => {
-                    if (!editing) return;
-                    updateMutation.mutate({ id: editing.id, addAliases: newAliases.map((alias) => alias.trim()).filter(Boolean) });
-                    setNewAliases([""]);
-                  }}>保存新增别名</Button>
-                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setNewAliases([...newAliases, ""])}>
+                  <Plus className="h-3 w-3 mr-1" />添加一行
+                </Button>
               </div>
             </div>
 
@@ -846,7 +872,9 @@ export default function OrganizationsPage() {
                           setNewSites(sites);
                         }}
                       >
-                        <SelectTrigger className="w-[100px] shrink-0"><span>{SITE_TYPE_LABELS[site.siteType] || "类型"}</span></SelectTrigger>
+                        <SelectTrigger className="w-[100px] shrink-0">
+                          <SelectValue placeholder="类型">{SITE_TYPE_LABELS[site.siteType] || "类型"}</SelectValue>
+                        </SelectTrigger>
                         <SelectContent>
                           {CRM_SITE_TYPES.map((st) => (<SelectItem key={st} value={st}>{SITE_TYPE_LABELS[st]}</SelectItem>))}
                         </SelectContent>
@@ -871,31 +899,46 @@ export default function OrganizationsPage() {
                     />
                   </div>
                 ))}
-                <div className="flex justify-between gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setNewSites([...newSites, { siteName: "", address: "", siteType: "CAMPUS" }])}
-                  >
-                    <Plus className="h-3 w-3 mr-1" />添加一行
-                  </Button>
-                  <Button size="sm" disabled={!newSites.some((site) => site.siteName.trim()) || updateMutation.isPending} onClick={() => {
-                    if (!editing) return;
-                    updateMutation.mutate({
-                      id: editing.id,
-                      addSites: newSites
-                        .map((site) => ({
-                          siteName: site.siteName.trim(),
-                          address: site.address.trim(),
-                          siteType: site.siteType || "CAMPUS",
-                        }))
-                        .filter((site) => site.siteName),
-                    });
-                    setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
-                  }}>保存新增院区</Button>
-                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setNewSites([...newSites, { siteName: "", address: "", siteType: "CAMPUS" }])}
+                >
+                  <Plus className="h-3 w-3 mr-1" />添加一行
+                </Button>
               </div>
+            </div>
+            <div className="border-t pt-4 mt-2">
+              <Button
+                className="w-full"
+                disabled={updateMutation.isPending || !editing || (editForm.canonicalName === editing.canonicalName && editForm.address === (editing.address || "") && editForm.taxId === (editing.taxId || "") && !newAliases.some((a) => a.trim()) && !newSites.some((s) => s.siteName.trim()))}
+                onClick={() => {
+                  if (!editing) return;
+                  const updates: Record<string, unknown> & { id: string } = { id: editing.id };
+                  if (editForm.canonicalName !== editing.canonicalName) updates.canonicalName = editForm.canonicalName;
+                  if (editForm.address !== (editing.address || "")) updates.address = editForm.address || null;
+                  if (editForm.taxId !== (editing.taxId || "")) updates.taxId = editForm.taxId || null;
+                  const aliasesToAdd = newAliases.map((a) => a.trim()).filter(Boolean);
+                  if (aliasesToAdd.length > 0) updates.addAliases = aliasesToAdd;
+                  const sitesToAdd = newSites
+                    .map((s) => ({ siteName: s.siteName.trim(), address: s.address.trim(), siteType: s.siteType || "CAMPUS" }))
+                    .filter((s) => s.siteName);
+                  if (sitesToAdd.length > 0) updates.addSites = sitesToAdd;
+                  if (Object.keys(updates).length === 1) {
+                    toast.info("没有需要保存的修改");
+                    return;
+                  }
+                  updateMutation.mutate(updates, {
+                    onSuccess: () => {
+                      setNewAliases([""]);
+                      setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
+                    },
+                  });
+                }}
+              >
+                {updateMutation.isPending ? "保存中..." : "保存修改"}
+              </Button>
             </div>
           </div>
         </DialogContent>
@@ -912,7 +955,11 @@ export default function OrganizationsPage() {
             <div className="space-y-2">
               <Label>目标机构</Label>
               <Select value={mergeTargetId} onValueChange={(v) => setMergeTargetId(v || "")}>
-                <SelectTrigger><SelectValue placeholder="选择目标机构..." /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择目标机构...">
+                    {mergeTargetId ? orgs.find((o) => o.id === mergeTargetId)?.canonicalName || mergeTargetId : "选择目标机构..."}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {orgs.filter((o) => o.id !== mergeSource?.id && !o.archived).map((o) => (
                     <SelectItem key={o.id} value={o.id}>{o.canonicalName} ({o.orgCode})</SelectItem>

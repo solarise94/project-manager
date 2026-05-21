@@ -87,7 +87,7 @@ export function TaxIdLookupInput({
       </div>
       {errorMessage && <p className="text-[10px] text-destructive">{errorMessage}</p>}
       {showCandidates && candidates.length > 0 && queriedName === orgName.trim() && (
-        <div className="border rounded-md p-2 space-y-1 bg-muted/50">
+        <div className="border rounded-md p-2 space-y-1 bg-muted/50 max-h-48 overflow-y-auto">
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-muted-foreground">查询结果（请人工确认后选用）</span>
             <Button type="button" size="sm" variant="ghost" className="h-5 text-[10px] px-1" onClick={() => setShowCandidates(false)}>关闭</Button>

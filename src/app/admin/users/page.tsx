@@ -268,7 +268,7 @@ export default function AdminUsersPage() {
                     onValueChange={(v) => setEditForm({ ...editForm, role: v || "USER" })}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue>{editForm.role === "ADMIN" ? "管理员" : "用户"}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="USER">用户</SelectItem>

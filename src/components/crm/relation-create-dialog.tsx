@@ -152,7 +152,9 @@ export function RelationCreateDialog({ prefilledA, trigger, open: controlledOpen
           <div>
             <label className="text-sm font-medium">关系类型 *</label>
             <Select value={type} onValueChange={(v) => setType(v || "REFERRED")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue>{RELATION_TYPE_LABELS[type] || type}</SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 {CRM_RELATION_TYPES.map((t) => (
                   <SelectItem key={t} value={t}>{RELATION_TYPE_LABELS[t]}</SelectItem>
@@ -169,7 +171,11 @@ export function RelationCreateDialog({ prefilledA, trigger, open: controlledOpen
           <div>
             <label className="text-sm font-medium">关系强度</label>
             <Select value={strength} onValueChange={(v) => setStrength(v || "")}>
-              <SelectTrigger><SelectValue placeholder="选择强度（可选）" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="选择强度（可选）">
+                  {strength ? RELATION_STRENGTH_LABELS[strength] || strength : "选择强度（可选）"}
+                </SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 {CRM_RELATION_STRENGTHS.map((s) => (
                   <SelectItem key={s} value={s}>{RELATION_STRENGTH_LABELS[s]}</SelectItem>

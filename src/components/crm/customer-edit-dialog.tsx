@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { OrganizationSelect } from "@/components/organization-select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -320,7 +320,17 @@ export function CustomerEditDialog({
   const showOrgPending = orgResolveStatus && orgResolveStatus !== "exact" && form.organization.trim();
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(val) => {
+      if (!val) {
+        setForm(emptyForm);
+        setOriginal(emptyForm);
+        setProfileId("");
+        setOrgResolveStatus(null);
+        setOrgResolving(false);
+        orgResolveAbortRef.current?.abort();
+      }
+      onOpenChange(val);
+    }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>编辑客户信息</DialogTitle>
@@ -407,7 +417,11 @@ export function CustomerEditDialog({
               <div className="space-y-2">
                 <Label>院区/学院/大楼</Label>
                 <Select value={form.organizationSiteId || "__none__"} onValueChange={(v) => setForm({ ...form, organizationSiteId: (v === "__none__" || v === null) ? "" : v })}>
-                  <SelectTrigger><span>{form.organizationSiteId ? (orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId) : "不选择（可选）"}</span></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="不选择（可选）">
+                      {form.organizationSiteId ? orgSites.find((s) => s.id === form.organizationSiteId)?.siteName || form.organizationSiteId : "不选择（可选）"}
+                    </SelectValue>
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">不选择</SelectItem>
                     {orgSites.map((s) => (
@@ -447,7 +461,11 @@ export function CustomerEditDialog({
             <div className="space-y-2">
               <Label>人员分类</Label>
               <Select value={form.personCategory || "__none__"} onValueChange={(v) => { if (v) setForm({ ...form, personCategory: v === "__none__" ? "" : v }); }}>
-                <SelectTrigger><span>{form.personCategory ? PERSON_CATEGORY_LABELS[form.personCategory] || form.personCategory : "选择人员分类（可选）"}</span></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择人员分类（可选）">
+                    {form.personCategory ? PERSON_CATEGORY_LABELS[form.personCategory] || form.personCategory : "选择人员分类（可选）"}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">不设置</SelectItem>
                   {CRM_PERSON_CATEGORIES.map((pc) => (

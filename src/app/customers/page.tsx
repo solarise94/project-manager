@@ -503,7 +503,11 @@ export default function CustomersPage() {
             <div className="space-y-2">
               <Label>目标客户</Label>
               <Select value={mergeTargetId} onValueChange={(v) => setMergeTargetId(v || "")}>
-                <SelectTrigger><SelectValue placeholder="选择目标客户..." /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="选择目标客户...">
+                    {mergeTargetId ? customers.find((c) => c.id === mergeTargetId)?.name || mergeTargetId : "选择目标客户..."}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {customers.filter((c) => c.id !== mergeSource?.id && !c.archived && !c.deleted).map((c) => (
                     <SelectItem key={c.id} value={c.id}>{c.name} ({c.customerCode})</SelectItem>

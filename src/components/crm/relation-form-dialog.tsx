@@ -102,7 +102,11 @@ export function RelationFormDialog({ currentCustomerId, currentCustomerName }: P
             <div>
               <label className="text-sm font-medium">方向</label>
               <Select value={direction} onValueChange={(v) => setDirection((v as "from" | "to") || "from")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>
+                    {direction === "to" ? `对方 → ${currentCustomerName}` : `${currentCustomerName} → 对方`}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="from">{currentCustomerName} → 对方</SelectItem>
                   <SelectItem value="to">对方 → {currentCustomerName}</SelectItem>
@@ -122,7 +126,9 @@ export function RelationFormDialog({ currentCustomerId, currentCustomerName }: P
           <div>
             <label className="text-sm font-medium">关系类型 *</label>
             <Select value={type} onValueChange={(v) => setType(v || "REFERRED")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue>{RELATION_TYPE_LABELS[type] || type}</SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 {CRM_RELATION_TYPES.map((t) => (
                   <SelectItem key={t} value={t}>{RELATION_TYPE_LABELS[t]}</SelectItem>
@@ -133,7 +139,11 @@ export function RelationFormDialog({ currentCustomerId, currentCustomerName }: P
           <div>
             <label className="text-sm font-medium">关系强度</label>
             <Select value={strength} onValueChange={(v) => setStrength(v || "")}>
-              <SelectTrigger><SelectValue placeholder="选择强度（可选）" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="选择强度（可选）">
+                  {strength ? RELATION_STRENGTH_LABELS[strength] || strength : "选择强度（可选）"}
+                </SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 {CRM_RELATION_STRENGTHS.map((s) => (
                   <SelectItem key={s} value={s}>{RELATION_STRENGTH_LABELS[s]}</SelectItem>
