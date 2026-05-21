@@ -726,7 +726,7 @@ export default function OrganizationsPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>编辑机构</DialogTitle></DialogHeader>
           <div className="space-y-4">
             {editing && (
@@ -811,14 +811,14 @@ export default function OrganizationsPage() {
             <hr />
             <div className="space-y-2">
               <Label>院区/校区</Label>
-              <div className="space-y-1.5">
+              <div className="max-h-48 overflow-y-auto rounded-md border p-2 space-y-1.5">
                 {editing?.sites.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2 text-sm">
-                    <Building2 className="h-3 w-3 text-muted-foreground" />
-                    <span>{s.siteName}</span>
-                    <Badge variant="secondary" className="text-[10px]">{SITE_TYPE_LABELS[s.siteType] || "院区"}</Badge>
-                    {s.address && <span className="text-muted-foreground">· {s.address}</span>}
-                    <button type="button" className="ml-auto text-muted-foreground hover:text-red-500" onClick={() => {
+                  <div key={s.id} className="flex items-center gap-2 text-sm min-w-0">
+                    <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <span className="truncate min-w-0">{s.siteName}</span>
+                    <Badge variant="secondary" className="text-[10px] shrink-0">{SITE_TYPE_LABELS[s.siteType] || "院区"}</Badge>
+                    {s.address && <span className="text-muted-foreground truncate min-w-0">· {s.address}</span>}
+                    <button type="button" className="ml-auto shrink-0 text-muted-foreground hover:text-red-500" onClick={() => {
                       updateMutation.mutate({ id: editing.id, removeSiteId: s.id });
                     }}><X className="h-3 w-3" /></button>
                   </div>
