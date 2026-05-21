@@ -1,10 +1,6 @@
-"use client";
-
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { notFound } from "next/navigation";
 
 export default function PingoodmiceImportPage() {
-  const router = useRouter();
-  useEffect(() => { router.replace("/orders/import?source=PINGOODMICE"); }, [router]);
-  return null;
+  // Deprecated: the dedicated Pingoodmice import entry is retired.
+  notFound();
 }

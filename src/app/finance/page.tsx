@@ -96,7 +96,7 @@ function FinanceDashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Link href="/orders/import/pingoodmice">
+          <Link href="/orders/import">
             <Button size="sm" variant="outline">
               <Upload className="h-4 w-4 mr-1" />
               导入订单

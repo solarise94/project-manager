@@ -97,9 +97,9 @@ export function OrganizationAiFillPlugin({ query, onApply, disabled, mode = "cre
           </div>
           <div className="space-y-1">
             {candidates.map((c) => (
-              <div key={c.organizationId} className="flex items-center gap-2 text-xs">
+              <div key={c.organizationId} className="flex min-w-0 items-center gap-2 text-xs">
                 <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
-                <span>{c.canonicalName}</span>
+                <span className="min-w-0 break-words">{c.canonicalName}</span>
                 {c.siteName && <Badge variant="outline" className="text-[10px] px-1 py-0">{c.siteName}</Badge>}
               </div>
             ))}
@@ -109,21 +109,21 @@ export function OrganizationAiFillPlugin({ query, onApply, disabled, mode = "cre
 
       {draft && (
         <div className="space-y-2 rounded-md bg-muted/40 p-3 text-sm">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Building2 className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium">{draft.canonicalName}</span>
+            <span className="min-w-0 break-words font-medium">{draft.canonicalName}</span>
             <Badge variant="secondary" className="text-[10px]">
               置信度 {Math.round(draft.confidence * 100)}%
             </Badge>
           </div>
-          {draft.address && <div className="text-muted-foreground">{draft.address}</div>}
+          {draft.address && <div className="break-words text-muted-foreground">{draft.address}</div>}
           {draft.aliases.length > 0 && (
-            <div className="text-xs text-muted-foreground">别名：{draft.aliases.join("、")}</div>
+            <div className="break-words text-xs text-muted-foreground">别名：{draft.aliases.join("、")}</div>
           )}
           {draft.sites.length > 0 && (
             <div className="space-y-1 text-xs text-muted-foreground">
               {draft.sites.map((site, idx) => (
-                <div key={`${site.siteName}-${idx}`}>
+                <div key={`${site.siteName}-${idx}`} className="break-words">
                   {site.siteName}
                   {site.address ? ` · ${site.address}` : ""}
                 </div>

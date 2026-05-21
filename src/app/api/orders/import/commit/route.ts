@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
-import { normalizeOrderSource } from "@/lib/orders/constants";
+import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
   const ct = req.headers.get("content-type") || "";
   let source: string;
   let sourceRemark: string | undefined;
+  let category: string | undefined;
   let rawText: string;
   let customerMode: CustomerMode = "MATCH_ONLY";
   let organizationMode: OrganizationMode = "RESOLVE_ONLY";
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     source = (form.get("source") as string | null)?.trim() || "OTHER_IMPORT";
     sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
+    category = (form.get("category") as string | null)?.trim() || undefined;
     customerMode = (form.get("customerMode") as CustomerMode) || "MATCH_ONLY";
     organizationMode = (form.get("organizationMode") as OrganizationMode) || "RESOLVE_ONLY";
     ownerUserId = (form.get("ownerUserId") as string)?.trim() || null;
@@ -63,6 +65,7 @@ export async function POST(req: NextRequest) {
     if (!body) return NextResponse.json({ error: "无效请求体" }, { status: 400 });
     source = (body.source as string)?.trim() || "OTHER_IMPORT";
     sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
+    category = (body.category as string)?.trim() || undefined;
     rawText = (body.rawText as string)?.trim() || "";
     customerMode = (body.customerMode as CustomerMode) || "MATCH_ONLY";
     organizationMode = (body.organizationMode as OrganizationMode) || "RESOLVE_ONLY";
@@ -82,6 +85,7 @@ export async function POST(req: NextRequest) {
   if (createCrmProfile && !ownerUserId) {
     return NextResponse.json({ error: "createCrmProfile 需要指定 ownerUserId" }, { status: 400 });
   }
+  const orderCategory = normalizeOrderCategory(category);
 
   // Apply AI column mapping: rewrite header row with Chinese names that ORDER_HEADER_MAP recognizes.
   // AI outputs standard English field names; we reverse-translate to Chinese before handing to the parser.
@@ -166,6 +170,7 @@ export async function POST(req: NextRequest) {
             where: { id: existingSrc.orderId },
             data: {
               totalAmount: totalAmount > 0 ? totalAmount : undefined,
+              category: orderCategory,
               sourceRemark: sourceRemark ?? undefined,
               buyerNameSnapshot: row.receiverName ?? undefined,
               buyerPhoneSnapshot: row.receiverPhone ?? undefined,
@@ -178,6 +183,10 @@ export async function POST(req: NextRequest) {
               // Re-import restores soft-deleted orders only
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
+          });
+          await prisma.orderLine.updateMany({
+            where: { orderId: existingSrc.orderId },
+            data: { category: orderCategory },
           });
           await upsertImportSourceRecord(prisma, {
             orderId: existingSrc.orderId,
@@ -220,7 +229,7 @@ export async function POST(req: NextRequest) {
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
               title: row.productNamesRaw || `${row.receiverName || "未知"}的订单`,
-              category: "UNKNOWN",
+              category: orderCategory,
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
               orderedAt: row.orderAt ?? null,
@@ -256,7 +265,7 @@ export async function POST(req: NextRequest) {
               orderId: order.id,
               itemName: String(itemName).slice(0, 200),
               amount: totalAmount,
-              category: "UNKNOWN",
+              category: orderCategory,
               sortOrder: 0,
             },
           });

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { normalizeOrderSource } from "@/lib/orders/constants";
+import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, normalizeImportDate, resolveImportRefDate, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
@@ -8,6 +8,7 @@ import type { NormalizedOrderRow } from "@/lib/external-order";
 export interface ImportBatchInput {
   source: string;
   sourceRemark?: string;
+  category?: string;
   rows: NormalizedOrderRow[];
   userId: string;
   customerMode?: CustomerMode;
@@ -41,6 +42,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
   const {
     source,
     sourceRemark,
+    category,
     rows,
     userId,
     customerMode = "MATCH_ONLY",
@@ -48,6 +50,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
     ownerUserId = null,
     createCrmProfile = false,
   } = input;
+  const orderCategory = normalizeOrderCategory(category);
 
   if (rows.length > BATCH_SIZE) {
     throw new Error(`每批最多 ${BATCH_SIZE} 条，收到 ${rows.length} 条`);
@@ -83,6 +86,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
             where: { id: existingSrc.orderId },
             data: {
               totalAmount: totalAmount > 0 ? totalAmount : undefined,
+              category: orderCategory,
               sourceRemark: sourceRemark ?? undefined,
               buyerNameSnapshot: row.receiverName ?? undefined,
               buyerPhoneSnapshot: row.receiverPhone ?? undefined,
@@ -95,6 +99,10 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               // Re-import restores soft-deleted orders only
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
+          });
+          await prisma.orderLine.updateMany({
+            where: { orderId: existingSrc.orderId },
+            data: { category: orderCategory },
           });
           await upsertImportSourceRecord(prisma, {
             orderId: existingSrc.orderId,
@@ -144,7 +152,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
               title: row.productNamesRaw || `${row.receiverName || "未知"}的订单`,
-              category: "UNKNOWN",
+              category: orderCategory,
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
               orderedAt: orderAt,
@@ -180,7 +188,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               orderId: order.id,
               itemName: String(itemName).slice(0, 200),
               amount: totalAmount,
-              category: "UNKNOWN",
+              category: orderCategory,
               sortOrder: 0,
             },
           });

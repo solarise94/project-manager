@@ -15,6 +15,14 @@ export const ORDER_CATEGORY = {
 } as const;
 export type OrderCategory = (typeof ORDER_CATEGORY)[keyof typeof ORDER_CATEGORY];
 
+export function normalizeOrderCategory(raw: string | null | undefined): OrderCategory {
+  if (raw === ORDER_CATEGORY.SERVICE) return ORDER_CATEGORY.SERVICE;
+  if (raw === ORDER_CATEGORY.PRODUCT) return ORDER_CATEGORY.PRODUCT;
+  if (raw === ORDER_CATEGORY.MIXED) return ORDER_CATEGORY.MIXED;
+  if (raw === ORDER_CATEGORY.UNKNOWN) return ORDER_CATEGORY.UNKNOWN;
+  return ORDER_CATEGORY.SERVICE;
+}
+
 // Order status
 export const ORDER_STATUS = {
   DRAFT: "DRAFT",

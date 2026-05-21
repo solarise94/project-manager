@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { isProductProject } from "./types";
+import { collectByChunks } from "./query-chunk";
 
 // ─── Date helpers ──────────────────────────────────────────────
 
@@ -245,6 +246,109 @@ export async function computeAllProgressReceivables(
   return { weekProject, monthProject, weekOrder, monthOrder };
 }
 
+type ProgressAdjustmentRow = {
+  id: string;
+  orderId: string | null;
+  projectId: string | null;
+  customerId: string | null;
+  amount: number;
+  category: string;
+  reason: string | null;
+  periodKey: string;
+  sourceId: string;
+  sourceType: string;
+  occurredAt: Date;
+};
+
+async function fetchProgressAdjustmentsByScope(
+  where: Record<string, unknown>,
+  scopedOrderIds?: string[],
+  scopedProjectIds?: string[],
+): Promise<ProgressAdjustmentRow[]> {
+  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
+    if ((scopedOrderIds?.length ?? 0) === 0 && (scopedProjectIds?.length ?? 0) === 0) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const result: ProgressAdjustmentRow[] = [];
+    const pushUnique = (rows: ProgressAdjustmentRow[]) => {
+      for (const row of rows) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        result.push(row);
+      }
+    };
+
+    if (scopedOrderIds?.length) {
+      const orderRows = await collectByChunks(scopedOrderIds, (chunk) =>
+        prisma.progressReceivableAdjustment.findMany({
+          where: { ...where, orderId: { in: chunk } },
+          select: {
+            id: true,
+            orderId: true,
+            projectId: true,
+            customerId: true,
+            amount: true,
+            category: true,
+            reason: true,
+            periodKey: true,
+            sourceId: true,
+            sourceType: true,
+            occurredAt: true,
+          },
+          orderBy: { occurredAt: "desc" },
+        })
+      );
+      pushUnique(orderRows);
+    }
+
+    if (scopedProjectIds?.length) {
+      const projectRows = await collectByChunks(scopedProjectIds, (chunk) =>
+        prisma.progressReceivableAdjustment.findMany({
+          where: { ...where, projectId: { in: chunk } },
+          select: {
+            id: true,
+            orderId: true,
+            projectId: true,
+            customerId: true,
+            amount: true,
+            category: true,
+            reason: true,
+            periodKey: true,
+            sourceId: true,
+            sourceType: true,
+            occurredAt: true,
+          },
+          orderBy: { occurredAt: "desc" },
+        })
+      );
+      pushUnique(projectRows);
+    }
+
+    result.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime());
+    return result;
+  }
+
+  return prisma.progressReceivableAdjustment.findMany({
+    where,
+    select: {
+      id: true,
+      orderId: true,
+      projectId: true,
+      customerId: true,
+      amount: true,
+      category: true,
+      reason: true,
+      periodKey: true,
+      sourceId: true,
+      sourceType: true,
+      occurredAt: true,
+    },
+    orderBy: { occurredAt: "desc" },
+  });
+}
+
 // ─── Revision adjustment helpers ──────────────────────────────────
 
 export async function getProgressAdjustmentsForDateRange(
@@ -254,48 +358,16 @@ export async function getProgressAdjustmentsForDateRange(
   scopedProjectIds?: string[],
 ): Promise<number> {
   const where: Record<string, unknown> = { occurredAt: { gte: start, lte: end } };
-  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
-    const orConditions: Record<string, unknown>[] = [];
-    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
-    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
-    if (orConditions.length > 0) where.OR = orConditions;
-    else where.orderId = { in: ["__NO_MATCH__"] };
-  }
-  const agg = await prisma.progressReceivableAdjustment.aggregate({
-    _sum: { amount: true },
-    where,
-  });
-  return agg._sum.amount || 0;
+  const adjustments = await fetchProgressAdjustmentsByScope(where, scopedOrderIds, scopedProjectIds);
+  return adjustments.reduce((sum, item) => sum + item.amount, 0);
 }
 
 export async function getProgressAdjustmentsForPeriodWithDetails(
   periodKey: string,
   scopedOrderIds?: string[],
   scopedProjectIds?: string[],
-): Promise<Array<{
-  id: string;
-  orderId: string | null;
-  projectId: string | null;
-  customerId: string | null;
-  amount: number;
-  category: string;
-  reason: string | null;
-  periodKey: string;
-  sourceId: string;
-  sourceType: string;
-}>> {
-  const where: Record<string, unknown> = { periodKey };
-  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
-    const orConditions: Record<string, unknown>[] = [];
-    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
-    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
-    if (orConditions.length > 0) where.OR = orConditions;
-    else where.orderId = { in: ["__NO_MATCH__"] };
-  }
-  return prisma.progressReceivableAdjustment.findMany({
-    where,
-    orderBy: { occurredAt: "desc" },
-  });
+): Promise<ProgressAdjustmentRow[]> {
+  return fetchProgressAdjustmentsByScope({ periodKey }, scopedOrderIds, scopedProjectIds);
 }
 
 export async function getProgressAdjustmentsForDateRangeWithDetails(
@@ -303,28 +375,6 @@ export async function getProgressAdjustmentsForDateRangeWithDetails(
   end: Date,
   scopedOrderIds?: string[],
   scopedProjectIds?: string[],
-): Promise<Array<{
-  id: string;
-  orderId: string | null;
-  projectId: string | null;
-  customerId: string | null;
-  amount: number;
-  category: string;
-  reason: string | null;
-  periodKey: string;
-  sourceId: string;
-  sourceType: string;
-}>> {
-  const where: Record<string, unknown> = { occurredAt: { gte: start, lte: end } };
-  if (scopedOrderIds !== undefined || scopedProjectIds !== undefined) {
-    const orConditions: Record<string, unknown>[] = [];
-    if (scopedOrderIds?.length) orConditions.push({ orderId: { in: scopedOrderIds } });
-    if (scopedProjectIds?.length) orConditions.push({ projectId: { in: scopedProjectIds } });
-    if (orConditions.length > 0) where.OR = orConditions;
-    else where.orderId = { in: ["__NO_MATCH__"] };
-  }
-  return prisma.progressReceivableAdjustment.findMany({
-    where,
-    orderBy: { occurredAt: "desc" },
-  });
+): Promise<ProgressAdjustmentRow[]> {
+  return fetchProgressAdjustmentsByScope({ occurredAt: { gte: start, lte: end } }, scopedOrderIds, scopedProjectIds);
 }

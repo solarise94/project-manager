@@ -26,6 +26,11 @@ const ORG_MODES = [
   { value: "SKIP", label: "跳过" },
 ];
 
+const CATEGORY_OPTIONS = [
+  { value: "SERVICE", label: "服务" },
+  { value: "PRODUCT", label: "商品" },
+];
+
 export default function OrderImportPage() {
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
@@ -50,6 +55,7 @@ function ImportContent() {
   const [mode, setMode] = useState<"text" | "file">("text");
   const [customerMode, setCustomerMode] = useState("MATCH_ONLY");
   const [organizationMode, setOrganizationMode] = useState("RESOLVE_ONLY");
+  const [category, setCategory] = useState("SERVICE");
 
   const [step, setStep] = useState<"input" | "preview" | "importing" | "result">("input");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
@@ -95,11 +101,13 @@ function ImportContent() {
         const form = new FormData();
         form.set("source", source);
         if (sourceRemark) form.set("sourceRemark", sourceRemark);
+        form.set("category", category);
         form.set("file", file);
         payload = form;
       } else {
         payload = { source: source, rawText };
         if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
+        (payload as Record<string, unknown>).category = category;
       }
       const res = await fetch("/api/orders/import/preview", {
         method: "POST",
@@ -125,11 +133,13 @@ function ImportContent() {
         const form = new FormData();
         form.set("source", source);
         if (sourceRemark) form.set("sourceRemark", sourceRemark);
+        form.set("category", category);
         form.set("file", file);
         payload = form;
       } else {
         payload = { source: source, rawText };
         if (sourceRemark) (payload as Record<string, unknown>).sourceRemark = sourceRemark;
+        (payload as Record<string, unknown>).category = category;
       }
       const res = await fetch("/api/orders/import/ai-normalize", {
         method: "POST",
@@ -353,6 +363,17 @@ function ImportContent() {
                 </SelectTrigger>
                 <SelectContent>
                   {ORG_MODES.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">分类:</span>
+              <Select value={category} onValueChange={(v) => setCategory(v || "SERVICE")}>
+                <SelectTrigger className="w-24 h-7 text-xs">
+                  <span>{CATEGORY_OPTIONS.find((m) => m.value === category)?.label || category}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORY_OPTIONS.map((m) => (<SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>

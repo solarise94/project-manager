@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
   const {
     source,
     sourceRemark,
+    category,
     rows,
     customerMode = "MATCH_ONLY",
     organizationMode = "RESOLVE_ONLY",
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
   } = body as {
     source: string;
     sourceRemark?: string;
+    category?: string;
     rows: CommitBatchRow[];
     customerMode?: string;
     organizationMode?: string;
@@ -66,6 +68,7 @@ export async function POST(req: NextRequest) {
   const result = await processImportRows({
     source: source.trim(),
     sourceRemark: sourceRemark?.trim() || undefined,
+    category: typeof category === "string" ? category : undefined,
     rows: normalizedRows,
     userId: session.user.id,
     customerMode: safeCustomerMode as "MATCH_ONLY" | "CREATE_IF_MISSING" | "SKIP",

@@ -3,19 +3,20 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
-import { normalizeOrderSource } from "@/lib/orders/constants";
+import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 
-async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string } | { error: string }> {
+async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string; category?: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
   if (ct.includes("multipart/form-data")) {
     const form = await req.formData();
     const source = (form.get("source") as string | null)?.trim();
     const sourceRemark = (form.get("sourceRemark") as string | null)?.trim() || undefined;
+    const category = (form.get("category") as string | null)?.trim() || undefined;
     const file = form.get("file") as File | null;
     if (!source || !file) return { error: "缺少 source 或 file" };
     const buf = Buffer.from(await file.arrayBuffer());
-    return { source, rawText: decodeImportFile(buf), sourceRemark };
+    return { source, rawText: decodeImportFile(buf), sourceRemark, category };
   }
   const body = await req.json().catch(() => null);
   if (!body || typeof body.source !== "string" || typeof body.rawText !== "string") {
@@ -23,9 +24,10 @@ async function extractInput(req: NextRequest): Promise<{ source: string; rawText
   }
   const source = body.source.trim();
   const sourceRemark = (body.sourceRemark as string)?.trim() || undefined;
+  const category = (body.category as string)?.trim() || undefined;
   const rawText = body.rawText.trim();
   if (!source || !rawText) return { error: "source 和 rawText 不能为空" };
-  return { source, rawText, sourceRemark };
+  return { source, rawText, sourceRemark, category };
 }
 
 export async function POST(req: NextRequest) {
@@ -38,7 +40,8 @@ export async function POST(req: NextRequest) {
   const input = await extractInput(req);
   if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 });
 
-  const { source, rawText, sourceRemark } = input;
+  const { source, rawText, sourceRemark, category } = input;
+  const orderCategory = normalizeOrderCategory(category);
   const { rows, errors: parseErrors, format } = parseOrderText(source, rawText);
   const errors: Array<{ row: number; externalOrderNo?: string; message: string }> = parseErrors;
   if (rows.length === 0 && errors.length > 0) {
@@ -69,6 +72,7 @@ export async function POST(req: NextRequest) {
             where: { id: existingSrc.orderId },
             data: {
               totalAmount: totalAmount > 0 ? totalAmount : undefined,
+              category: orderCategory,
               sourceRemark: sourceRemark ?? undefined,
               buyerNameSnapshot: row.receiverName ?? undefined,
               buyerPhoneSnapshot: row.receiverPhone ?? undefined,
@@ -80,6 +84,10 @@ export async function POST(req: NextRequest) {
               title: row.productNamesRaw ?? undefined,
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
+          });
+          await prisma.orderLine.updateMany({
+            where: { orderId: existingSrc.orderId },
+            data: { category: orderCategory },
           });
           await upsertImportSourceRecord(prisma, {
             orderId: existingSrc.orderId,
@@ -107,7 +115,7 @@ export async function POST(req: NextRequest) {
               externalOrderNo: row.externalOrderNo,
               merchantOrderNo: row.merchantOrderNo,
               title: row.productNamesRaw || `${row.receiverName || "未知"}的平台订单`,
-              category: "UNKNOWN",
+              category: orderCategory,
               status: "CONFIRMED",
               deliveryStatus: "DELIVERED",
               orderedAt: row.orderAt ?? null,
@@ -139,7 +147,7 @@ export async function POST(req: NextRequest) {
               orderId: order.id,
               itemName: String(itemName).slice(0, 200),
               amount: totalAmount,
-              category: "UNKNOWN",
+              category: orderCategory,
               sortOrder: 0,
             },
           });

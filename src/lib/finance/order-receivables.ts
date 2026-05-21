@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { collectByChunks } from "./query-chunk";
 
 /**
  * Compute non-cancelled invoice totals per order, covering both
@@ -19,41 +20,49 @@ export async function getOrderInvoiceTotals(orderIds: string[]): Promise<Map<str
   };
 
   // Direct: orderId on invoice request
-  const direct = await prisma.externalOrderInvoiceRequest.findMany({
-    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
-    select: { id: true, orderId: true, totalAmount: true },
-  });
+  const direct = await collectByChunks(orderIds, (chunk) =>
+    prisma.externalOrderInvoiceRequest.findMany({
+      where: { orderId: { in: chunk }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
+      select: { id: true, orderId: true, totalAmount: true },
+    })
+  );
   for (const inv of direct) {
     add(inv.orderId, inv.id, inv.totalAmount);
   }
 
   // Coverage: via OrderInvoiceCoverage — split proportionally by GLOBAL covered order count
-  const coverage = await prisma.orderInvoiceCoverage.findMany({
-    where: {
-      orderId: { in: orderIds },
-      invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
-    },
-    select: {
-      orderId: true,
-      invoiceRequest: { select: { id: true, totalAmount: true } },
-    },
-  });
+  const coverage = await collectByChunks(orderIds, (chunk) =>
+    prisma.orderInvoiceCoverage.findMany({
+      where: {
+        orderId: { in: chunk },
+        invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
+      },
+      select: {
+        orderId: true,
+        invoiceRequest: { select: { id: true, totalAmount: true } },
+      },
+    })
+  );
 
   // Query GLOBAL coverage per invoice and split proportionally by each order's totalAmount
   const coverageInvoiceIds = [...new Set(coverage.map((c) => c.invoiceRequest.id))];
   const orderAmounts = new Map<string, number>();
   if (coverageInvoiceIds.length > 0) {
     // Fetch all covered orders for these invoices
-    const allCoverage = await prisma.orderInvoiceCoverage.findMany({
-      where: { invoiceRequestId: { in: coverageInvoiceIds } },
-      select: { invoiceRequestId: true, orderId: true },
-    });
+    const allCoverage = await collectByChunks(coverageInvoiceIds, (chunk) =>
+      prisma.orderInvoiceCoverage.findMany({
+        where: { invoiceRequestId: { in: chunk } },
+        select: { invoiceRequestId: true, orderId: true },
+      })
+    );
     const allCoveredOrderIds = [...new Set(allCoverage.map((c) => c.orderId))];
     // Fetch order amounts
-    const orders = await prisma.order.findMany({
-      where: { id: { in: allCoveredOrderIds } },
-      select: { id: true, totalAmount: true },
-    });
+    const orders = await collectByChunks(allCoveredOrderIds, (chunk) =>
+      prisma.order.findMany({
+        where: { id: { in: chunk } },
+        select: { id: true, totalAmount: true },
+      })
+    );
     for (const o of orders) orderAmounts.set(o.id, o.totalAmount || 0);
 
     // Per-invoice: sum covered order amounts, then split proportionally
@@ -96,18 +105,22 @@ export async function getGlobalInvoiceTotal(orderIds: string[]): Promise<number>
   if (orderIds.length === 0) return 0;
 
   // Collect all unique invoice requests that touch these orders
-  const directInvoices = await prisma.externalOrderInvoiceRequest.findMany({
-    where: { orderId: { in: orderIds }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
-    select: { id: true, totalAmount: true },
-  });
+  const directInvoices = await collectByChunks(orderIds, (chunk) =>
+    prisma.externalOrderInvoiceRequest.findMany({
+      where: { orderId: { in: chunk }, status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
+      select: { id: true, totalAmount: true },
+    })
+  );
 
-  const coverageInvoices = await prisma.orderInvoiceCoverage.findMany({
-    where: {
-      orderId: { in: orderIds },
-      invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
-    },
-    select: { invoiceRequest: { select: { id: true, totalAmount: true } } },
-  });
+  const coverageInvoices = await collectByChunks(orderIds, (chunk) =>
+    prisma.orderInvoiceCoverage.findMany({
+      where: {
+        orderId: { in: chunk },
+        invoiceRequest: { status: { not: "CANCELLED" }, adjustmentsAsOriginal: { none: { kind: "RED" } } },
+      },
+      select: { invoiceRequest: { select: { id: true, totalAmount: true } } },
+    })
+  );
 
   // Deduplicate by invoice request ID, then sum
   const seen = new Set<string>();
@@ -131,10 +144,12 @@ export async function getGlobalInvoiceTotal(orderIds: string[]): Promise<number>
  */
 export async function getOrderReceiptTotals(orderIds: string[]): Promise<Map<string, number>> {
   if (orderIds.length === 0) return new Map();
-  const receipts = await prisma.financeReceipt.findMany({
-    where: { orderId: { in: orderIds }, deleted: false },
-    select: { orderId: true, amount: true },
-  });
+  const receipts = await collectByChunks(orderIds, (chunk) =>
+    prisma.financeReceipt.findMany({
+      where: { orderId: { in: chunk }, deleted: false },
+      select: { orderId: true, amount: true },
+    })
+  );
   const result = new Map<string, number>();
   for (const r of receipts) {
     result.set(r.orderId!, (result.get(r.orderId!) || 0) + r.amount);
