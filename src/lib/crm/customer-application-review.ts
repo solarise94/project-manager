@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { generateCustomerCode } from "@/lib/customer-code";
 import { resolveOrganization } from "@/lib/organization-resolver";
+import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 
 // ── Duplicate detection ─────────────────────────────────────────────────────
 
@@ -243,28 +244,34 @@ export async function autoAssignOrgCustomersToRep(
         { ownerUserId: { not: repUser.id } },
       ],
     },
-    select: { id: true, ownerUserId: true },
+    select: { id: true, ownerUserId: true, sourceCustomerId: true },
   });
 
-  const operations = unassigned.flatMap((profile) => [
-    prisma.crmCustomerProfile.update({
-      where: { id: profile.id },
-      data: { ownerUserId: repUser.id, assignmentStatus: "ASSIGNED" },
-    }),
-    prisma.crmCustomerAssignmentLog.create({
-      data: {
-        profileId: profile.id,
-        action: "ASSIGN",
-        reason: "organization_binding_auto_assign",
-        fromOwnerUserId: profile.ownerUserId,
-        toOwnerUserId: repUser.id,
-        createdByUserId: assignerUserId,
-      },
-    }),
-  ]);
-
-  if (operations.length > 0) {
-    await prisma.$transaction(operations);
+  if (unassigned.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      for (const profile of unassigned) {
+        await tx.crmCustomerProfile.update({
+          where: { id: profile.id },
+          data: { ownerUserId: repUser.id, assignmentStatus: "ASSIGNED" },
+        });
+        await tx.crmCustomerAssignmentLog.create({
+          data: {
+            profileId: profile.id,
+            action: "ASSIGN",
+            reason: "organization_binding_auto_assign",
+            fromOwnerUserId: profile.ownerUserId,
+            toOwnerUserId: repUser.id,
+            createdByUserId: assignerUserId,
+          },
+        });
+        await syncCustomerRepresentativeLinksByOwnerUser(
+          profile.sourceCustomerId,
+          repUser.id,
+          true,
+          tx,
+        );
+      }
+    });
   }
 
   return unassigned.length;

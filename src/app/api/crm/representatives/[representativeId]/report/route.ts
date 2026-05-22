@@ -75,15 +75,25 @@ export async function GET(
       representative: { id: rep.id, name: rep.name, email: rep.email },
       periodStart: periodStart.toISOString(),
       periodEnd: periodEnd.toISOString(),
-      summary: { visitCheckinCount: 0, newCustomerCount: 0, reservedOrderCount: 0, communicatedCustomerCount: 0 },
+      summary: { visitCheckinCount: 0, newCustomerCount: 0, reservedOrderCount: 0, reservedOrderAmount: 0, communicatedCustomerCount: 0 },
       customers: [],
       lines: [],
       draftNote: null,
     });
   }
 
+  const assignedProfiles = await prisma.crmCustomerProfile.findMany({
+    where: {
+      ownerUserId: userId,
+      archived: false,
+      assignmentStatus: "ASSIGNED",
+    },
+    select: { sourceCustomerId: true },
+  });
+  const assignedCustomerIds = assignedProfiles.map((profile) => profile.sourceCustomerId);
+
   // Summary stats
-  const [visitCheckinCount, newCustomerCount, reservedOrderCount] = await Promise.all([
+  const [visitCheckinCount, newCustomerCount, reservedOrders] = await Promise.all([
     prisma.crmVisitCheckin.count({
       where: { userId, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
     }),
@@ -91,20 +101,29 @@ export async function GET(
       where: {
         ownerUserId: userId,
         archived: false,
+        assignmentStatus: "ASSIGNED",
         OR: [
           { assignedAt: { gte: periodStart, lt: periodEnd } },
           { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
         ],
       },
     }),
-    prisma.order.count({
-      where: {
-        representativeId,
-        orderedAt: { gte: periodStart, lt: periodEnd },
-        customerMatchStatus: { not: "UNMATCHED" },
-      },
-    }),
+    assignedCustomerIds.length > 0
+      ? prisma.order.findMany({
+          where: {
+            customerId: { in: assignedCustomerIds },
+            orderedAt: { gte: periodStart, lt: periodEnd },
+            deleted: false,
+          },
+          select: { customerId: true, totalAmount: true, financeAmountOverride: true },
+        })
+      : Promise.resolve([]),
   ]);
+  const reservedOrderCount = reservedOrders.length;
+  const reservedOrderAmount = reservedOrders.reduce(
+    (sum, order) => sum + (order.financeAmountOverride ?? order.totalAmount ?? 0),
+    0,
+  );
 
   // Customer list: visited this week + new this week + ordered this week
   const visitedCustomerIds = (
@@ -120,6 +139,7 @@ export async function GET(
       where: {
         ownerUserId: userId,
         archived: false,
+        assignmentStatus: "ASSIGNED",
         OR: [
           { assignedAt: { gte: periodStart, lt: periodEnd } },
           { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
@@ -129,18 +149,9 @@ export async function GET(
     })
   ).map((p) => p.sourceCustomerId);
 
-  const orderCustomerIds = (
-    await prisma.order.findMany({
-      where: {
-        representativeId,
-        orderedAt: { gte: periodStart, lt: periodEnd },
-        customerMatchStatus: { not: "UNMATCHED" },
-        customerId: { not: null },
-      },
-      select: { customerId: true },
-      distinct: ["customerId"],
-    })
-  ).map((o) => o.customerId).filter(Boolean) as string[];
+  const orderCustomerIds = reservedOrders
+    .map((order) => order.customerId)
+    .filter(Boolean) as string[];
 
   const allCustomerIds = [...new Set([...visitedCustomerIds, ...newCustomerIds, ...orderCustomerIds])];
 
@@ -368,7 +379,7 @@ export async function GET(
     representative: { id: rep.id, name: rep.name, email: rep.email },
     periodStart: periodStart.toISOString(),
     periodEnd: periodEnd.toISOString(),
-    summary: { visitCheckinCount, newCustomerCount, reservedOrderCount, communicatedCustomerCount: communicatedCount },
+    summary: { visitCheckinCount, newCustomerCount, reservedOrderCount, reservedOrderAmount, communicatedCustomerCount: communicatedCount },
     customers,
     lines,
     draftNote: draft?.note ?? null,

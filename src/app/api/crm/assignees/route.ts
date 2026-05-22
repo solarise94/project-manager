@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getRegionalManagerUserIds } from "@/lib/crm/permissions";
+import { resolveRepresentativeForOwnerUserId } from "@/lib/crm/customer-owner-representative";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -46,14 +47,18 @@ export async function GET() {
     email: string;
     kind: "self" | "representative";
     representativeId?: string;
-  }> = [
-    {
+  }> = [];
+
+  const ownResolved = await resolveRepresentativeForOwnerUserId(session.user.id);
+  if (ownResolved.representativeId) {
+    assignees.push({
       userId: session.user.id,
       name: session.user.name || "我",
       email: session.user.email || "",
       kind: "self",
-    },
-  ];
+      representativeId: ownResolved.representativeId,
+    });
+  }
 
   for (const rep of reps) {
     const user = emailToUser.get(rep.email);

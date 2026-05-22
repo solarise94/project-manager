@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { assertCrmProfileAccess } from "@/lib/crm/permissions";
+import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
+import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 
 export async function GET(
   _req: NextRequest,
@@ -77,6 +79,11 @@ export async function PATCH(
 
   const body = await req.json();
   const data: Record<string, unknown> = {};
+  const existing = await prisma.crmCustomerProfile.findUnique({
+    where: { id },
+    select: { sourceCustomerId: true, ownerUserId: true, assignmentStatus: true },
+  });
+  if (!existing) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
   if (body.summary !== undefined) data.summary = body.summary;
   if (body.tagsJson !== undefined) data.tagsJson = body.tagsJson;
@@ -90,18 +97,41 @@ export async function PATCH(
   if (session.user.role !== "REPRESENTATIVE") {
     if (body.stage !== undefined) data.stage = body.stage;
     if (body.importance !== undefined) data.importance = body.importance;
-    if (body.ownerUserId !== undefined) data.ownerUserId = body.ownerUserId;
+    if (body.ownerUserId !== undefined) {
+      if (body.ownerUserId) {
+        try {
+          await assertRepresentativeBackedSalesUser(body.ownerUserId);
+        } catch (error) {
+          return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
+        }
+      }
+      data.ownerUserId = body.ownerUserId;
+    }
   }
 
-  const profile = await prisma.crmCustomerProfile.update({
-    where: { id },
-    data,
-    include: {
-      sourceCustomer: {
-        select: { id: true, name: true, customerCode: true, principal: true, email: true, wechat: true, organization: true, address: true },
+  const ownerUserTouched = body.ownerUserId !== undefined && body.ownerUserId !== existing.ownerUserId;
+  const profile = await prisma.$transaction(async (tx) => {
+    const updated = await tx.crmCustomerProfile.update({
+      where: { id },
+      data,
+      include: {
+        sourceCustomer: {
+          select: { id: true, name: true, customerCode: true, principal: true, email: true, wechat: true, organization: true, address: true },
+        },
+        ownerUser: { select: { id: true, name: true } },
       },
-      ownerUser: { select: { id: true, name: true } },
-    },
+    });
+
+    if (ownerUserTouched) {
+      await syncCustomerRepresentativeLinksByOwnerUser(
+        existing.sourceCustomerId,
+        updated.ownerUserId,
+        updated.assignmentStatus === "ASSIGNED",
+        tx,
+      );
+    }
+
+    return updated;
   });
 
   return NextResponse.json({ profile });

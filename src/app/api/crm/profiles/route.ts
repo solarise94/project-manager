@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { buildCrmWhereForRole, isRegionalManagerRole, isRepresentativeRole, extractScopedUserIds } from "@/lib/crm/permissions";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 import { deriveGraduationStatus, buildGraduationStatusWhere } from "@/lib/crm/profile-filters";
+import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
+import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 
 const profileInclude = {
   sourceCustomer: {
@@ -157,19 +159,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "CRM profile already exists for this customer" }, { status: 409 });
   }
 
-  const finalOwner = session.user.role === "REPRESENTATIVE" ? session.user.id : (ownerUserId || session.user.id);
+  const finalOwner = session.user.role === "REPRESENTATIVE" ? session.user.id : ownerUserId;
+  if (!finalOwner) {
+    return NextResponse.json({ error: "ownerUserId is required" }, { status: 400 });
+  }
+  try {
+    await assertRepresentativeBackedSalesUser(finalOwner);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
+  }
 
-  const profile = await prisma.crmCustomerProfile.create({
-    data: {
+  const profile = await prisma.$transaction(async (tx) => {
+    const created = await tx.crmCustomerProfile.create({
+      data: {
+        sourceCustomerId,
+        ownerUserId: finalOwner,
+        stage: session.user.role === "REPRESENTATIVE" ? "NEW" : (stage || "NEW"),
+        importance: session.user.role === "REPRESENTATIVE" ? "NORMAL" : (importance || "NORMAL"),
+        summary: summary || null,
+        tagsJson: tagsJson || null,
+        lastFollowUpAt: new Date(),
+      },
+      include: profileInclude,
+    });
+
+    await syncCustomerRepresentativeLinksByOwnerUser(
       sourceCustomerId,
-      ownerUserId: finalOwner,
-      stage: session.user.role === "REPRESENTATIVE" ? "NEW" : (stage || "NEW"),
-      importance: session.user.role === "REPRESENTATIVE" ? "NORMAL" : (importance || "NORMAL"),
-      summary: summary || null,
-      tagsJson: tagsJson || null,
-      lastFollowUpAt: new Date(),
-    },
-    include: profileInclude,
+      created.ownerUserId,
+      created.assignmentStatus === "ASSIGNED",
+      tx,
+    );
+
+    return created;
   });
 
   return NextResponse.json({ profile }, { status: 201 });

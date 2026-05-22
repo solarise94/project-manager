@@ -191,6 +191,7 @@ export interface CrmRepresentativeOpsItem {
   periodVisitCheckinCount?: number;
   periodNewCustomerCount?: number;
   periodReservedOrderCount?: number;
+  periodReservedOrderAmount?: number;
   regions?: { id: string; name: string; isPrimary: boolean }[];
 }
 
@@ -266,6 +267,7 @@ export interface CrmRepresentativeReport {
     visitCheckinCount: number;
     newCustomerCount: number;
     reservedOrderCount: number;
+    reservedOrderAmount: number;
     communicatedCustomerCount: number;
   };
   customers: CrmReportCustomerItem[];

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { sendMail } from "@/lib/mail";
 import { ensureSalesUserForRepresentative } from "@/lib/representative-user";
 import { getAppUrl } from "@/lib/app-url";
+import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 
 export async function POST(
   req: NextRequest,
@@ -38,7 +39,7 @@ export async function POST(
 
   const profile = await prisma.crmCustomerProfile.findUnique({
     where: { id: profileId },
-    include: { sourceCustomer: { select: { name: true } } },
+    include: { sourceCustomer: { select: { id: true, name: true } } },
   });
   if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
@@ -70,6 +71,13 @@ export async function POST(
         createdByUserId: session.user.id,
       },
     });
+
+    await syncCustomerRepresentativeLinksByOwnerUser(
+      profile.sourceCustomerId,
+      targetUserId,
+      true,
+      tx,
+    );
 
     return updated;
   });

@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       },
       include: {
         org: { select: { canonicalName: true } },
-        crmProfile: { select: { id: true, sourceCustomerId: true, ownerUser: { select: { email: true, role: true } } } },
+        crmProfile: { select: { id: true, sourceCustomerId: true, assignmentStatus: true, ownerUser: { select: { email: true, role: true } } } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
       include: {
         _count: { select: { projects: true } },
         org: { select: { canonicalName: true } },
-        crmProfile: { select: { id: true, sourceCustomerId: true, ownerUser: { select: { email: true, role: true } } } },
+        crmProfile: { select: { id: true, sourceCustomerId: true, assignmentStatus: true, ownerUser: { select: { email: true, role: true } } } },
       },
       orderBy: [{ archived: "asc" }, { createdAt: "desc" }],
       skip,
@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
             organization: true, organizationId: true,
             principal: true, wechat: true, address: true,
             org: { select: { canonicalName: true } },
-            crmProfile: { select: { ownerUser: { select: { email: true, role: true } } } },
+            crmProfile: { select: { assignmentStatus: true, ownerUser: { select: { email: true, role: true } } } },
           },
         });
 

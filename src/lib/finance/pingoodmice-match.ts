@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { MatchResult, MatchScanResult } from "./types";
+import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
 
 function normalizeText(s: string | null | undefined): string {
   if (!s) return "";
@@ -207,6 +208,15 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
     candidates.sort((a, b) => b.score - a.score);
 
     if (candidates.length === 0) {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          representativeId: null,
+          customerMatchStatus: "UNMATCHED",
+          customerMatchScore: null,
+          customerMatchReason: null,
+        },
+      });
       unmatched++;
       details.push({
         orderId: order.id,
@@ -222,14 +232,18 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       candidates[0].score - candidates[1].score >= 10
     ) {
       const best = candidates[0];
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          customerId: best.customerId,
-          customerMatchStatus: "AUTO_MATCHED",
-          customerMatchScore: best.score,
-          customerMatchReason: best.reason,
-        },
+      await prisma.$transaction(async (tx) => {
+        const resolvedRep = await resolveCustomerRepresentative(best.customerId, tx);
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            customerId: best.customerId,
+            representativeId: resolvedRep.representativeId,
+            customerMatchStatus: "AUTO_MATCHED",
+            customerMatchScore: best.score,
+            customerMatchReason: best.reason,
+          },
+        });
       });
       matched++;
       details.push({
@@ -245,6 +259,7 @@ export async function matchSourceOrders(source: string, orderIds?: string[]): Pr
       await prisma.order.update({
         where: { id: order.id },
         data: {
+          representativeId: null,
           customerMatchStatus: "CONFLICT",
           customerMatchScore: candidates[0].score,
           customerMatchReason: JSON.stringify(

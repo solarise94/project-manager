@@ -37,6 +37,14 @@ function lineKey(l: CrmReportLineItem) {
   return l.id || l.customerId;
 }
 
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+}
+
 export function RepresentativeReportPanel({ representativeId, readOnly = false, period = "week" }: Props) {
   const periodKey = getWeekKey();
   const queryClient = useQueryClient();
@@ -381,7 +389,7 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card>
           <CardContent className="pt-3 pb-2 px-3">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -407,6 +415,15 @@ export function RepresentativeReportPanel({ representativeId, readOnly = false, 
               <span className="text-xs">本周下单数</span>
             </div>
             <p className="text-2xl font-bold">{s.reservedOrderCount}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3 pb-2 px-3">
+            <div className="flex items-center gap-2 text-muted-foreground mb-1">
+              <ShoppingCart className="h-4 w-4" />
+              <span className="text-xs">本周下单金额</span>
+            </div>
+            <p className="text-2xl font-bold">{formatCurrency(s.reservedOrderAmount)}</p>
           </CardContent>
         </Card>
         <Card>

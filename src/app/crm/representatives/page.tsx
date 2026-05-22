@@ -15,6 +15,14 @@ import type { CrmRepresentativeOpsItem } from "@/lib/crm/types";
 import Link from "next/link";
 import { Search, Users, MapPin, AlertTriangle, Clock, X, UserCog, ShoppingCart } from "lucide-react";
 
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
+}
+
 export default function RepresentativesOpsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -95,6 +103,9 @@ function RepOpsList() {
   const totalOrders = hasPeriod
     ? reps.reduce((s, r) => s + (r.periodReservedOrderCount || 0), 0)
     : 0;
+  const totalOrderAmount = hasPeriod
+    ? reps.reduce((s, r) => s + (r.periodReservedOrderAmount || 0), 0)
+    : 0;
   const totalOverdue = reps.reduce((s, r) => s + r.overdueFollowUps, 0);
   const totalLongUnvisited = reps.reduce((s, r) => s + r.longUnvisitedCount, 0);
 
@@ -104,12 +115,13 @@ function RepOpsList() {
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">代表运营</h1>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${hasPeriod ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
         {hasPeriod ? (
           <>
             <StatCard icon={MapPin} label="拜访签到" value={totalCheckins} />
             <StatCard icon={Users} label="新增客户" value={totalNewCustomers} />
             <StatCard icon={ShoppingCart} label="下单数" value={totalOrders} />
+            <StatCard icon={ShoppingCart} label="下单金额" value={formatCurrency(totalOrderAmount)} />
             <StatCard icon={AlertTriangle} label="逾期跟进" value={totalOverdue} color={totalOverdue > 0 ? "text-red-600" : undefined} />
           </>
         ) : (
@@ -223,6 +235,7 @@ function RepOpsList() {
                     <th className="text-right p-3 font-medium">拜访签到</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">新增客户</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">下单数</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">下单金额</th>
                   </>
                 ) : (
                   <>
@@ -258,6 +271,7 @@ function RepOpsList() {
                       <td className="p-3 text-right font-medium">{r.periodVisitCheckinCount ?? 0}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.periodNewCustomerCount ?? 0}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.periodReservedOrderCount ?? 0}</td>
+                      <td className="p-3 text-right hidden lg:table-cell">{formatCurrency(r.periodReservedOrderAmount ?? 0)}</td>
                     </>
                   ) : (
                     <>
@@ -304,7 +318,7 @@ function RepOpsList() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; color?: string }) {
+function StatCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number | string; color?: string }) {
   return (
     <Card>
       <CardContent className="pt-3 pb-2 px-3">

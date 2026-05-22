@@ -17,7 +17,7 @@ const CUSTOMER_SELECT = {
   wechat: true,
   address: true,
   org: { select: { canonicalName: true } },
-  crmProfile: { select: { ownerUser: { select: { email: true, role: true } } } },
+  crmProfile: { select: { assignmentStatus: true, ownerUser: { select: { email: true, role: true } } } },
 } as const;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

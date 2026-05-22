@@ -141,7 +141,7 @@ export function ActivateProfileDialog() {
                 ) : (
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">确认？</span>
-                    <Button type="button" size="sm" variant="destructive" onClick={() => { batchMutation.mutate(); setConfirmBatch(false); }} disabled={batchMutation.isPending}>
+                    <Button type="button" size="sm" variant="destructive" onClick={() => { batchMutation.mutate(); setConfirmBatch(false); }} disabled={batchMutation.isPending || !ownerUserId}>
                       {batchMutation.isPending ? "处理中..." : "确认全部加入"}
                     </Button>
                     <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmBatch(false)}>取消</Button>
@@ -184,7 +184,7 @@ export function ActivateProfileDialog() {
                 <SelectTrigger>
                   {ownerUserId
                     ? <span>{assignees.find((a) => a.userId === ownerUserId)?.name || ownerUserId}</span>
-                    : <span className="text-muted-foreground">默认: 自己</span>}
+                    : <span className="text-muted-foreground">请选择负责人</span>}
                 </SelectTrigger>
                 <SelectContent>
                   {assignees.map((a) => (
@@ -224,7 +224,7 @@ export function ActivateProfileDialog() {
               </Select>
             </div>
           </div>
-          <Button type="submit" disabled={mutation.isPending || !selectedCustomerId} className="w-full">
+          <Button type="submit" disabled={mutation.isPending || !selectedCustomerId || (canAssign && !ownerUserId)} className="w-full">
             {mutation.isPending ? "处理中..." : "加入 CRM"}
           </Button>
         </form>

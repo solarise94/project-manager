@@ -120,6 +120,17 @@ export async function GET(req: NextRequest) {
     reps.map(async (rep) => {
       const linkedUser = emailToUser.get(rep.email);
       const userId = linkedUser?.id;
+      const assignedProfiles = userId
+        ? await prisma.crmCustomerProfile.findMany({
+            where: {
+              ownerUserId: userId,
+              archived: false,
+              assignmentStatus: "ASSIGNED",
+            },
+            select: { sourceCustomerId: true },
+          })
+        : [];
+      const assignedCustomerIds = assignedProfiles.map((profile) => profile.sourceCustomerId);
 
       const base = {
         representativeId: rep.id,
@@ -137,12 +148,13 @@ export async function GET(req: NextRequest) {
         periodVisitCheckinCount: 0,
         periodNewCustomerCount: 0,
         periodReservedOrderCount: 0,
+        periodReservedOrderAmount: 0,
       };
 
       if (!userId) return base;
 
-      const statQueries: Promise<number | { createdAt: Date } | null>[] = [
-        prisma.crmCustomerProfile.count({ where: { ownerUserId: userId, archived: false } }),
+      const statQueries: Array<Promise<number | { createdAt: Date } | null>> = [
+        Promise.resolve(assignedProfiles.length),
         prisma.crmVisitCheckin.count({
           where: { userId, status: "COMPLETED", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
         }),
@@ -175,17 +187,11 @@ export async function GET(req: NextRequest) {
             where: {
               ownerUserId: userId,
               archived: false,
+              assignmentStatus: "ASSIGNED",
               OR: [
                 { assignedAt: { gte: periodStart, lt: periodEnd } },
                 { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
               ],
-            },
-          }),
-          prisma.order.count({
-            where: {
-              representativeId: rep.id,
-              orderedAt: { gte: periodStart, lt: periodEnd },
-              customerMatchStatus: { not: "UNMATCHED" },
             },
           }),
         );
@@ -210,7 +216,21 @@ export async function GET(req: NextRequest) {
       if (periodStart && periodEnd) {
         out.periodVisitCheckinCount = results[5] as number;
         out.periodNewCustomerCount = results[6] as number;
-        out.periodReservedOrderCount = results[7] as number;
+        if (assignedCustomerIds.length > 0) {
+          const periodOrders = await prisma.order.findMany({
+            where: {
+              customerId: { in: assignedCustomerIds },
+              orderedAt: { gte: periodStart, lt: periodEnd },
+              deleted: false,
+            },
+            select: { totalAmount: true, financeAmountOverride: true },
+          });
+          out.periodReservedOrderCount = periodOrders.length;
+          out.periodReservedOrderAmount = periodOrders.reduce(
+            (sum, order) => sum + (order.financeAmountOverride ?? order.totalAmount ?? 0),
+            0,
+          );
+        }
       }
 
       return out;

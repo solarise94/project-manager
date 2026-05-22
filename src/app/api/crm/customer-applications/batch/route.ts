@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateOrg, buildCustomerData, createCustomerWithRetry } from "@/lib/crm/customer-application-review";
+import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -28,9 +29,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (ownerUserId) {
-    const ownerUser = await prisma.user.findUnique({ where: { id: ownerUserId }, select: { id: true } });
-    if (!ownerUser) {
-      return NextResponse.json({ error: "指定的负责人不存在" }, { status: 400 });
+    try {
+      await assertRepresentativeBackedSalesUser(ownerUserId);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
     }
   }
 

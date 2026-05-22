@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
 import { validateOrg, buildCustomerData, createCustomerWithRetry, findDuplicateCustomers } from "@/lib/crm/customer-application-review";
 import { getApplicationReviewerUserIds } from "@/lib/crm/supervisor";
+import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -258,9 +259,10 @@ async function handleApprove(
   const reviewNote = body.reviewNote?.trim() || null;
 
   if (body.ownerUserId) {
-    const ownerUser = await prisma.user.findUnique({ where: { id: body.ownerUserId }, select: { id: true } });
-    if (!ownerUser) {
-      return NextResponse.json({ error: "指定的负责人不存在" }, { status: 400 });
+    try {
+      await assertRepresentativeBackedSalesUser(body.ownerUserId);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
     }
   }
 
@@ -314,9 +316,10 @@ async function handleApproveBind(
   const finalOwnerUserId = body.ownerUserId || application.submittedByUserId;
 
   if (body.ownerUserId) {
-    const ownerUser = await prisma.user.findUnique({ where: { id: body.ownerUserId }, select: { id: true } });
-    if (!ownerUser) {
-      return NextResponse.json({ error: "指定的负责人不存在" }, { status: 400 });
+    try {
+      await assertRepresentativeBackedSalesUser(body.ownerUserId);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
     }
   }
 

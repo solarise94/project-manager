@@ -15,7 +15,10 @@ export interface CustomerSelectOption {
 
 type CustomerWithOwner = {
   id: string;
-  crmProfile?: { ownerUser?: { email?: string | null; role?: string } | null } | null;
+  crmProfile?: {
+    assignmentStatus?: string | null;
+    ownerUser?: { email?: string | null; role?: string } | null;
+  } | null;
 };
 
 /**
@@ -27,8 +30,9 @@ export async function appendCustomerRepresentativeInfo<T extends CustomerWithOwn
 ): Promise<Array<T & { representativeId: string | null; representativeName: string | null }>> {
   const ownerEmails = [...new Set(
     customers
+      .filter((c) => c.crmProfile?.assignmentStatus === "ASSIGNED")
       .map((c) => c.crmProfile?.ownerUser)
-      .filter((u): u is { email: string; role: string } => !!u && !!u.email && u.role === "REPRESENTATIVE")
+      .filter((u): u is { email: string; role: string } => !!u && !!u.email && (u.role === "REPRESENTATIVE" || u.role === "REGIONAL_MANAGER"))
       .map((u) => u.email),
   )];
 
@@ -43,7 +47,10 @@ export async function appendCustomerRepresentativeInfo<T extends CustomerWithOwn
 
   return customers.map((c) => {
     const ownerUser = c.crmProfile?.ownerUser;
-    const rep = ownerUser && ownerUser.email && ownerUser.role === "REPRESENTATIVE"
+    const rep = c.crmProfile?.assignmentStatus === "ASSIGNED" &&
+      ownerUser &&
+      ownerUser.email &&
+      (ownerUser.role === "REPRESENTATIVE" || ownerUser.role === "REGIONAL_MANAGER")
       ? emailToRep.get(ownerUser.email)
       : undefined;
 
@@ -64,7 +71,10 @@ export async function resolveCustomerSelectOptions(
     id: string; customerCode: string; name: string;
     organization: string | null; organizationId: string | null;
     principal: string | null; wechat: string | null; address: string | null;
-    crmProfile?: { ownerUser?: { email?: string | null; role?: string } | null } | null;
+    crmProfile?: {
+      assignmentStatus?: string | null;
+      ownerUser?: { email?: string | null; role?: string } | null;
+    } | null;
   }>,
 ): Promise<CustomerSelectOption[]> {
   const resolved = await appendCustomerRepresentativeInfo(customers);

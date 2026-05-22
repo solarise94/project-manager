@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
+import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
+import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 
 const candidateWhere = { deleted: false, archived: false, crmProfile: null } as const;
 
@@ -25,7 +27,15 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { stage = "NEW", importance = "NORMAL", ownerUserId } = body;
-  const finalOwner = ownerUserId || session.user.id;
+  const finalOwner = ownerUserId;
+  if (!finalOwner) {
+    return NextResponse.json({ error: "ownerUserId is required" }, { status: 400 });
+  }
+  try {
+    await assertRepresentativeBackedSalesUser(finalOwner);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "负责人无效" }, { status: 400 });
+  }
 
   const now = new Date();
   const created = await prisma.$transaction(async (tx) => {
@@ -47,6 +57,7 @@ export async function POST(req: NextRequest) {
             lastFollowUpAt: now,
           },
         });
+        await syncCustomerRepresentativeLinksByOwnerUser(c.id, finalOwner, true, tx);
         count++;
       } catch (e: unknown) {
         if (e && typeof e === "object" && "code" in e && (e as { code: string }).code === "P2002") continue;

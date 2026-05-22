@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { resolveRepresentativeForOwnerUserId } from "@/lib/crm/customer-owner-representative";
 
 /** Roles that are allowed to receive customer assignments (销售/地区经理). */
 const SALES_ROLES = new Set(["REPRESENTATIVE", "REGIONAL_MANAGER"]);
@@ -42,4 +43,22 @@ export async function ensureSalesUserForRepresentative(rep: {
   });
 
   return { userId: user.id, created: true };
+}
+
+export async function assertRepresentativeBackedSalesUser(
+  userId: string,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true },
+  });
+
+  if (!user || !SALES_ROLES.has(user.role)) {
+    throw new Error("负责人必须是销售/地区经理账号");
+  }
+
+  const resolved = await resolveRepresentativeForOwnerUserId(userId);
+  if (!resolved.representativeId) {
+    throw new Error("负责人必须绑定有效代表后才能用于 CRM 负责人与统计");
+  }
 }

@@ -75,7 +75,9 @@ export async function GET(
     openFollowUps,
     relationCount,
   ] = await Promise.all([
-    prisma.crmCustomerProfile.count({ where: { ownerUserId: userId, archived: false } }),
+    prisma.crmCustomerProfile.count({
+      where: { ownerUserId: userId, archived: false, assignmentStatus: "ASSIGNED" },
+    }),
     prisma.crmVisitCheckin.count({
       where: { userId, status: "COMPLETED", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
     }),
@@ -97,7 +99,7 @@ export async function GET(
       },
     }),
     prisma.crmCustomerProfile.findMany({
-      where: { ownerUserId: userId, archived: false },
+      where: { ownerUserId: userId, archived: false, assignmentStatus: "ASSIGNED" },
       include: {
         sourceCustomer: {
           select: { id: true, name: true, customerCode: true, principal: true, email: true, wechat: true, organization: true, address: true },
@@ -128,8 +130,8 @@ export async function GET(
     prisma.customerRelation.count({
       where: {
         OR: [
-          { fromCustomer: { crmProfile: { ownerUserId: userId } } },
-          { toCustomer: { crmProfile: { ownerUserId: userId } } },
+          { fromCustomer: { crmProfile: { ownerUserId: userId, assignmentStatus: "ASSIGNED" } } },
+          { toCustomer: { crmProfile: { ownerUserId: userId, assignmentStatus: "ASSIGNED" } } },
         ],
       },
     }),

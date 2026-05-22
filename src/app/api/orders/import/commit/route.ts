@@ -8,6 +8,7 @@ import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, ups
 import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport } from "@/lib/orders/import-masterdata";
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import * as XLSX from "xlsx";
+import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
 
 function tryParseXlsx(buffer: Buffer): string | null {
   try {
@@ -164,38 +165,86 @@ export async function POST(req: NextRequest) {
             return "skipped" as const;
           }
 
-          const isDeleted = existingSrc.order?.deleted;
-          const totalAmount = computeOrderAmount(row);
-          await prisma.order.update({
+          const existingOrder = await prisma.order.findUnique({
             where: { id: existingSrc.orderId },
-            data: {
-              totalAmount: totalAmount > 0 ? totalAmount : undefined,
-              category: orderCategory,
-              sourceRemark: sourceRemark ?? undefined,
-              buyerNameSnapshot: row.receiverName ?? undefined,
-              buyerPhoneSnapshot: row.receiverPhone ?? undefined,
-              buyerAddressSnapshot: row.receiverAddress ?? undefined,
-              buyerWechatSnapshot: row.orderUser ?? undefined,
-              buyerOrgNameSnapshot: row.storeName ?? undefined,
-              orderedAt: row.orderAt ?? undefined,
-              confirmedAt: row.paidAt ?? undefined,
-              title: row.productNamesRaw ?? undefined,
-              // Re-import restores soft-deleted orders only
-              ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
+            select: {
+              customerId: true,
+              customerMatchStatus: true,
+              customerMatchScore: true,
+              customerMatchReason: true,
             },
           });
-          await prisma.orderLine.updateMany({
-            where: { orderId: existingSrc.orderId },
-            data: { category: orderCategory },
-          });
-          await upsertImportSourceRecord(prisma, {
-            orderId: existingSrc.orderId,
-            source: normalizedSource,
-            sourceRemark,
-            platform: row.platform || source,
-            externalOrderNo: row.externalOrderNo,
-            merchantOrderNo: row.merchantOrderNo,
-            rawJson: JSON.stringify(row),
+          if (!existingOrder) {
+            throw new Error("订单不存在");
+          }
+
+          await prisma.$transaction(async (tx) => {
+            let custResult: {
+              customerId: string | null;
+              matchStatus: "AUTO_MATCHED" | "UNMATCHED";
+              matchScore: number | null;
+              matchReason: string | null;
+            } | null = null;
+
+            if (!existingOrder.customerId) {
+              const orgResult = await resolveOrCreateOrganizationForImport(
+                row.storeName, organizationMode, tx,
+              );
+
+              const custInput = {
+                buyerName: row.receiverName,
+                buyerPhone: row.receiverPhone,
+                buyerWechat: row.orderUser,
+                buyerOrgName: row.storeName,
+                buyerAddress: row.receiverAddress,
+              };
+              custResult = await resolveOrCreateCustomerForImport(
+                custInput, customerMode, orgResult.organizationId, ownerUserId, createCrmProfile, tx,
+              );
+            }
+
+            const nextCustomerId = custResult?.customerId ?? existingOrder.customerId;
+            const resolvedRep = nextCustomerId
+              ? await resolveCustomerRepresentative(nextCustomerId, tx)
+              : { representativeId: null };
+            const isDeleted = existingSrc.order?.deleted;
+            const totalAmount = computeOrderAmount(row);
+
+            await tx.order.update({
+              where: { id: existingSrc.orderId },
+              data: {
+                totalAmount: totalAmount > 0 ? totalAmount : undefined,
+                category: orderCategory,
+                sourceRemark: sourceRemark ?? undefined,
+                buyerNameSnapshot: row.receiverName ?? undefined,
+                buyerPhoneSnapshot: row.receiverPhone ?? undefined,
+                buyerAddressSnapshot: row.receiverAddress ?? undefined,
+                buyerWechatSnapshot: row.orderUser ?? undefined,
+                buyerOrgNameSnapshot: row.storeName ?? undefined,
+                orderedAt: row.orderAt ?? undefined,
+                confirmedAt: row.paidAt ?? undefined,
+                title: row.productNamesRaw ?? undefined,
+                customerId: nextCustomerId,
+                representativeId: resolvedRep.representativeId,
+                customerMatchStatus: custResult?.customerId ? custResult.matchStatus : existingOrder.customerMatchStatus,
+                customerMatchScore: custResult?.customerId ? custResult.matchScore : existingOrder.customerMatchScore,
+                customerMatchReason: custResult?.customerId ? custResult.matchReason : existingOrder.customerMatchReason,
+                ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
+              },
+            });
+            await tx.orderLine.updateMany({
+              where: { orderId: existingSrc.orderId },
+              data: { category: orderCategory },
+            });
+            await upsertImportSourceRecord(tx, {
+              orderId: existingSrc.orderId,
+              source: normalizedSource,
+              sourceRemark,
+              platform: row.platform || source,
+              externalOrderNo: row.externalOrderNo,
+              merchantOrderNo: row.merchantOrderNo,
+              rawJson: JSON.stringify(row),
+            });
           });
           return "updated" as const;
         }
@@ -219,6 +268,9 @@ export async function POST(req: NextRequest) {
           const totalAmount = computeOrderAmount(row);
           const orderNo = await generateImportOrderNo(tx, refDate);
           const rawJson = JSON.stringify(row);
+          const resolvedRep = custResult.customerId
+            ? await resolveCustomerRepresentative(custResult.customerId, tx)
+            : { representativeId: null };
 
           const order = await tx.order.create({
             data: {
@@ -242,6 +294,7 @@ export async function POST(req: NextRequest) {
               buyerOrgNameSnapshot: row.storeName,
               totalAmount,
               customerId: custResult.customerId,
+              representativeId: resolvedRep.representativeId,
               customerMatchStatus: custResult.matchStatus,
               customerMatchScore: custResult.matchScore,
               customerMatchReason: custResult.matchReason,
