@@ -63,12 +63,17 @@ export async function GET() {
   const checkin30dMap = new Map(checkinCounts30d.map((g) => [g.userId, g._count]));
 
   // Batch: last checkin per user
-  const lastCheckins = await prisma.crmVisitCheckin.groupBy({
-    by: ["userId"],
+  const lastCheckins = await prisma.crmVisitCheckin.findMany({
     where: { userId: { in: ownerUserIds }, status: "COMPLETED" },
-    _max: { createdAt: true },
+    select: { userId: true, createdAt: true },
+    orderBy: [{ userId: "asc" }, { createdAt: "desc" }],
   });
-  const lastCheckinMap = new Map(lastCheckins.map((g) => [g.userId, g._max.createdAt]));
+  const lastCheckinMap = new Map<string, Date>();
+  for (const checkin of lastCheckins) {
+    if (!lastCheckinMap.has(checkin.userId)) {
+      lastCheckinMap.set(checkin.userId, checkin.createdAt);
+    }
+  }
 
   // Batch: overdue follow-ups per owner
   const overdueCounts = await prisma.crmFollowUpTask.groupBy({

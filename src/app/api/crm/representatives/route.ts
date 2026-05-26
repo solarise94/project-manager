@@ -192,10 +192,10 @@ export async function GET(req: NextRequest) {
         })
       : Promise.resolve([]),
     ownerUserIds.length > 0
-      ? prisma.crmVisitCheckin.groupBy({
-          by: ["userId"],
+      ? prisma.crmVisitCheckin.findMany({
           where: { userId: { in: ownerUserIds }, status: "COMPLETED" },
-          _max: { createdAt: true },
+          select: { userId: true, createdAt: true },
+          orderBy: [{ userId: "asc" }, { createdAt: "desc" }],
         })
       : Promise.resolve([]),
     ownerUserIds.length > 0
@@ -259,7 +259,12 @@ export async function GET(req: NextRequest) {
   ]);
 
   const checkin30dMap = new Map(checkinCounts30d.map((row) => [row.userId, row._count]));
-  const lastCheckinMap = new Map(lastCheckins.map((row) => [row.userId, row._max.createdAt]));
+  const lastCheckinMap = new Map<string, Date>();
+  for (const checkin of lastCheckins) {
+    if (!lastCheckinMap.has(checkin.userId)) {
+      lastCheckinMap.set(checkin.userId, checkin.createdAt);
+    }
+  }
   const overdueMap = new Map(overdueCounts.map((row) => [row.ownerUserId, row._count]));
   const interaction30dMap = new Map(interactionCounts30d.map((row) => [row.profileId, row._count]));
   const periodVisitCheckinMap = new Map(periodVisitCheckinCounts.map((row) => [row.userId, row._count]));
