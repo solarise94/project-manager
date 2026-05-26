@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
+import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
+import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -22,7 +24,11 @@ export async function GET() {
     ? { profile: { ownerUserId: { in: scopedUserIds } } }
     : {};
 
-  const [totalProfiles, myProfiles, pendingFollowUps, overdueFollowUps, thisWeekCheckins, stageGroups, recentInteractions] = await Promise.all([
+  const [profiles, totalProfiles, myProfiles, pendingFollowUps, overdueFollowUps, thisWeekCheckins, stageGroups, recentInteractions] = await Promise.all([
+    prisma.crmCustomerProfile.findMany({
+      where: { ...roleWhere, archived: false },
+      select: { id: true, sourceCustomerId: true },
+    }),
     prisma.crmCustomerProfile.count({ where: { ...roleWhere, archived: false } }),
     prisma.crmCustomerProfile.count({ where: { ownerUserId: session.user.id, archived: false } }),
     prisma.crmFollowUpTask.count({
@@ -47,6 +53,18 @@ export async function GET() {
     }),
   ]);
 
+  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(profiles.map((profile) => profile.sourceCustomerId));
+  const lifecycleValues = [...lifecycleMap.values()];
+  const orderedCustomerCount = lifecycleValues.filter((item) => item.validOrderCount > 0).length;
+  const repeatCustomerCount = lifecycleValues.filter((item) => item.isRepeatCustomer).length;
+  const dormantCustomerCount = lifecycleValues.filter((item) => item.stage === "DORMANT").length;
+  const dormantWarningCustomerCount = lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length;
+  const communicationMetrics = await getCrmCommunicationMetrics({
+    profileIds: profiles.map((profile) => profile.id),
+    from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+    to: now,
+  });
+
   return NextResponse.json({
     stats: {
       totalProfiles,
@@ -54,6 +72,13 @@ export async function GET() {
       pendingFollowUps,
       overdueFollowUps,
       thisWeekCheckins,
+      orderedCustomerCount,
+      repeatCustomerCount,
+      repeatCustomerRate: orderedCustomerCount > 0 ? repeatCustomerCount / orderedCustomerCount : 0,
+      dormantCustomerCount,
+      dormantWarningCustomerCount,
+      communicatedCustomerCount30d: communicationMetrics.communicatedCustomerCount,
+      communicationCoverageRate30d: communicationMetrics.communicationCoverageRate,
       stageDistribution: stageGroups.map((g) => ({ stage: g.stage, _count: g._count })),
       recentInteractions,
     },

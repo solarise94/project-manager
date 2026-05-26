@@ -53,6 +53,7 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
   if (!data?.profile) return <div className="p-6">未找到 CRM 档案</div>;
 
   const profile = data.profile;
+  const lifecycle = data.lifecycle;
   const customer = profile.sourceCustomer;
   const canEditCustomer =
     session?.user?.role === "ADMIN" ||
@@ -172,7 +173,7 @@ function CustomerDetail({ sourceCustomerId }: { sourceCustomerId: string }) {
         })()}
 
         <TabsContent value="overview" className="space-y-4 mt-4">
-          <OverviewTab profile={profile} sourceCustomerId={sourceCustomerId} />
+          <OverviewTab profile={profile} sourceCustomerId={sourceCustomerId} lifecycle={lifecycle} />
         </TabsContent>
 
         <TabsContent value="interactions" className="space-y-4 mt-4">
@@ -219,7 +220,23 @@ function InfoItem({ icon, label, value }: { icon: React.ReactNode; label: string
   );
 }
 
-function OverviewTab({ profile, sourceCustomerId }: { profile: { id: string; ownerUser: { name: string }; lastFollowUpAt: string | null; nextFollowUpAt: string | null; summary: string | null }; sourceCustomerId: string }) {
+function OverviewTab({
+  profile,
+  sourceCustomerId,
+  lifecycle,
+}: {
+  profile: { id: string; ownerUser: { name: string }; lastFollowUpAt: string | null; nextFollowUpAt: string | null; summary: string | null };
+  sourceCustomerId: string;
+  lifecycle?: {
+    validOrderCount?: number;
+    validOrderAmount?: number;
+    lastOrderAt?: string | null;
+    isRepeatCustomer?: boolean;
+    lastEffectiveInteractionAt?: string | null;
+    nextCommunicationTaskAt?: string | null;
+    dormantRisk?: boolean;
+  } | null;
+}) {
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card>
@@ -229,6 +246,17 @@ function OverviewTab({ profile, sourceCustomerId }: { profile: { id: string; own
           <div className="flex justify-between"><span className="text-muted-foreground">最近跟进</span><span>{profile.lastFollowUpAt ? new Date(profile.lastFollowUpAt).toLocaleDateString("zh-CN") : "-"}</span></div>
           <div className="flex justify-between"><span className="text-muted-foreground">下次跟进</span><span>{profile.nextFollowUpAt ? new Date(profile.nextFollowUpAt).toLocaleDateString("zh-CN") : "-"}</span></div>
           {profile.summary && <div className="pt-2 border-t"><p className="text-muted-foreground break-words">{profile.summary}</p></div>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle className="text-base">运营摘要</CardTitle></CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">有效订单数</span><span>{lifecycle?.validOrderCount || 0}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">最近下单</span><span>{lifecycle?.lastOrderAt ? new Date(lifecycle.lastOrderAt).toLocaleDateString("zh-CN") : "-"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">复购状态</span><span>{lifecycle?.isRepeatCustomer ? "复购客户" : "未复购"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">最近有效沟通</span><span>{lifecycle?.lastEffectiveInteractionAt ? new Date(lifecycle.lastEffectiveInteractionAt).toLocaleDateString("zh-CN") : "-"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">下次沟通任务</span><span>{lifecycle?.nextCommunicationTaskAt ? new Date(lifecycle.nextCommunicationTaskAt).toLocaleDateString("zh-CN") : "-"}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">休眠风险</span><span className={lifecycle?.dormantRisk ? "text-amber-600" : ""}>{lifecycle?.dormantRisk ? "需尽快联系" : "正常"}</span></div>
         </CardContent>
       </Card>
       <Card>

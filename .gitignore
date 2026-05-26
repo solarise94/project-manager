@@ -46,3 +46,9 @@ next-env.d.ts
 
 # draft media (temporary server-side files for AI vision processing)
 /.draft-media
+
+# local agent/runtime artifacts
+/.sisyphus
+/agent-runtime/dist
+/agent-runtime/node_modules
+/prisma/prisma

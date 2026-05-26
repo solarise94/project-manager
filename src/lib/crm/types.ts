@@ -46,6 +46,10 @@ export interface CrmCustomerProfileItem {
     visitCheckins: number;
     addresses: number;
   };
+  validOrderCount?: number;
+  isRepeatCustomer?: boolean;
+  dormantRisk?: boolean;
+  nextCommunicationTaskAt?: string | null;
 }
 
 export interface CrmInteractionItem {
@@ -144,6 +148,13 @@ export interface CrmDashboardStats {
   pendingFollowUps: number;
   overdueFollowUps: number;
   thisWeekCheckins: number;
+  orderedCustomerCount: number;
+  repeatCustomerCount: number;
+  repeatCustomerRate: number;
+  dormantCustomerCount: number;
+  dormantWarningCustomerCount: number;
+  communicatedCustomerCount30d: number;
+  communicationCoverageRate30d: number;
   stageDistribution: Array<{ stage: string; _count: number }>;
   recentInteractions: CrmInteractionItem[];
 }
@@ -188,6 +199,17 @@ export interface CrmRepresentativeOpsItem {
   lastCheckinAt: string | null;
   overdueFollowUps: number;
   longUnvisitedCount: number;
+  dueCommunicationTaskCount?: number;
+  doneCommunicationTaskCount?: number;
+  overdueCommunicationTaskCount?: number;
+  communicationTaskCompletionRate?: number;
+  communicatedCustomerCount30d?: number;
+  communicationCoverageRate30d?: number;
+  orderedCustomerCount30d?: number;
+  repeatCustomerCount30d?: number;
+  repeatCustomerRate30d?: number;
+  dormantCustomerCount?: number;
+  dormantWarningCustomerCount?: number;
   periodVisitCheckinCount?: number;
   periodNewCustomerCount?: number;
   periodReservedOrderCount?: number;
@@ -203,6 +225,17 @@ export interface CrmRepresentativeDetail {
   lastCheckinAt: string | null;
   overdueFollowUps: number;
   longUnvisitedCount: number;
+  dueCommunicationTaskCount?: number;
+  doneCommunicationTaskCount?: number;
+  overdueCommunicationTaskCount?: number;
+  communicationTaskCompletionRate?: number;
+  communicatedCustomerCount30d?: number;
+  communicationCoverageRate30d?: number;
+  orderedCustomerCount30d?: number;
+  repeatCustomerCount30d?: number;
+  repeatCustomerRate30d?: number;
+  dormantCustomerCount?: number;
+  dormantWarningCustomerCount?: number;
   customers: CrmCustomerProfileItem[];
   recentCheckins: CrmVisitCheckinItem[];
   openFollowUps: CrmFollowUpTaskItem[];
@@ -240,6 +273,11 @@ export interface CrmReportCustomerItem {
   latestInteractionAt: string | null;
   nextFollowUpAt: string | null;
   hasOrderThisWeek: boolean;
+  validOrderCount?: number;
+  lastOrderAt?: string | null;
+  isRepeatCustomer?: boolean;
+  dormantRisk?: boolean;
+  nextCommunicationTaskAt?: string | null;
 }
 
 export interface CrmReportLineItem {
@@ -269,8 +307,25 @@ export interface CrmRepresentativeReport {
     reservedOrderCount: number;
     reservedOrderAmount: number;
     communicatedCustomerCount: number;
+    dueCommunicationTaskCount?: number;
+    doneCommunicationTaskCount?: number;
+    communicationTaskCompletionRate?: number;
   };
   customers: CrmReportCustomerItem[];
   lines: CrmReportLineItem[];
   draftNote: string | null;
+}
+
+export interface CrmLifecycleSummary {
+  customerId: string;
+  profileId: string;
+  validOrderCount: number;
+  validOrderAmount: number;
+  lastOrderAt: string | null;
+  isRepeatCustomer: boolean;
+  lastEffectiveInteractionAt: string | null;
+  nextCommunicationTaskAt: string | null;
+  openCommunicationTaskCount: number;
+  overdueCommunicationTaskCount: number;
+  dormantRisk: boolean;
 }

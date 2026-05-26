@@ -68,6 +68,26 @@ export const FOLLOW_UP_STATUS_COLORS: Record<string, string> = {
   EXPIRED: "bg-red-100 text-red-700",
 };
 
+export const CRM_DORMANT_THRESHOLD_DAYS = 90;
+export const CRM_DORMANT_WARNING_DAYS = 60;
+
+export const CRM_COMMUNICATION_TASK_SOURCE_TYPES = [
+  "CRM_COMMUNICATION",
+  "CRM_DORMANT_WARNING",
+  "CRM_REACTIVATION",
+] as const;
+export type CrmCommunicationTaskSourceType = (typeof CRM_COMMUNICATION_TASK_SOURCE_TYPES)[number];
+
+export const CRM_EFFECTIVE_INTERACTION_TYPES = [
+  "CALL",
+  "WECHAT",
+  "EMAIL",
+  "MEETING",
+  "VISIT",
+  "REFERRAL",
+] as const;
+export type CrmEffectiveInteractionType = (typeof CRM_EFFECTIVE_INTERACTION_TYPES)[number];
+
 export const CRM_CHECKIN_STATUS = ["DRAFT", "COMPLETED"] as const;
 
 export const ADDRESS_SOURCE_TYPES = ["MANUAL", "PROJECT_IMPORT", "EXTERNAL_ORDER_IMPORT", "VISIT_CHECKIN", "CUSTOMER_APPLICATION"] as const;

@@ -4,18 +4,37 @@ let transporter: nodemailer.Transporter | null = null;
 let etherealAccount: nodemailer.TestAccount | null = null;
 let isRealSMTP = false;
 
-function getSMTPConfig() {
+function getSMTPConfigStatus() {
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
+  const missing = [
+    !host ? "SMTP_HOST" : null,
+    !port ? "SMTP_PORT" : null,
+    !user ? "SMTP_USER" : null,
+    !pass ? "SMTP_PASS" : null,
+  ].filter((key): key is string => Boolean(key));
 
-  if (host && port && user && pass) {
+  return {
+    host,
+    port,
+    user,
+    pass,
+    missing,
+    configured: missing.length === 0,
+    partial: missing.length > 0 && missing.length < 4,
+  };
+}
+
+function getSMTPConfig() {
+  const status = getSMTPConfigStatus();
+  if (status.configured) {
     return {
-      host,
-      port: Number(port),
-      secure: Number(port) === 465,
-      auth: { user, pass },
+      host: status.host!,
+      port: Number(status.port),
+      secure: Number(status.port) === 465,
+      auth: { user: status.user!, pass: status.pass! },
     };
   }
   return null;
@@ -48,6 +67,12 @@ export async function getTransporter(): Promise<nodemailer.Transporter> {
     isRealSMTP = true;
     console.log("[SMTP] Real SMTP configured:", realConfig.host);
   } else {
+    const status = getSMTPConfigStatus();
+    if (status.partial) {
+      console.warn(
+        `[SMTP] Incomplete SMTP config, missing ${status.missing.join(", ")}; falling back to Ethereal`,
+      );
+    }
     transporter = await createEtherealTransporter();
     isRealSMTP = false;
   }
@@ -56,11 +81,7 @@ export async function getTransporter(): Promise<nodemailer.Transporter> {
 }
 
 export function smtpEnabled(): boolean {
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  return !!(host && port && user && pass);
+  return getSMTPConfigStatus().configured;
 }
 
 export interface SendMailOptions {

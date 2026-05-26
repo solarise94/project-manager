@@ -7,6 +7,7 @@ import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions
 import { deriveGraduationStatus, buildGraduationStatusWhere } from "@/lib/crm/profile-filters";
 import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
+import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 const profileInclude = {
   sourceCustomer: {
@@ -39,6 +40,10 @@ export async function GET(req: NextRequest) {
   const graduationStatus = searchParams.get("graduationStatus") || "";
   const graduationDateFrom = searchParams.get("graduationDateFrom") || "";
   const graduationDateTo = searchParams.get("graduationDateTo") || "";
+  const hasOrder = searchParams.get("hasOrder") || "";
+  const repeatCustomer = searchParams.get("repeatCustomer") || "";
+  const dormantRisk = searchParams.get("dormantRisk") || "";
+  const communicationDue = searchParams.get("communicationDue") || "";
   const sort = searchParams.get("sort") || "updatedAt";
   const order = searchParams.get("order") || "desc";
   const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
@@ -105,23 +110,45 @@ export async function GET(req: NextRequest) {
   const sortField = validSorts.includes(sort) ? sort : "updatedAt";
   const sortOrder = order === "asc" ? "asc" : "desc";
 
-  const [profiles, total] = await Promise.all([
-    prisma.crmCustomerProfile.findMany({
-      where,
-      include: profileInclude,
-      orderBy: { [sortField]: sortOrder },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    }),
-    prisma.crmCustomerProfile.count({ where }),
-  ]);
+  const profiles = await prisma.crmCustomerProfile.findMany({
+    where,
+    include: profileInclude,
+    orderBy: { [sortField]: sortOrder },
+  });
 
-  const enriched = profiles.map((p) => ({
-    ...p,
-    graduationStatus: deriveGraduationStatus(p.personCategory, p.graduationDate),
-  }));
+  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(profiles.map((profile) => profile.sourceCustomerId));
+  let enriched = profiles.map((p) => {
+    const lifecycle = lifecycleMap.get(p.sourceCustomerId);
+    return {
+      ...p,
+      graduationStatus: deriveGraduationStatus(p.personCategory, p.graduationDate),
+      validOrderCount: lifecycle?.validOrderCount ?? 0,
+      lastOrderAt: lifecycle?.lastOrderAt?.toISOString() ?? p.lastOrderAt?.toISOString?.() ?? null,
+      isRepeatCustomer: lifecycle?.isRepeatCustomer ?? false,
+      dormantRisk: lifecycle?.dormantRisk ?? false,
+      nextCommunicationTaskAt: lifecycle?.nextCommunicationTaskAt?.toISOString() ?? null,
+    };
+  });
 
-  return NextResponse.json({ profiles: enriched, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
+  if (hasOrder === "true") enriched = enriched.filter((profile) => profile.validOrderCount > 0);
+  if (hasOrder === "false") enriched = enriched.filter((profile) => profile.validOrderCount === 0);
+  if (repeatCustomer === "true") enriched = enriched.filter((profile) => profile.isRepeatCustomer);
+  if (repeatCustomer === "false") enriched = enriched.filter((profile) => !profile.isRepeatCustomer);
+  if (dormantRisk === "true") enriched = enriched.filter((profile) => profile.dormantRisk);
+  if (dormantRisk === "false") enriched = enriched.filter((profile) => !profile.dormantRisk);
+  if (communicationDue === "true") enriched = enriched.filter((profile) => !!profile.nextCommunicationTaskAt);
+  if (communicationDue === "false") enriched = enriched.filter((profile) => !profile.nextCommunicationTaskAt);
+
+  const total = enriched.length;
+  const paged = enriched.slice((page - 1) * pageSize, page * pageSize);
+
+  return NextResponse.json({
+    profiles: paged,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 }
 
 export async function POST(req: NextRequest) {

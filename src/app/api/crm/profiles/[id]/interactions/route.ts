@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { assertCrmProfileAccess } from "@/lib/crm/permissions";
+import { syncCrmLifecycleAfterInteraction } from "@/lib/crm/lifecycle";
 
 export async function GET(
   req: NextRequest,
@@ -58,23 +59,28 @@ export async function POST(
     return NextResponse.json({ error: "type and summary are required" }, { status: 400 });
   }
 
-  const interaction = await prisma.crmInteraction.create({
-    data: {
-      profileId: id,
-      type,
-      summary,
-      detail: detail || null,
-      happenedAt: happenedAt ? new Date(happenedAt) : new Date(),
-      nextActionAt: nextActionAt ? new Date(nextActionAt) : null,
-      relatedProjectId: relatedProjectId || null,
-      createdByUserId: session.user.id,
-    },
-    include: { createdByUser: { select: { id: true, name: true } } },
-  });
+  const interaction = await prisma.$transaction(async (tx) => {
+    const created = await tx.crmInteraction.create({
+      data: {
+        profileId: id,
+        type,
+        summary,
+        detail: detail || null,
+        happenedAt: happenedAt ? new Date(happenedAt) : new Date(),
+        nextActionAt: nextActionAt ? new Date(nextActionAt) : null,
+        relatedProjectId: relatedProjectId || null,
+        createdByUserId: session.user.id,
+      },
+      include: { createdByUser: { select: { id: true, name: true } } },
+    });
 
-  await prisma.crmCustomerProfile.update({
-    where: { id },
-    data: { lastFollowUpAt: interaction.happenedAt },
+    await syncCrmLifecycleAfterInteraction(id, {
+      happenedAt: created.happenedAt,
+      nextActionAt: created.nextActionAt,
+      actorUserId: session.user.id,
+    }, tx);
+
+    return created;
   });
 
   return NextResponse.json({ interaction }, { status: 201 });

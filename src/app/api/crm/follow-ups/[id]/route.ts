@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
+import { syncCrmLifecycleAfterInteraction } from "@/lib/crm/lifecycle";
 
 export async function PATCH(
   req: NextRequest,
@@ -86,6 +87,20 @@ export async function PATCH(
         where: { id: task.profileId },
         data: { nextFollowUpAt: nextOpen?.dueAt ?? null },
       });
+    }
+
+    if (body.status === "DONE" && body.completedInteractionId) {
+      const interaction = await tx.crmInteraction.findUnique({
+        where: { id: body.completedInteractionId },
+        select: { happenedAt: true, nextActionAt: true, profileId: true },
+      });
+      if (interaction && interaction.profileId === task.profileId) {
+        await syncCrmLifecycleAfterInteraction(task.profileId, {
+          happenedAt: interaction.happenedAt,
+          nextActionAt: interaction.nextActionAt,
+          actorUserId: session.user.id,
+        }, tx);
+      }
     }
 
     return result;

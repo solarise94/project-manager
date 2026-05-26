@@ -75,6 +75,7 @@ src/
   components/
     ui/                   # shadcn/ui 组件
     crm/                  # CRM 专用组件
+    agent/                # /agent 工作台组件（chat-panel, action-result-panel, proposal-panel）
     *.tsx                 # 跨页面共享组件
   hooks/                  # React 自定义 Hooks（useMediaQuery 等）
   lib/                    # 核心业务逻辑与工具
@@ -90,6 +91,7 @@ src/
       providers/          # AI Provider 抽象（MiniMax Chat/Vision/Search, 腾讯云 ASR）
     plugins/              # 插件系统
       builtin/            # 内置插件：project-digest, project-smart-fill, project-auto-draft
+    agent-actions/        # Agent action registry（actor, registry, proposals, run-context, actions/*）
     mail.ts               # 邮件发送（nodemailer，自动回退 Ethereal）
     reminder.ts           # 工单到期提醒
     external-order.ts     # 外部订单 CSV 解析与标准化 (Legacy)
@@ -98,6 +100,8 @@ src/
     app-url.ts            # 集中式 URL 构建器
     runtime-info.ts       # 运行时环境探测（DEV/DEMO/PROD）
     ...
+  agent/                  # Agent 前端页面
+  api/agent/              # Agent API（actions, chat, runs, proposals, tools/execute）
 prisma/
   schema.prisma           # 完整数据模型
   seed.ts                 # 种子数据（含默认管理员账号）
@@ -136,6 +140,23 @@ public/
 - **Scope 查询 AND-composition**：Order/Cost/Invoice API 中 scope WHERE 与用户搜索/筛选条件必须通过 `{ AND: [scopeWhere, searchOR, filters] }` 合并，严禁直接覆盖 where 对象，否则会导致 scope 绕过。
 - **Per-row $transaction**：导入/批量写入涉及多表（Order + OrderSourceRecord + OrderLine）的操作用 `prisma.$transaction()` 包住，防止中途失败产生孤儿数据。幂等检查优先查 OrderSourceRecord uniqueness。
 - **deep-link 预填**：页面从 URL query 读取预填参数后，用 `useRef` 或 `prefilledProjectIdRef` 跳过重复预填，避免 useEffect 覆盖用户手动修改。
+- **Agent UI 状态管理**：`/agent` 的会话消息按 `userId + agentRunId` 做本地缓存；不要退回单会话 `localStorage`。切换会话时避免在 effect 里同步 `setState` 触发 `react-hooks/set-state-in-effect`。
+- **Agent 结果展示**：`action-result-panel` 和 `proposal-panel` 优先展示结构化摘要，不要默认只 dump raw JSON；但保留原始结果字段给调试和审计使用。
+
+### Agent / Manager AI 规则
+
+- **入口形态**：保留独立 `/agent` 页面，不要把 agent 工作流硬塞进 `/orders`、`/projects`、`/crm` 主页面。
+- **Provider 复用**：Agent 后端统一复用现有 MiniMax 配置和 `src/lib/draft/providers/minimax-chat.ts`，不要新增第二套聊天模型配置。
+- **Action registry 优先**：新增 agent 能力时先实现 `src/lib/agent-actions/actions/*.ts` 下的业务 action，再按需暴露到 `/api/agent/**` 或 UI；不要直接把现有页面 API 机械包装成 tool。
+- **稳定契约**：新增 action 时遵循 `parseInput -> availability -> execute -> buildProposal/resolveTarget` 模式。`availability()` 只做粗粒度能力判断，对象级权限和 scope 必须在 `execute()` 内再次检查。
+- **风险分层**：`safe` 可直接执行；`confirm` 只能先生成 proposal，再由 `/api/agent/proposals/[id]/confirm` 执行；高风险写操作不要降级成 `safe`。
+- **会话上下文**：Agent 会话统一使用 `AgentRun`。内部 tool 执行只信任 `agentRunId` 反查出的 actor，不信任前端或 sidecar 直接传入的 `userId` / `role`。
+- **权限边界**：manager AI、sidecar、浏览器缓存都不是权限边界。权限边界只能在 Next.js 后端、NextAuth session、`AgentRun` 和现有业务权限函数。
+- **内部执行链路**：`/api/agent/chat` 的正式 tool 执行统一走 `/api/agent/tools/execute`。如果为了规划期 ID 解析做内部辅助搜索，必须明确这是 preflight helper，而不是越过审计链直接执行业务写操作。
+- **Proposal 持久化**：confirm 类动作必须持久化 proposal input，确认执行时重放持久化输入，不要依赖前端再次传参。
+- **审计要求**：Agent 写操作、proposal 生成、proposal 拒绝、confirm 执行都要写 `AgentActionLog`；新增 action 时同时考虑 target 解析和审计可读性。
+- **Chat 解析健壮性**：MiniMax 可能返回 `<think>`、代码块或半结构化 JSON。修改 `/api/agent/chat` 时必须保留对这些输出形态的鲁棒解析，不要假设模型总是返回纯 JSON。
+- **链式查询**：像 `projects.search -> projects.get_summary` 这类“唯一命中后继续摘要”的场景，可以在 chat 后端做受控 follow-up，但必须保持动作仍通过 action registry 和 `/api/agent/tools/execute` 执行。
 
 ---
 
@@ -253,6 +274,8 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 - **Prisma client shims**：standalone 构建可能引用哈希化的 Prisma client 包名（如 `@prisma/client-2c3a283f134fdcb6`），部署脚本会自动创建 re-export shim。
 - **数据库策略**：默认 `fail`——若运行时数据库缺失则直接拒绝部署，不会静默回填。首次部署可使用 `bootstrap` 策略。
 - **持久化配置**：数据库目录旁的配置文件（`smtp.conf`、`minimax.conf`、`tavily.conf`、`tencent-asr.conf`、`tencent-map.conf`、`app.conf`）在重新部署后仍然保留。
+- **Demo 部署后 smoke**：部署 demo 后至少验证 `task-manager-demo.service` 为 `active (running)`、`/api/auth/session` 返回 `200`、`/agent` 返回 `200`，以及未登录访问 `/api/agent/runs` 返回 `401`。
+- **部署输出判读**：`deploy-demo.sh` / `deploy-standalone.sh` 过程中若出现 `cannot delete non-empty directory` 一类 rsync 输出，不要单独据此判失败；以脚本退出码、systemd 状态和健康检查结果为准。
 
 ### `.env` 双轨制
 

@@ -1454,3 +1454,144 @@ model CrmCustomerAssignmentLog {
   @@index([profileId])
   @@index([createdAt])
 }
+
+model AgentActionLog {
+  id         String   @id @default(cuid())
+  userId     String
+  agentRunId String?
+  actionKey  String
+  riskLevel  String
+  status     String
+  inputJson  String
+  outputJson String?
+  error      String?
+  proposalId String?
+  targetType String?
+  targetId   String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([actionKey, createdAt])
+  @@index([proposalId])
+  @@index([agentRunId])
+}
+
+model AgentProposal {
+  id         String   @id @default(cuid())
+  userId     String
+  agentRunId String?
+  actionKey  String
+  title      String
+  summary    String
+  riskLevel  String
+  inputJson  String
+  resultJson String?
+  error      String?
+  status     String   @default("PENDING")
+  targetType String?
+  targetId   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  decidedAt  DateTime?
+
+  @@index([userId, status, createdAt])
+  @@index([actionKey, createdAt])
+  @@index([agentRunId, createdAt])
+}
+
+model AgentRun {
+  id         String   @id @default(cuid())
+  userId     String
+  role       String
+  name       String?
+  email      String?
+  status     String   @default("ACTIVE")
+  source     String   @default("CHAT")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status, lastUsedAt])
+}
+
+model AgentChatSession {
+  id             String   @id @default(cuid())
+  userId         String
+  agentRunId     String?
+  title          String?
+  status         String   @default("ACTIVE")
+  source         String   @default("CHAT")
+  summary        String?
+  compactSummary String?
+  metadataJson   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  lastMessageAt  DateTime @default(now())
+  messages       AgentChatMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([agentRunId])
+  @@index([status, lastMessageAt])
+}
+
+model AgentChatMessage {
+  id             String   @id @default(cuid())
+  sessionId      String
+  session        AgentChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  agentRunId     String?
+  userId         String
+  role           String
+  content        String
+  state          String   @default("done")
+  timelineJson   String?
+  tokenUsageJson String?
+  metadataJson   String?
+  createdAt      DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([userId, createdAt])
+  @@index([agentRunId, createdAt])
+}
+
+model AgentMemory {
+  id              String   @id @default(cuid())
+  userId          String
+  scope           String   @default("USER")
+  kind            String
+  content         String
+  confidence      Float    @default(0.5)
+  source          String   @default("AGENT")
+  sourceMessageId String?
+  status          String   @default("ACTIVE")
+  metadataJson    String?
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, kind, status])
+  @@index([expiresAt])
+  @@index([lastUsedAt])
+}
+
+model AgentProactiveTask {
+  id             String   @id @default(cuid())
+  userId         String
+  agentRunId     String?
+  sessionId      String?
+  kind           String
+  title          String
+  payloadJson    String
+  status         String   @default("PENDING")
+  triggerAt      DateTime
+  notificationId String?
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  decidedAt      DateTime?
+
+  @@index([userId, status, triggerAt])
+  @@index([agentRunId])
+  @@index([sessionId])
+}

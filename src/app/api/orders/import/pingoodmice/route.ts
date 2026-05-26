@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
+import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
 
 async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string; category?: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  const touchedCustomerIds = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest) {
 
           const isDeleted = existingSrc.order?.deleted;
           const totalAmount = computeOrderAmount(row);
-          await prisma.order.update({
+          const updatedOrder = await prisma.order.update({
             where: { id: existingSrc.orderId },
             data: {
               totalAmount: totalAmount > 0 ? totalAmount : undefined,
@@ -84,7 +86,9 @@ export async function POST(req: NextRequest) {
               title: row.productNamesRaw ?? undefined,
               ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
             },
+            select: { customerId: true },
           });
+          if (updatedOrder.customerId) touchedCustomerIds.add(updatedOrder.customerId);
           await prisma.orderLine.updateMany({
             where: { orderId: existingSrc.orderId },
             data: { category: orderCategory },
@@ -151,6 +155,7 @@ export async function POST(req: NextRequest) {
               sortOrder: 0,
             },
           });
+          if (order.customerId) touchedCustomerIds.add(order.customerId);
         });
         return "created" as const;
       });
@@ -162,6 +167,10 @@ export async function POST(req: NextRequest) {
       const msg = e instanceof Error ? e.message : "未知错误";
       errors.push({ row: i + 1, externalOrderNo: row.externalOrderNo, message: `创建失败: ${msg}` });
     }
+  }
+
+  for (const customerId of touchedCustomerIds) {
+    await syncCrmLifecycleForCustomer(customerId);
   }
 
   return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });

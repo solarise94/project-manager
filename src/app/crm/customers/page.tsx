@@ -54,6 +54,10 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
   const [personCategory, setPersonCategory] = useState("ALL");
   const [graduationStatus, setGraduationStatus] = useState("ALL");
   const [jobTitle, setJobTitle] = useState("");
+  const [hasOrder, setHasOrder] = useState("ALL");
+  const [repeatCustomer, setRepeatCustomer] = useState("ALL");
+  const [dormantRisk, setDormantRisk] = useState("ALL");
+  const [communicationDue, setCommunicationDue] = useState("ALL");
   const [sort, setSort] = useState("updatedAt");
   const [order, setOrder] = useState("desc");
   const [page, setPage] = useState(1);
@@ -69,6 +73,10 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
   if (personCategory !== "ALL") params.set("personCategory", personCategory);
   if (graduationStatus !== "ALL") params.set("graduationStatus", graduationStatus);
   if (jobTitle) params.set("jobTitle", jobTitle);
+  if (hasOrder !== "ALL") params.set("hasOrder", hasOrder);
+  if (repeatCustomer !== "ALL") params.set("repeatCustomer", repeatCustomer);
+  if (dormantRisk !== "ALL") params.set("dormantRisk", dormantRisk);
+  if (communicationDue !== "ALL") params.set("communicationDue", communicationDue);
   if (assignee !== "ALL") params.set("assignee", assignee);
   params.set("sort", sort);
   params.set("order", order);
@@ -124,7 +132,7 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
   const isRep = session?.user?.role === "REPRESENTATIVE";
   const isMobile = useMediaQuery("(max-width: 767px)");
 
-  const activeFilterCount = [stage, importance, personCategory, graduationStatus, assignee].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0) + (organizationId ? 1 : 0) + (siteId ? 1 : 0);
+  const activeFilterCount = [stage, importance, personCategory, graduationStatus, assignee, hasOrder, repeatCustomer, dormantRisk, communicationDue].filter((v) => v !== "ALL").length + (jobTitle ? 1 : 0) + (organizationId ? 1 : 0) + (siteId ? 1 : 0);
 
   function clearAllFilters() {
     setStage("ALL");
@@ -132,6 +140,10 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
     setPersonCategory("ALL");
     setGraduationStatus("ALL");
     setJobTitle("");
+    setHasOrder("ALL");
+    setRepeatCustomer("ALL");
+    setDormantRisk("ALL");
+    setCommunicationDue("ALL");
     setAssignee("ALL");
     setOrganizationId("");
     setOrganizationName("");
@@ -227,6 +239,50 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
             {(assigneesData?.assignees || []).map((a) => (
               <SelectItem key={a.userId} value={a.userId}>{a.name}{a.kind === "representative" ? " (代表)" : ""}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs text-muted-foreground font-medium">订单状态</label>
+        <Select value={hasOrder} onValueChange={(v) => { setHasOrder(v || "ALL"); setPage(1); }}>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{hasOrder === "ALL" ? "全部" : hasOrder === "true" ? "有下单" : "未下单"}</span></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="true">有下单</SelectItem>
+            <SelectItem value="false">未下单</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs text-muted-foreground font-medium">复购</label>
+        <Select value={repeatCustomer} onValueChange={(v) => { setRepeatCustomer(v || "ALL"); setPage(1); }}>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{repeatCustomer === "ALL" ? "全部" : repeatCustomer === "true" ? "复购客户" : "非复购"}</span></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="true">复购客户</SelectItem>
+            <SelectItem value="false">非复购</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs text-muted-foreground font-medium">休眠风险</label>
+        <Select value={dormantRisk} onValueChange={(v) => { setDormantRisk(v || "ALL"); setPage(1); }}>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{dormantRisk === "ALL" ? "全部" : dormantRisk === "true" ? "有风险" : "无风险"}</span></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="true">有风险</SelectItem>
+            <SelectItem value="false">无风险</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-xs text-muted-foreground font-medium">沟通任务</label>
+        <Select value={communicationDue} onValueChange={(v) => { setCommunicationDue(v || "ALL"); setPage(1); }}>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{communicationDue === "ALL" ? "全部" : communicationDue === "true" ? "有任务" : "无任务"}</span></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">全部</SelectItem>
+            <SelectItem value="true">有任务</SelectItem>
+            <SelectItem value="false">无任务</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -399,6 +455,10 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
                   <PersonCategoryBadge category={p.personCategory} />
                   <GraduationStatusBadge status={p.graduationStatus || null} />
                   <AssignmentStatusBadge status={p.assignmentStatus} />
+                  {p.isRepeatCustomer && <Badge variant="secondary" className="text-[10px]">复购</Badge>}
+                  {(p.validOrderCount || 0) === 0 && <Badge variant="secondary" className="text-[10px]">未下单</Badge>}
+                  {p.dormantRisk && <Badge variant="secondary" className="text-[10px] text-amber-700">休眠预警</Badge>}
+                  {p.nextCommunicationTaskAt && <Badge variant="secondary" className="text-[10px]">有沟通任务</Badge>}
                   <span className="text-xs text-muted-foreground">{p.assignmentStatus === "ASSIGNED" ? p.ownerUser.name : "未指派"}</span>
                 </div>
                 <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
@@ -407,7 +467,7 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
                   ) : (
                     <span>暂无跟进计划</span>
                   )}
-                  <span className="ml-auto">{p._count?.interactions ?? 0} 沟通 · {p._count?.visitCheckins ?? 0} 签到</span>
+                  <span className="ml-auto">{p._count?.interactions ?? 0} 沟通 · {p._count?.visitCheckins ?? 0} 签到 · {p.validOrderCount || 0} 单</span>
                 </div>
                 {!isRep && (
                   <div className="flex gap-2 mt-3">
@@ -432,6 +492,8 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
                 <th className="text-left p-2 font-medium hidden lg:table-cell">毕业状态</th>
                 <th className="text-center p-2 font-medium hidden lg:table-cell">沟通</th>
                 <th className="text-center p-2 font-medium hidden lg:table-cell">签到</th>
+                <th className="text-center p-2 font-medium hidden lg:table-cell">订单</th>
+                <th className="text-left p-2 font-medium hidden xl:table-cell">运营标记</th>
                 <th className="text-left p-2 font-medium hidden xl:table-cell">最近跟进</th>
                 <th className="text-left p-2 font-medium hidden xl:table-cell">下次跟进</th>
                 <th className="text-left p-2 font-medium hidden md:table-cell">负责人</th>
@@ -460,6 +522,15 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
                   <td className="p-2 hidden lg:table-cell"><GraduationStatusBadge status={p.graduationStatus || null} /></td>
                   <td className="p-2 text-center text-sm hidden lg:table-cell">{p._count?.interactions ?? 0}</td>
                   <td className="p-2 text-center text-sm hidden lg:table-cell">{p._count?.visitCheckins ?? 0}</td>
+                  <td className="p-2 text-center text-sm hidden lg:table-cell">{p.validOrderCount || 0}</td>
+                  <td className="p-2 hidden xl:table-cell">
+                    <div className="flex flex-wrap gap-1">
+                      {p.isRepeatCustomer && <Badge variant="secondary" className="text-[10px]">复购</Badge>}
+                      {(p.validOrderCount || 0) === 0 && <Badge variant="secondary" className="text-[10px]">未下单</Badge>}
+                      {p.dormantRisk && <Badge variant="secondary" className="text-[10px] text-amber-700">休眠预警</Badge>}
+                      {p.nextCommunicationTaskAt && <Badge variant="secondary" className="text-[10px]">沟通任务</Badge>}
+                    </div>
+                  </td>
                   <td className="p-2 text-sm text-muted-foreground hidden xl:table-cell">{p.lastFollowUpAt ? new Date(p.lastFollowUpAt).toLocaleDateString("zh-CN") : "—"}</td>
                   <td className="p-2 text-sm hidden xl:table-cell">{p.nextFollowUpAt ? <span className={new Date(p.nextFollowUpAt) < new Date() ? "text-red-500" : ""}>{new Date(p.nextFollowUpAt).toLocaleDateString("zh-CN")}</span> : "—"}</td>
                   <td className="p-2 hidden md:table-cell">

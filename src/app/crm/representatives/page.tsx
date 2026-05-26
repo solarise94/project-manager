@@ -108,6 +108,10 @@ function RepOpsList() {
     : 0;
   const totalOverdue = reps.reduce((s, r) => s + r.overdueFollowUps, 0);
   const totalLongUnvisited = reps.reduce((s, r) => s + r.longUnvisitedCount, 0);
+  const totalDueCommunication = reps.reduce((s, r) => s + (r.dueCommunicationTaskCount || 0), 0);
+  const totalDoneCommunication = reps.reduce((s, r) => s + (r.doneCommunicationTaskCount || 0), 0);
+  const totalDormant = reps.reduce((s, r) => s + (r.dormantCustomerCount || 0), 0);
+  const totalDormantWarning = reps.reduce((s, r) => s + (r.dormantWarningCustomerCount || 0), 0);
 
   const activeFilterCount = (archived !== "active" ? 1 : 0) + (hasOverdue ? 1 : 0) + (hasLongUnvisited ? 1 : 0) + (regionId ? 1 : 0) + (selectedRepIds.length > 0 ? 1 : 0) + (period ? 1 : 0);
 
@@ -128,8 +132,12 @@ function RepOpsList() {
           <>
             <StatCard icon={Users} label="总客户数" value={totalCustomers} />
             <StatCard icon={MapPin} label="30天拜访" value={totalCheckins} />
+            <StatCard icon={Clock} label="沟通任务" value={totalDueCommunication} />
+            <StatCard icon={Clock} label="已完成沟通" value={totalDoneCommunication} />
             <StatCard icon={AlertTriangle} label="逾期跟进" value={totalOverdue} color={totalOverdue > 0 ? "text-red-600" : undefined} />
             <StatCard icon={Clock} label="长期未拜访" value={totalLongUnvisited} color={totalLongUnvisited > 0 ? "text-orange-600" : undefined} />
+            <StatCard icon={Users} label="休眠客户" value={totalDormant} color={totalDormant > 0 ? "text-slate-600" : undefined} />
+            <StatCard icon={AlertTriangle} label="休眠预警" value={totalDormantWarning} color={totalDormantWarning > 0 ? "text-amber-600" : undefined} />
           </>
         )}
       </div>
@@ -241,9 +249,13 @@ function RepOpsList() {
                   <>
                     <th className="text-right p-3 font-medium">客户数</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">30天拜访</th>
+                    <th className="text-right p-3 font-medium hidden md:table-cell">沟通任务</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">完成率</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">复购率</th>
                   </>
                 )}
                 <th className="text-right p-3 font-medium hidden sm:table-cell">逾期跟进</th>
+                <th className="text-right p-3 font-medium hidden lg:table-cell">休眠</th>
                 <th className="text-right p-3 font-medium hidden lg:table-cell">长期未拜访</th>
               </tr>
             </thead>
@@ -277,10 +289,16 @@ function RepOpsList() {
                     <>
                       <td className="p-3 text-right font-medium">{r.customerCount}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.visitCheckinCount}</td>
+                      <td className="p-3 text-right hidden md:table-cell">{r.dueCommunicationTaskCount ?? 0}</td>
+                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.communicationTaskCompletionRate || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
                     </>
                   )}
                   <td className="p-3 text-right hidden sm:table-cell">
                     <span className={r.overdueFollowUps > 0 ? "text-red-600 font-medium" : ""}>{r.overdueFollowUps}</span>
+                  </td>
+                  <td className="p-3 text-right hidden lg:table-cell">
+                    <span className={(r.dormantCustomerCount || 0) > 0 ? "text-slate-600 font-medium" : ""}>{r.dormantCustomerCount || 0}</span>
                   </td>
                   <td className="p-3 text-right hidden lg:table-cell">
                     <span className={r.longUnvisitedCount > 0 ? "text-orange-600 font-medium" : ""}>{r.longUnvisitedCount}</span>

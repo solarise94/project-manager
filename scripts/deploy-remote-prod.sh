@@ -462,6 +462,24 @@ SMTP_PASS_VALUE="$(read_remote_conf "${REMOTE_DATA_DIR}/smtp.conf" SMTP_PASS)"
 SMTP_FROM_VALUE="$(read_remote_conf "${REMOTE_DATA_DIR}/smtp.conf" SMTP_FROM)"
 SMTP_FROM_VALUE="${SMTP_FROM_VALUE:-SciManage <reminder@scimanage.com>}"
 
+SMTP_PARTIAL=false
+SMTP_MISSING_KEYS=()
+for key in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS; do
+  value_var="${key}_VALUE"
+  if [[ -n "${!value_var}" ]]; then
+    SMTP_PARTIAL=true
+  else
+    SMTP_MISSING_KEYS+=("${key}")
+  fi
+done
+
+if [[ "${SMTP_PARTIAL}" == "true" && ${#SMTP_MISSING_KEYS[@]} -gt 0 ]]; then
+  echo "ERROR: Incomplete SMTP config in ${REMOTE_DATA_DIR}/smtp.conf." >&2
+  echo "  Missing required keys: ${SMTP_MISSING_KEYS[*]}" >&2
+  echo "  Refusing to deploy because production would silently fall back to Ethereal." >&2
+  exit 1
+fi
+
 # Read MiniMax config
 MINIMAX_API_KEY_VALUE="$(read_remote_conf "${REMOTE_DATA_DIR}/minimax.conf" MINIMAX_API_KEY)"
 MINIMAX_BASE_URL_VALUE="$(read_remote_conf "${REMOTE_DATA_DIR}/minimax.conf" MINIMAX_BASE_URL)"

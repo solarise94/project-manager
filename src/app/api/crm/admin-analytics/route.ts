@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -128,6 +130,72 @@ export async function GET() {
     };
   });
 
+  const enriched = await Promise.all(representativeMetrics.map(async (rep) => {
+    if (!rep.hasUser) {
+      return {
+        ...rep,
+        dueCommunicationTaskCount: 0,
+        doneCommunicationTaskCount: 0,
+        overdueCommunicationTaskCount: 0,
+        communicationTaskCompletionRate: 0,
+        communicatedCustomerCount30d: 0,
+        communicationCoverageRate30d: 0,
+        orderedCustomerCount30d: 0,
+        repeatCustomerCount30d: 0,
+        repeatCustomerRate30d: 0,
+        dormantCustomerCount: 0,
+        dormantWarningCustomerCount: 0,
+      };
+    }
+
+    const ownerUserId = emailToUserId.get(rep.email);
+    if (!ownerUserId) {
+      return {
+        ...rep,
+        dueCommunicationTaskCount: 0,
+        doneCommunicationTaskCount: 0,
+        overdueCommunicationTaskCount: 0,
+        communicationTaskCompletionRate: 0,
+        communicatedCustomerCount30d: 0,
+        communicationCoverageRate30d: 0,
+        orderedCustomerCount30d: 0,
+        repeatCustomerCount30d: 0,
+        repeatCustomerRate30d: 0,
+        dormantCustomerCount: 0,
+        dormantWarningCustomerCount: 0,
+      };
+    }
+
+    const repProfiles = await prisma.crmCustomerProfile.findMany({
+      where: { ownerUserId, archived: false, assignmentStatus: "ASSIGNED" },
+      select: { id: true, sourceCustomerId: true },
+    });
+    const lifecycleMap = await getCrmLifecycleSummariesForCustomers(repProfiles.map((profile) => profile.sourceCustomerId));
+    const lifecycleValues = [...lifecycleMap.values()];
+    const communication = await getCrmCommunicationMetrics({
+      ownerUserIds: [ownerUserId],
+      from: d30,
+      to: now,
+    });
+    const orderedCustomerCount30d = lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= d30).length;
+    const repeatCustomerCount30d = lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= d30).length;
+
+    return {
+      ...rep,
+      dueCommunicationTaskCount: communication.dueCommunicationTaskCount,
+      doneCommunicationTaskCount: communication.doneCommunicationTaskCount,
+      overdueCommunicationTaskCount: communication.overdueCommunicationTaskCount,
+      communicationTaskCompletionRate: communication.communicationTaskCompletionRate,
+      communicatedCustomerCount30d: communication.communicatedCustomerCount,
+      communicationCoverageRate30d: communication.communicationCoverageRate,
+      orderedCustomerCount30d,
+      repeatCustomerCount30d,
+      repeatCustomerRate30d: orderedCustomerCount30d > 0 ? repeatCustomerCount30d / orderedCustomerCount30d : 0,
+      dormantCustomerCount: lifecycleValues.filter((item) => item.stage === "DORMANT").length,
+      dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length,
+    };
+  }));
+
   return NextResponse.json({
     global: {
       interactionCount7d,
@@ -135,6 +203,6 @@ export async function GET() {
       checkinCount7d,
       checkinCount30d,
     },
-    representatives: representativeMetrics,
+    representatives: enriched,
   });
 }

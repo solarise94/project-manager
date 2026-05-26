@@ -9,6 +9,7 @@ import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport 
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import * as XLSX from "xlsx";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
 
 function tryParseXlsx(buffer: Buffer): string | null {
   try {
@@ -147,6 +148,7 @@ export async function POST(req: NextRequest) {
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  const touchedCustomerIds = new Set<string>();
 
   let rowIndex = 0;
   for (const row of rows) {
@@ -210,7 +212,7 @@ export async function POST(req: NextRequest) {
             const isDeleted = existingSrc.order?.deleted;
             const totalAmount = computeOrderAmount(row);
 
-            await tx.order.update({
+            const updatedOrder = await tx.order.update({
               where: { id: existingSrc.orderId },
               data: {
                 totalAmount: totalAmount > 0 ? totalAmount : undefined,
@@ -231,7 +233,9 @@ export async function POST(req: NextRequest) {
                 customerMatchReason: custResult?.customerId ? custResult.matchReason : existingOrder.customerMatchReason,
                 ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
               },
+              select: { customerId: true },
             });
+            if (updatedOrder.customerId) touchedCustomerIds.add(updatedOrder.customerId);
             await tx.orderLine.updateMany({
               where: { orderId: existingSrc.orderId },
               data: { category: orderCategory },
@@ -301,6 +305,7 @@ export async function POST(req: NextRequest) {
               createdById: session.user.id,
             },
           });
+          if (order.customerId) touchedCustomerIds.add(order.customerId);
 
           await upsertImportSourceRecord(tx, {
             orderId: order.id,
@@ -333,6 +338,10 @@ export async function POST(req: NextRequest) {
       errors.push({ row: rowIndex + 1, externalOrderNo: row.externalOrderNo, message: `创建失败: ${msg}` });
     }
     rowIndex++;
+  }
+
+  for (const customerId of touchedCustomerIds) {
+    await syncCrmLifecycleForCustomer(customerId);
   }
 
   return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });

@@ -16,7 +16,7 @@ import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
   MessageSquare, ClipboardCheck, Building2,
-  Inbox, UserRound, FishSymbol,
+  Inbox, UserRound, FishSymbol, ShoppingCart,
 } from "lucide-react";
 import Link from "next/link";
 import { CrmEmptyState } from "@/components/crm/empty-state";
@@ -57,7 +57,7 @@ function CrmDashboard() {
 
   const { data: analyticsData } = useQuery<{
     global: { interactionCount7d: number; interactionCount30d: number; checkinCount7d: number; checkinCount30d: number };
-    representatives: Array<{ representativeId: string; name: string; email: string; hasUser: boolean; profileCount: number; checkinCount30d: number; lastCheckinAt: string | null; overdueFollowUps: number; interactionCount30d: number; visitDensity: number; interactionDensity: number }>;
+    representatives: Array<{ representativeId: string; name: string; email: string; hasUser: boolean; profileCount: number; checkinCount30d: number; lastCheckinAt: string | null; overdueFollowUps: number; interactionCount30d: number; visitDensity: number; interactionDensity: number; dueCommunicationTaskCount: number; doneCommunicationTaskCount: number; communicationTaskCompletionRate: number; communicatedCustomerCount30d: number; communicationCoverageRate30d: number; orderedCustomerCount30d: number; repeatCustomerCount30d: number; repeatCustomerRate30d: number; dormantCustomerCount: number; dormantWarningCustomerCount: number }>;
   }>({
     queryKey: ["crm-admin-analytics"],
     queryFn: () => fetch("/api/crm/admin-analytics").then((r) => r.json()),
@@ -111,6 +111,13 @@ function CrmDashboard() {
         <MetricCard icon={<ClipboardList className="h-4 w-4" />} label="待跟进" value={stats.pendingFollowUps} />
         <MetricCard icon={<AlertTriangle className="h-4 w-4 text-red-500" />} label="已逾期" value={stats.overdueFollowUps} color="text-red-600" />
         <MetricCard icon={<MapPin className="h-4 w-4" />} label="本周签到" value={stats.thisWeekCheckins} />
+        <MetricCard icon={<ClipboardCheck className="h-4 w-4" />} label="30天沟通覆盖" value={`${Math.round(stats.communicationCoverageRate30d * 100)}%`} />
+        <MetricCard icon={<Users className="h-4 w-4" />} label="30天有效沟通" value={stats.communicatedCustomerCount30d} />
+        <MetricCard icon={<ShoppingCart className="h-4 w-4" />} label="下单客户" value={stats.orderedCustomerCount} />
+        <MetricCard icon={<ShoppingCart className="h-4 w-4" />} label="复购客户" value={stats.repeatCustomerCount} />
+        <MetricCard icon={<ShoppingCart className="h-4 w-4" />} label="复购率" value={`${Math.round(stats.repeatCustomerRate * 100)}%`} />
+        <MetricCard icon={<Users className="h-4 w-4" />} label="休眠客户" value={stats.dormantCustomerCount} />
+        <MetricCard icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} label="休眠预警" value={stats.dormantWarningCustomerCount} color="text-amber-600" />
         {!isRep && <MetricCard icon={<Users className="h-4 w-4" />} label="我的客户" value={stats.myProfiles} />}
         {isAdmin && analyticsData && (
           <>
@@ -145,6 +152,8 @@ function CrmDashboard() {
                     <th className="py-1.5 pr-2 font-medium text-right">客户</th>
                     <th className="py-1.5 pr-2 font-medium text-right">30天签到</th>
                     <th className="py-1.5 pr-2 font-medium text-right">30天沟通</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">任务完成率</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">复购率</th>
                     <th className="py-1.5 pr-2 font-medium text-right">逾期</th>
                     <th className="py-1.5 pr-2 font-medium text-right">拜访密度</th>
                     <th className="py-1.5 font-medium">最近签到</th>
@@ -162,6 +171,8 @@ function CrmDashboard() {
                       <td className="py-1.5 pr-2 text-right">{r.profileCount}</td>
                       <td className="py-1.5 pr-2 text-right">{r.checkinCount30d}</td>
                       <td className="py-1.5 pr-2 text-right">{r.interactionCount30d}</td>
+                      <td className="py-1.5 pr-2 text-right">{Math.round((r.communicationTaskCompletionRate || 0) * 100)}%</td>
+                      <td className="py-1.5 pr-2 text-right">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
                       <td className="py-1.5 pr-2 text-right">{r.overdueFollowUps > 0 ? <span className="text-red-500">{r.overdueFollowUps}</span> : 0}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{r.visitDensity.toFixed(1)}</td>
                       <td className="py-1.5 text-muted-foreground">
@@ -344,7 +355,7 @@ function CrmDashboard() {
   );
 }
 
-function MetricCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color?: string }) {
+function MetricCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number | string; color?: string }) {
   return (
     <Card>
       <CardContent className="pt-3 pb-2 px-3">

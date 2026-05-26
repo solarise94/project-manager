@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { assertCrmProfileAccess } from "@/lib/crm/permissions";
 import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
+import { getCrmLifecycleSummaryByCustomerId } from "@/lib/crm/lifecycle";
 
 export async function GET(
   _req: NextRequest,
@@ -57,7 +58,19 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ profile });
+  const lifecycle = profile
+    ? await getCrmLifecycleSummaryByCustomerId(profile.sourceCustomer.id)
+    : null;
+
+  return NextResponse.json({
+    profile,
+    lifecycle: lifecycle ? {
+      ...lifecycle,
+      lastOrderAt: lifecycle.lastOrderAt?.toISOString() ?? null,
+      lastEffectiveInteractionAt: lifecycle.lastEffectiveInteractionAt?.toISOString() ?? null,
+      nextCommunicationTaskAt: lifecycle.nextCommunicationTaskAt?.toISOString() ?? null,
+    } : null,
+  });
 }
 
 export async function PATCH(

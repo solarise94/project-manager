@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { LayoutDashboard, Package, FolderKanban, HeartHandshake, Banknote, Ticket } from "lucide-react";
+import { LayoutDashboard, Package, FolderKanban, HeartHandshake, Banknote, Ticket, MessageSquareText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { canAccessOrders, canAccessFinance } from "@/lib/role-guards";
 
@@ -13,6 +13,7 @@ function useMobileNavItems() {
 
   const items: { href: string; label: string; icon: React.ElementType }[] = [
     { href: "/dashboard", label: "仪表盘", icon: LayoutDashboard },
+    { href: "/agent", label: "Agent", icon: MessageSquareText },
   ];
 
   if (canAccessOrders(role)) {

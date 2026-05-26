@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   FolderKanban,
   Ticket,
+  MessageSquareText,
   LogOut,
   FlaskConical,
   Users,
@@ -37,7 +38,10 @@ function useNavGroups(): NavGroup[] {
 
   const core: NavGroup = {
     title: "核心业务",
-    items: [{ href: "/dashboard", label: "仪表盘", icon: LayoutDashboard }],
+    items: [
+      { href: "/dashboard", label: "仪表盘", icon: LayoutDashboard },
+      { href: "/agent", label: "Agent", icon: MessageSquareText },
+    ],
   };
   if (canAccessOrders(role)) {
     core.items.push({ href: "/orders", label: "订单管理", icon: Package });

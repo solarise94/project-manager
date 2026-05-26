@@ -5,6 +5,7 @@ import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport 
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import type { NormalizedOrderRow } from "@/lib/external-order";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
 
 export interface ImportBatchInput {
   source: string;
@@ -61,6 +62,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  const touchedCustomerIds = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -132,7 +134,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
             const isDeleted = existingSrc.order?.deleted;
             const totalAmount = computeOrderAmount(row);
 
-            await tx.order.update({
+            const updatedOrder = await tx.order.update({
               where: { id: existingSrc.orderId },
               data: {
                 totalAmount: totalAmount > 0 ? totalAmount : undefined,
@@ -153,7 +155,9 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
                 customerMatchReason: custResult?.customerId ? custResult.matchReason : existingOrder.customerMatchReason,
                 ...(isDeleted ? { deleted: false, deletedAt: null, archived: false, financeTreatment: "AUTO" } : {}),
               },
+              select: { customerId: true },
             });
+            if (updatedOrder.customerId) touchedCustomerIds.add(updatedOrder.customerId);
             await tx.orderLine.updateMany({
               where: { orderId: existingSrc.orderId },
               data: { category: orderCategory },
@@ -230,6 +234,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
               createdById: userId,
             },
           });
+          if (order.customerId) touchedCustomerIds.add(order.customerId);
 
           await upsertImportSourceRecord(tx, {
             orderId: order.id,
@@ -266,6 +271,10 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
         message: `创建失败: ${msg}`,
       });
     }
+  }
+
+  for (const customerId of touchedCustomerIds) {
+    await syncCrmLifecycleForCustomer(customerId);
   }
 
   return { created, updated, skipped, errors };

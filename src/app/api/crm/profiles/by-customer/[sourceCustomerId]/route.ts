@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { assertCrmProfileAccessByCustomerId } from "@/lib/crm/permissions";
+import { getCrmLifecycleSummaryByCustomerId } from "@/lib/crm/lifecycle";
 
 export async function GET(
   _req: NextRequest,
@@ -55,5 +56,15 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ profile });
+  const lifecycle = await getCrmLifecycleSummaryByCustomerId(sourceCustomerId);
+
+  return NextResponse.json({
+    profile,
+    lifecycle: lifecycle ? {
+      ...lifecycle,
+      lastOrderAt: lifecycle.lastOrderAt?.toISOString() ?? null,
+      lastEffectiveInteractionAt: lifecycle.lastEffectiveInteractionAt?.toISOString() ?? null,
+      nextCommunicationTaskAt: lifecycle.nextCommunicationTaskAt?.toISOString() ?? null,
+    } : null,
+  });
 }

@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Users, MapPin, AlertTriangle, Clock, Network } from "lucide-react";
+import { ArrowLeft, Users, MapPin, AlertTriangle, Clock, Network, MessageSquare, ShoppingCart } from "lucide-react";
 
 export default function RepDetailPage() {
   const { status } = useSession();
@@ -49,7 +49,30 @@ function RepDetail() {
   if (isLoading) return <div className="p-6">加载中...</div>;
   if (!data) return <div className="p-6">未找到代表</div>;
 
-  const { representative, linkedUser, customerCount, visitCheckinCount, lastCheckinAt, overdueFollowUps, longUnvisitedCount, customers, recentCheckins, openFollowUps, relationCount, regions } = data;
+  const {
+    representative,
+    linkedUser,
+    customerCount,
+    visitCheckinCount,
+    lastCheckinAt,
+    overdueFollowUps,
+    longUnvisitedCount,
+    dueCommunicationTaskCount,
+    doneCommunicationTaskCount,
+    communicationTaskCompletionRate,
+    communicatedCustomerCount30d,
+    communicationCoverageRate30d,
+    orderedCustomerCount30d,
+    repeatCustomerCount30d,
+    repeatCustomerRate30d,
+    dormantCustomerCount,
+    dormantWarningCustomerCount,
+    customers,
+    recentCheckins,
+    openFollowUps,
+    relationCount,
+    regions,
+  } = data;
 
   return (
     <div className="p-6 space-y-4">
@@ -67,8 +90,13 @@ function RepDetail() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard icon={Users} label="客户数" value={customerCount} />
         <StatCard icon={MapPin} label="30天拜访" value={visitCheckinCount} />
+        <StatCard icon={MessageSquare} label="30天沟通客户" value={communicatedCustomerCount30d || 0} />
         <StatCard icon={AlertTriangle} label="逾期跟进" value={overdueFollowUps} />
         <StatCard icon={Clock} label="长期未拜访" value={longUnvisitedCount} />
+        <StatCard icon={ShoppingCart} label="30天下单客户" value={orderedCustomerCount30d || 0} />
+        <StatCard icon={ShoppingCart} label="30天复购客户" value={repeatCustomerCount30d || 0} />
+        <StatCard icon={AlertTriangle} label="休眠客户" value={dormantCustomerCount || 0} />
+        <StatCard icon={AlertTriangle} label="休眠预警" value={dormantWarningCustomerCount || 0} />
         <StatCard icon={Network} label="关系网络" value={relationCount} />
       </div>
 
@@ -82,6 +110,7 @@ function RepDetail() {
           <TabsTrigger value="customers">名下客户</TabsTrigger>
           <TabsTrigger value="checkins">拜访记录</TabsTrigger>
           <TabsTrigger value="followUps">跟进任务</TabsTrigger>
+          <TabsTrigger value="communication">沟通检查</TabsTrigger>
           {canManageBindings && <TabsTrigger value="organizations">绑定单位</TabsTrigger>}
           <TabsTrigger value="report">周报</TabsTrigger>
         </TabsList>
@@ -138,6 +167,18 @@ function RepDetail() {
                     ))}
                   </ul>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <h3 className="font-medium mb-2">运营指标</h3>
+                <dl className="text-sm space-y-1">
+                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通任务:</dt><dd>{dueCommunicationTaskCount || 0}</dd></div>
+                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通完成率:</dt><dd>{Math.round((communicationTaskCompletionRate || 0) * 100)}%</dd></div>
+                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通覆盖率:</dt><dd>{Math.round((communicationCoverageRate30d || 0) * 100)}%</dd></div>
+                  <div className="flex gap-2"><dt className="text-muted-foreground">复购率:</dt><dd>{Math.round((repeatCustomerRate30d || 0) * 100)}%</dd></div>
+                </dl>
               </CardContent>
             </Card>
           </div>
@@ -244,6 +285,31 @@ function RepDetail() {
               </table>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="communication" className="mt-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardContent className="p-4 space-y-2 text-sm">
+                <h3 className="font-medium">沟通任务检查</h3>
+                <div className="flex justify-between"><span className="text-muted-foreground">应沟通任务</span><span>{dueCommunicationTaskCount || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">已完成沟通任务</span><span>{doneCommunicationTaskCount || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">任务完成率</span><span>{Math.round((communicationTaskCompletionRate || 0) * 100)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">30天有效沟通客户</span><span>{communicatedCustomerCount30d || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">30天沟通覆盖率</span><span>{Math.round((communicationCoverageRate30d || 0) * 100)}%</span></div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 space-y-2 text-sm">
+                <h3 className="font-medium">客户运营检查</h3>
+                <div className="flex justify-between"><span className="text-muted-foreground">30天下单客户</span><span>{orderedCustomerCount30d || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">30天复购客户</span><span>{repeatCustomerCount30d || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">30天复购率</span><span>{Math.round((repeatCustomerRate30d || 0) * 100)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">休眠客户</span><span>{dormantCustomerCount || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">休眠预警</span><span>{dormantWarningCustomerCount || 0}</span></div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {canManageBindings && (

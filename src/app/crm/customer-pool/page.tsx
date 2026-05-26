@@ -103,13 +103,14 @@ function CustomerPool() {
 
   const scanMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/crm/customer-pool/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const res = await fetch("/api/crm/lifecycle/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
       if (!res.ok) throw new Error("扫描失败");
       return res.json();
     },
-    onSuccess: (d: { markedCount: number }) => {
-      toast.success(`扫描完成，${d.markedCount} 个客户标记为待收回`);
+    onSuccess: (d: { dormantCount: number; warnedCount: number }) => {
+      toast.success(`扫描完成，${d.dormantCount} 个客户进入休眠，${d.warnedCount} 个客户进入预警`);
       queryClient.invalidateQueries({ queryKey: ["crm-customer-pool"] });
+      queryClient.invalidateQueries({ queryKey: ["crm-profiles"] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -215,11 +216,11 @@ function CustomerPool() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">客户流转池</h1>
-          <p className="text-sm text-muted-foreground">管理客户分配、收回和长期未拜访客户</p>
+          <p className="text-sm text-muted-foreground">管理客户分配、收回，以及待运营和休眠客户</p>
         </div>
         <Button variant="outline" className="h-9" onClick={() => scanMutation.mutate()} disabled={scanMutation.isPending}>
           <Layers className="h-4 w-4 mr-1" />
-          {scanMutation.isPending ? "扫描中..." : "扫描长期未拜访"}
+          {scanMutation.isPending ? "扫描中..." : "扫描生命周期"}
         </Button>
       </div>
 

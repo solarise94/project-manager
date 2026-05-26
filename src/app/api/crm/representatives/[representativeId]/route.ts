@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
+import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 export async function GET(
   _req: NextRequest,
@@ -137,6 +139,15 @@ export async function GET(
     }),
   ]);
 
+  const customerIds = customers.map((customer) => customer.sourceCustomerId);
+  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(customerIds);
+  const lifecycleValues = [...lifecycleMap.values()];
+  const communication = await getCrmCommunicationMetrics({
+    ownerUserIds: [userId],
+    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    to: now,
+  });
+
   return NextResponse.json({
     representative: { id: rep.id, name: rep.name, email: rep.email, archived: rep.archived },
     linkedUser,
@@ -145,6 +156,20 @@ export async function GET(
     lastCheckinAt: lastCheckin?.createdAt?.toISOString() ?? null,
     overdueFollowUps,
     longUnvisitedCount,
+    dueCommunicationTaskCount: communication.dueCommunicationTaskCount,
+    doneCommunicationTaskCount: communication.doneCommunicationTaskCount,
+    overdueCommunicationTaskCount: communication.overdueCommunicationTaskCount,
+    communicationTaskCompletionRate: communication.communicationTaskCompletionRate,
+    communicatedCustomerCount30d: communication.communicatedCustomerCount,
+    communicationCoverageRate30d: communication.communicationCoverageRate,
+    orderedCustomerCount30d: lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length,
+    repeatCustomerCount30d: lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length,
+    repeatCustomerRate30d: lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length > 0
+      ? lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
+        / lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
+      : 0,
+    dormantCustomerCount: lifecycleValues.filter((item) => item.stage === "DORMANT").length,
+    dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length,
     customers,
     recentCheckins,
     openFollowUps,

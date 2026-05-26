@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
+import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -132,7 +134,35 @@ export async function GET(req: NextRequest) {
         : [];
       const assignedCustomerIds = assignedProfiles.map((profile) => profile.sourceCustomerId);
 
-      const base = {
+      const base: {
+        representativeId: string;
+        name: string;
+        email: string;
+        archived: boolean;
+        userId: string | null;
+        userName: string | null;
+        customerCount: number;
+        visitCheckinCount: number;
+        lastCheckinAt: string | null;
+        overdueFollowUps: number;
+        longUnvisitedCount: number;
+        regions: { id: string; name: string; isPrimary: boolean }[];
+        periodVisitCheckinCount: number;
+        periodNewCustomerCount: number;
+        periodReservedOrderCount: number;
+        periodReservedOrderAmount: number;
+        dueCommunicationTaskCount?: number;
+        doneCommunicationTaskCount?: number;
+        overdueCommunicationTaskCount?: number;
+        communicationTaskCompletionRate?: number;
+        communicatedCustomerCount30d?: number;
+        communicationCoverageRate30d?: number;
+        orderedCustomerCount30d?: number;
+        repeatCustomerCount30d?: number;
+        repeatCustomerRate30d?: number;
+        dormantCustomerCount?: number;
+        dormantWarningCustomerCount?: number;
+      } = {
         representativeId: rep.id,
         name: rep.name,
         email: rep.email,
@@ -204,7 +234,7 @@ export async function GET(req: NextRequest) {
       const overdueFollowUps = results[3] as number;
       const longUnvisitedCount = results[4] as number;
 
-      const out = {
+      const out: typeof base = {
         ...base,
         customerCount,
         visitCheckinCount,
@@ -212,6 +242,27 @@ export async function GET(req: NextRequest) {
         overdueFollowUps,
         longUnvisitedCount,
       };
+
+      const communication = await getCrmCommunicationMetrics({
+        ownerUserIds: [userId],
+        from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        to: now,
+      });
+      const lifecycleMap = await getCrmLifecycleSummariesForCustomers(assignedCustomerIds);
+      const lifecycleValues = [...lifecycleMap.values()];
+      out.dueCommunicationTaskCount = communication.dueCommunicationTaskCount;
+      out.doneCommunicationTaskCount = communication.doneCommunicationTaskCount;
+      out.overdueCommunicationTaskCount = communication.overdueCommunicationTaskCount;
+      out.communicationTaskCompletionRate = communication.communicationTaskCompletionRate;
+      out.communicatedCustomerCount30d = communication.communicatedCustomerCount;
+      out.communicationCoverageRate30d = communication.communicationCoverageRate;
+      out.orderedCustomerCount30d = lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length;
+      out.repeatCustomerCount30d = lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length;
+      out.repeatCustomerRate30d = (out.orderedCustomerCount30d || 0) > 0
+        ? (out.repeatCustomerCount30d || 0) / (out.orderedCustomerCount30d || 1)
+        : 0;
+      out.dormantCustomerCount = lifecycleValues.filter((item) => item.stage === "DORMANT").length;
+      out.dormantWarningCustomerCount = lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length;
 
       if (periodStart && periodEnd) {
         out.periodVisitCheckinCount = results[5] as number;

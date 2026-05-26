@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "agent-runtime:dev": "npm --prefix agent-runtime run dev",
+    "agent-runtime:build": "npm --prefix agent-runtime run build",
+    "agent-runtime:start": "npm --prefix agent-runtime run start"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

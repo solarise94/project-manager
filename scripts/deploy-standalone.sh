@@ -53,6 +53,19 @@ TENCENTCLOUD_SECRET_KEY_VALUE="${TENCENTCLOUD_SECRET_KEY:-}"
 TENCENT_MAP_KEY_VALUE="${TENCENT_MAP_KEY:-}"
 NEXT_PUBLIC_TENCENT_MAP_KEY_VALUE="${NEXT_PUBLIC_TENCENT_MAP_KEY:-}"
 REMINDER_CRON_TOKEN_VALUE="${REMINDER_CRON_TOKEN:-}"
+AGENT_RUNTIME_MODE_VALUE="${AGENT_RUNTIME:-pi}"
+AGENT_RUNTIME_HOST_VALUE="${AGENT_RUNTIME_HOST:-127.0.0.1}"
+AGENT_RUNTIME_PORT_VALUE="${AGENT_RUNTIME_PORT:-$((PORT + 1000))}"
+AGENT_RUNTIME_TOKEN_VALUE="${AGENT_RUNTIME_TOKEN:-}"
+AGENT_INTERNAL_TOOL_TOKEN_VALUE="${AGENT_INTERNAL_TOOL_TOKEN:-}"
+AGENT_PROACTIVE_ENABLED_VALUE="${AGENT_PROACTIVE_ENABLED:-false}"
+AGENT_VIEW_CONTROL_ENABLED_VALUE="${AGENT_VIEW_CONTROL_ENABLED:-false}"
+AGENT_WEB_SEARCH_ENABLED_VALUE="${AGENT_WEB_SEARCH_ENABLED:-true}"
+AGENT_COMPACTION_ENABLED_VALUE="${AGENT_COMPACTION_ENABLED:-true}"
+AGENT_CONTEXT_WINDOW_TOKENS_VALUE="${AGENT_CONTEXT_WINDOW_TOKENS:-1000000}"
+AGENT_COMPACTION_KEEP_RECENT_TOKENS_VALUE="${AGENT_COMPACTION_KEEP_RECENT_TOKENS:-12000}"
+AGENT_COMPACTION_RESERVE_TOKENS_VALUE="${AGENT_COMPACTION_RESERVE_TOKENS:-8000}"
+AGENT_RUNTIME_THINKING_LEVEL_VALUE="${AGENT_RUNTIME_THINKING_LEVEL:-medium}"
 
 # Persistent config files live next to the database, survive deploys.
 SMTP_CONF="$(dirname "${RUNTIME_DB}")/smtp.conf"
@@ -80,6 +93,12 @@ rsync -a --delete --exclude=".env" --exclude="dev.db" --exclude='public/uploads/
 rsync -a --delete "${REPO_DIR}/.next/static/" "${TARGET_DIR}/.next/static/"
 ## public/uploads is runtime data and must survive deploys.
 rsync -a --delete --exclude='uploads/***' "${REPO_DIR}/public/" "${TARGET_DIR}/public/"
+
+echo "[3.2/8] Syncing agent runtime sidecar..."
+mkdir -p "${TARGET_DIR}/agent-runtime"
+rsync -a --delete "${REPO_DIR}/agent-runtime/dist/" "${TARGET_DIR}/agent-runtime/dist/"
+rsync -a --delete "${REPO_DIR}/agent-runtime/node_modules/" "${TARGET_DIR}/agent-runtime/node_modules/"
+cp "${REPO_DIR}/agent-runtime/package.json" "${TARGET_DIR}/agent-runtime/package.json"
 
 echo "[3.5/8] Ensuring Prisma runtime is available in standalone..."
 # Copy the canonical Prisma client packages
@@ -176,6 +195,24 @@ for SMTP_SOURCE in "${SMTP_CONF}" "${EXISTING_ENV_FILE}"; do
 done
 
 SMTP_FROM_VALUE="${SMTP_FROM_VALUE:-SciManage <reminder@scimanage.com>}"
+
+SMTP_PARTIAL=false
+SMTP_MISSING_KEYS=()
+for key in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS; do
+  value_var="${key}_VALUE"
+  if [[ -n "${!value_var}" ]]; then
+    SMTP_PARTIAL=true
+  else
+    SMTP_MISSING_KEYS+=("${key}")
+  fi
+done
+
+if [[ "${SMTP_PARTIAL}" == "true" && ${#SMTP_MISSING_KEYS[@]} -gt 0 ]]; then
+  echo "ERROR: Incomplete SMTP config." >&2
+  echo "  Missing required keys: ${SMTP_MISSING_KEYS[*]}" >&2
+  echo "  Refusing to write runtime .env because mail would silently fall back to Ethereal." >&2
+  exit 1
+fi
 
 # Read MiniMax config: minimax.conf (persistent) > existing .env (legacy) > shell env
 for MM_SOURCE in "${MINIMAX_CONF}" "${EXISTING_ENV_FILE}"; do
@@ -282,6 +319,32 @@ if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
   echo "  Generated REMINDER_CRON_TOKEN for standalone reminder timer"
 fi
 
+if [[ -f "${EXISTING_ENV_FILE}" ]]; then
+  while IFS='=' read -r key raw_value; do
+    value="${raw_value%\"}"; value="${value#\"}"
+    case "${key}" in
+      AGENT_RUNTIME_TOKEN) [[ -z "${AGENT_RUNTIME_TOKEN_VALUE}" ]] && AGENT_RUNTIME_TOKEN_VALUE="${value}" ;;
+      AGENT_INTERNAL_TOOL_TOKEN) [[ -z "${AGENT_INTERNAL_TOOL_TOKEN_VALUE}" ]] && AGENT_INTERNAL_TOOL_TOKEN_VALUE="${value}" ;;
+    esac
+  done < <(grep -E '^AGENT_(RUNTIME_TOKEN|INTERNAL_TOOL_TOKEN)=' "${EXISTING_ENV_FILE}" || true)
+fi
+
+if [[ -z "${AGENT_RUNTIME_TOKEN_VALUE}" ]]; then
+  AGENT_RUNTIME_TOKEN_VALUE="$(node -e 'const crypto = require("crypto"); process.stdout.write(crypto.randomUUID())')"
+  echo "  Generated AGENT_RUNTIME_TOKEN for sidecar auth"
+fi
+
+if [[ -z "${AGENT_INTERNAL_TOOL_TOKEN_VALUE}" ]]; then
+  AGENT_INTERNAL_TOOL_TOKEN_VALUE="$(node -e 'const crypto = require("crypto"); process.stdout.write(crypto.randomUUID())')"
+  echo "  Generated AGENT_INTERNAL_TOOL_TOKEN for internal tool bridge"
+fi
+
+AGENT_RUNTIME_URL_VALUE="http://${AGENT_RUNTIME_HOST_VALUE}:${AGENT_RUNTIME_PORT_VALUE}"
+AGENT_RUNTIME_ENABLED=false
+if [[ "${AGENT_RUNTIME_MODE_VALUE}" == "pi" ]]; then
+  AGENT_RUNTIME_ENABLED=true
+fi
+
 # CRM review cron token: shell env > app.conf > existing runtime .env > auto-generate
 CRM_REVIEW_CRON_TOKEN_VALUE="${CRM_REVIEW_CRON_TOKEN:-}"
 if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" && -f "${REMINDER_CONF}" ]]; then
@@ -346,14 +409,59 @@ echo "[6/8] Writing runtime .env..."
   echo "# Internal reminder cron"
   echo "REMINDER_CRON_TOKEN=\"$(dotenv_quote "${REMINDER_CRON_TOKEN_VALUE}")\""
   echo "CRM_REVIEW_CRON_TOKEN=\"$(dotenv_quote "${CRM_REVIEW_CRON_TOKEN_VALUE}")\""
+  echo "# Pi agent runtime sidecar"
+  echo "AGENT_RUNTIME=\"$(dotenv_quote "${AGENT_RUNTIME_MODE_VALUE}")\""
+  echo "AGENT_RUNTIME_HOST=\"$(dotenv_quote "${AGENT_RUNTIME_HOST_VALUE}")\""
+  echo "AGENT_RUNTIME_PORT=\"$(dotenv_quote "${AGENT_RUNTIME_PORT_VALUE}")\""
+  echo "AGENT_RUNTIME_URL=\"$(dotenv_quote "${AGENT_RUNTIME_URL_VALUE}")\""
+  echo "AGENT_RUNTIME_TOKEN=\"$(dotenv_quote "${AGENT_RUNTIME_TOKEN_VALUE}")\""
+  echo "AGENT_INTERNAL_TOOL_TOKEN=\"$(dotenv_quote "${AGENT_INTERNAL_TOOL_TOKEN_VALUE}")\""
+  echo "AGENT_PROACTIVE_ENABLED=\"$(dotenv_quote "${AGENT_PROACTIVE_ENABLED_VALUE}")\""
+  echo "AGENT_VIEW_CONTROL_ENABLED=\"$(dotenv_quote "${AGENT_VIEW_CONTROL_ENABLED_VALUE}")\""
+  echo "AGENT_WEB_SEARCH_ENABLED=\"$(dotenv_quote "${AGENT_WEB_SEARCH_ENABLED_VALUE}")\""
+  echo "AGENT_COMPACTION_ENABLED=\"$(dotenv_quote "${AGENT_COMPACTION_ENABLED_VALUE}")\""
+  echo "AGENT_CONTEXT_WINDOW_TOKENS=\"$(dotenv_quote "${AGENT_CONTEXT_WINDOW_TOKENS_VALUE}")\""
+  echo "AGENT_COMPACTION_KEEP_RECENT_TOKENS=\"$(dotenv_quote "${AGENT_COMPACTION_KEEP_RECENT_TOKENS_VALUE}")\""
+  echo "AGENT_COMPACTION_RESERVE_TOKENS=\"$(dotenv_quote "${AGENT_COMPACTION_RESERVE_TOKENS_VALUE}")\""
+  echo "AGENT_RUNTIME_THINKING_LEVEL=\"$(dotenv_quote "${AGENT_RUNTIME_THINKING_LEVEL_VALUE}")\""
 } > "${TARGET_DIR}/.env"
 
 echo "[7/8] Writing ${SERVICE_NAME} unit..."
 mkdir -p "$(dirname "${SERVICE_FILE}")"
+AGENT_RUNTIME_SERVICE_NAME="${SERVICE_NAME%.service}-agent-runtime.service"
+AGENT_RUNTIME_SERVICE_FILE="${HOME}/.config/systemd/user/${AGENT_RUNTIME_SERVICE_NAME}"
+NEXT_SERVICE_SIDECAR_AFTER=""
+NEXT_SERVICE_SIDECAR_REQUIRES=""
+
+if [[ "${AGENT_RUNTIME_ENABLED}" == "true" ]]; then
+  NEXT_SERVICE_SIDECAR_AFTER="After=${AGENT_RUNTIME_SERVICE_NAME}"
+  NEXT_SERVICE_SIDECAR_REQUIRES="Requires=${AGENT_RUNTIME_SERVICE_NAME}"
+fi
+
+cat > "${AGENT_RUNTIME_SERVICE_FILE}" <<EOF
+[Unit]
+Description=Task Manager Pi Agent Runtime
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${TARGET_DIR}/agent-runtime
+Environment=NODE_ENV=production
+EnvironmentFile=${TARGET_DIR}/.env
+ExecStart=${NODE_BIN} ${TARGET_DIR}/agent-runtime/dist/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
 cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=Task Manager Next.js App
 After=network.target
+${NEXT_SERVICE_SIDECAR_AFTER}
+${NEXT_SERVICE_SIDECAR_REQUIRES}
 
 [Service]
 Type=simple
@@ -455,12 +563,21 @@ restore_timers_on_failure() {
 trap restore_timers_on_failure EXIT
 
 systemctl --user daemon-reload
+if [[ "${AGENT_RUNTIME_ENABLED}" == "true" ]]; then
+  systemctl --user enable --now "${AGENT_RUNTIME_SERVICE_NAME}"
+  systemctl --user restart "${AGENT_RUNTIME_SERVICE_NAME}"
+else
+  systemctl --user stop "${AGENT_RUNTIME_SERVICE_NAME}" 2>/dev/null || true
+fi
 systemctl --user restart "${SERVICE_NAME}"
 systemctl --user enable --now "${REMINDER_TIMER_NAME}"
 systemctl --user enable --now "${CRM_REVIEW_TIMER_NAME}"
 
 # Deploy succeeded — disarm the failure-restore trap
 trap - EXIT
+if [[ "${AGENT_RUNTIME_ENABLED}" == "true" ]]; then
+  systemctl --user --no-pager --full status "${AGENT_RUNTIME_SERVICE_NAME}" | sed -n '1,20p'
+fi
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
 systemctl --user --no-pager --full status "${REMINDER_TIMER_NAME}" | sed -n '1,20p'
 
@@ -485,4 +602,17 @@ else
   echo "Recent service logs:" >&2
   journalctl --user -u "${SERVICE_NAME}" --no-pager -n 30 >&2
   exit 1
+fi
+
+if [[ "${AGENT_RUNTIME_ENABLED}" == "true" ]]; then
+  echo ""
+  echo "Smoke-testing agent runtime /health on port ${AGENT_RUNTIME_PORT_VALUE}..."
+  AGENT_RUNTIME_HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://${AGENT_RUNTIME_HOST_VALUE}:${AGENT_RUNTIME_PORT_VALUE}/health" 2>/dev/null || echo "000")
+  if [[ "${AGENT_RUNTIME_HTTP_CODE}" == "200" ]]; then
+    echo "Smoke test passed: agent runtime /health returned 200"
+  else
+    echo "SMOKE TEST FAILED: agent runtime /health returned ${AGENT_RUNTIME_HTTP_CODE}" >&2
+    journalctl --user -u "${AGENT_RUNTIME_SERVICE_NAME}" --no-pager -n 30 >&2
+    exit 1
+  fi
 fi
