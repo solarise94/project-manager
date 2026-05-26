@@ -52,3 +52,6 @@ next-env.d.ts
 /agent-runtime/dist
 /agent-runtime/node_modules
 /prisma/prisma
+
+# One-time export files
+订单列表*.csv

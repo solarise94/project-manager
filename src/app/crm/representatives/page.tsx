@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Card, CardContent } from "@/components/ui/card";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeOpsItem } from "@/lib/crm/types";
+import { fetchJsonOrThrow } from "@/lib/fetch-client";
 import Link from "next/link";
 import { Search, Users, MessageSquare, AlertTriangle, Clock, X, UserCog, ShoppingCart } from "lucide-react";
 
@@ -72,20 +73,20 @@ function RepOpsList() {
   if (selectedRepIds.length > 0) params.set("representativeIds", selectedRepIds.join(","));
   if (period) params.set("period", period);
 
-  const { data, isLoading } = useQuery<{ representatives: CrmRepresentativeOpsItem[] }>({
+  const { data, isLoading, error } = useQuery<{ representatives: CrmRepresentativeOpsItem[] }>({
     queryKey: [...crmKeys.representativeOps(), search, archived, hasOverdue, hasLongUnvisited, sort, order, regionId, selectedRepIds.join(","), period],
-    queryFn: () => fetch(`/api/crm/representatives?${params}`).then((r) => r.json()),
+    queryFn: () => fetchJsonOrThrow(`/api/crm/representatives?${params}`),
   });
 
   const { data: regionsData } = useQuery<{ regions: { id: string; name: string }[] }>({
     queryKey: ["representative-regions"],
-    queryFn: () => fetch("/api/crm/representative-regions").then((r) => r.json()),
+    queryFn: () => fetchJsonOrThrow("/api/crm/representative-regions"),
   });
   const regions = regionsData?.regions || [];
 
   const { data: allRepsData } = useQuery<{ representatives: CrmRepresentativeOpsItem[] }>({
     queryKey: [...crmKeys.representativeOps(), "all-reps-list"],
-    queryFn: () => fetch("/api/crm/representatives?archived=all").then((r) => r.json()),
+    queryFn: () => fetchJsonOrThrow("/api/crm/representatives?archived=all"),
   });
   const allReps = allRepsData?.representatives || [];
 
@@ -228,6 +229,10 @@ function RepOpsList() {
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
+      ) : error ? (
+        <div className="text-sm text-red-600 py-8 text-center">
+          代表数据加载失败：{error instanceof Error ? error.message : "未知错误"}
+        </div>
       ) : reps.length === 0 ? (
         <div className="text-sm text-muted-foreground py-8 text-center">暂无代表数据</div>
       ) : (

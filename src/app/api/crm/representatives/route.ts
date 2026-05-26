@@ -232,6 +232,8 @@ export async function GET(req: NextRequest) {
             customerId: { in: allAssignedCustomerIds },
             orderedAt: { gte: periodStart, lt: periodEnd },
             deleted: false,
+            archived: false,
+            status: { in: ["CONFIRMED", "CLOSED"] },
           },
           select: { customerId: true, totalAmount: true, financeAmountOverride: true },
         })

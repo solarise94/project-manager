@@ -654,12 +654,11 @@ src/components/crm/representative-report-panel.tsx
 4. 应沟通任务数。
 5. 已完成沟通任务数。
 6. 逾期沟通任务数。
-7. 沟通任务完成率。
-8. 30 天下单客户数。
-9. 30 天复购客户数。
-10. 30 天复购率。
-11. 休眠客户数。
-12. 休眠预警客户数。
+7. 30 天下单客户数。
+8. 30 天复购客户数。
+9. 30 天复购率。
+10. 休眠客户数。
+11. 休眠预警客户数。
 
 建议视觉优先级：
 
@@ -753,6 +752,32 @@ model CrmCustomerLifecycleSnapshot {
 ```
 
 第一版不要加，除非实际查询性能不够。
+
+---
+
+## 运维修复补充
+
+### 签到时间字段脏数据修复
+
+`CrmVisitCheckin` 的 `createdAt / updatedAt / completedAt` 如果被历史 SQL 写成 `"YYYY-MM-DD HH:MM:SS"` 这类非 ISO 8601 字符串，Prisma 读取或做 `groupBy + _max(createdAt)` 时可能抛 `P2023 Inconsistent column data`。
+
+已补充脚本：
+
+```bash
+npx tsx scripts/repair-crm-visit-checkin-datetimes.ts --db /path/to/dev.db
+```
+
+默认只审计，不写库。确认输出后再执行：
+
+```bash
+npx tsx scripts/repair-crm-visit-checkin-datetimes.ts --write --db /path/to/dev.db
+```
+
+说明：
+
+1. 默认按 `Z` 归一化，适合 SQLite `CURRENT_TIMESTAMP` 写入的历史值。
+2. 如果确认旧值是按本地时间直接写入，可改用 `--timezone +08:00`。
+3. 该脚本只处理可安全归一化的字符串；遇到更异常的格式会直接报出并要求人工确认。
 
 ---
 

@@ -6,6 +6,7 @@ import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
 import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
+import { createMatchContext, resolveMatch } from "@/lib/finance/pingoodmice-match";
 
 async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string; category?: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
@@ -53,6 +54,8 @@ export async function POST(req: NextRequest) {
   let updated = 0;
   let skipped = 0;
   const touchedCustomerIds = new Set<string>();
+
+  const matchCtx = await createMatchContext();
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -105,6 +108,19 @@ export async function POST(req: NextRequest) {
           return "updated" as const;
         }
 
+        const matchResult = resolveMatch(matchCtx, {
+          buyerPhone: row.receiverPhone,
+          buyerWechat: row.orderUser,
+          buyerName: row.receiverName,
+          buyerAddress: row.receiverAddress,
+          buyerOrgName: row.storeName,
+        });
+
+        const matchedCustomerId =
+          matchResult.status === "MATCHED"
+            ? matchResult.best!.customerId
+            : null;
+
         await prisma.$transaction(async (tx) => {
           const totalAmount = computeOrderAmount(row);
           const orderNo = await generateImportOrderNo(tx, refDate);
@@ -132,6 +148,11 @@ export async function POST(req: NextRequest) {
               buyerOrgNameSnapshot: row.storeName,
               totalAmount,
               createdById: session.user.id,
+              customerId: matchedCustomerId,
+              customerMatchStatus: matchedCustomerId ? "AUTO_MATCHED" : "UNMATCHED",
+              customerMatchReason: matchedCustomerId
+                ? `auto_matched_by_${matchResult.best!.reason}`
+                : null,
             },
           });
 

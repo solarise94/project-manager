@@ -25,6 +25,24 @@
 - `#15` Profile 列表排序：先支持 `lastOrderAt`、`validOrderCount` 两个 lifecycle 排序字段。
 - `#16` 沟通完成率：不再使用系统自动生成的任务完成率指标，当前仅保留任务量/已完成量等运营观察值，后续如需考核口径由 ADMIN 单独定义。
 
+### 新增运维修复工具
+
+- 已新增 `scripts/repair-crm-visit-checkin-datetimes.ts`，用于审计并修复 `CrmVisitCheckin.createdAt / updatedAt / completedAt` 中的非 ISO 8601 时间字符串。
+- 适用场景：历史数据中存在 `"2026-04-28 06:23:34"` 这类 SQLite 文本时间，导致 Prisma 在 `groupBy` / `_max(createdAt)` / 读取 DateTime 字段时抛出 `P2023 Inconsistent column data`。
+- 默认仅 dry-run：
+
+```bash
+npx tsx scripts/repair-crm-visit-checkin-datetimes.ts --db /path/to/dev.db
+```
+
+- 确认无误后执行写入：
+
+```bash
+npx tsx scripts/repair-crm-visit-checkin-datetimes.ts --write --db /path/to/dev.db
+```
+
+- 默认按 `Z` 归一化，符合 SQLite `CURRENT_TIMESTAMP` 语义；如果确认历史脏数据是按本地时间直接写入，可显式传 `--timezone +08:00`。
+
 ### 版本控制提醒
 
 - `#12` 提到的 internal cron 路由目前在工作区已存在，但仍需和部署脚本改动一起提交，才算从仓库状态上彻底关闭。

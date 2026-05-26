@@ -15,12 +15,31 @@ type OrderAggregate = {
   lastOrderAt: Date | null;
 };
 
+/**
+ * Prisma SQLite $queryRaw 返回类型：
+ * - COUNT(*) / SUM() → bigint（SQLite 整数）
+ * - MAX(DateTime 列) → string（ISO 8601 或遗留格式）
+ */
 type OrderAggregateRow = {
   customerId: string | null;
-  validOrderCount: number;
-  validOrderAmount: number | null;
-  lastOrderAt: Date | string | null;
+  validOrderCount: bigint;
+  validOrderAmount: bigint | null;
+  lastOrderAt: string | null;
 };
+
+function normalizeNumber(value: bigint | number | null | undefined): number {
+  if (value == null) return 0;
+  return typeof value === "bigint" ? Number(value) : value;
+}
+
+function normalizeDate(value: Date | string | number | bigint | null | undefined): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === "bigint") return new Date(Number(value));
+  if (typeof value === "number") return new Date(value);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 type InteractionAggregate = {
   lastEffectiveInteractionAt: Date | null;
@@ -106,9 +125,9 @@ async function getOrderAggregatesForCustomers(
       .map((row) => [
         row.customerId,
         {
-          validOrderCount: Number(row.validOrderCount ?? 0),
-          validOrderAmount: Number(row.validOrderAmount ?? 0),
-          lastOrderAt: row.lastOrderAt ? new Date(row.lastOrderAt) : null,
+          validOrderCount: normalizeNumber(row.validOrderCount),
+          validOrderAmount: normalizeNumber(row.validOrderAmount),
+          lastOrderAt: normalizeDate(row.lastOrderAt),
         },
       ]),
   );
