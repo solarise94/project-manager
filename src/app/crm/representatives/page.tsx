@@ -245,7 +245,6 @@ function RepOpsList() {
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left p-3 font-medium">代表</th>
-                <th className="text-left p-3 font-medium hidden md:table-cell">邮箱</th>
                 <th className="text-left p-3 font-medium hidden lg:table-cell">地区</th>
                 {hasPeriod ? (
                   <>
