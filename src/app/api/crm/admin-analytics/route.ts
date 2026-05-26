@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { getCrmCommunicationMetricsByOwnerUserIds } from "@/lib/crm/communication-metrics";
 import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 export async function GET() {
@@ -81,7 +81,7 @@ export async function GET() {
   // Batch: interaction counts (30d) per profile owner
   const profilesByOwner = await prisma.crmCustomerProfile.findMany({
     where: { ownerUserId: { in: ownerUserIds }, archived: false },
-    select: { id: true, ownerUserId: true },
+    select: { id: true, ownerUserId: true, sourceCustomerId: true, assignmentStatus: true },
   });
   const ownerProfileIds = new Map<string, string[]>();
   for (const p of profilesByOwner) {
@@ -90,13 +90,58 @@ export async function GET() {
     ownerProfileIds.set(p.ownerUserId, ids);
   }
   const allProfileIds = profilesByOwner.map((p) => p.id);
+  const allAssignedCustomerIds = [...new Set(
+    profilesByOwner
+      .filter((profile) => profile.assignmentStatus === "ASSIGNED")
+      .map((profile) => profile.sourceCustomerId),
+  )];
 
-  const interactionCounts30d = await prisma.crmInteraction.groupBy({
-    by: ["profileId"],
-    where: { profileId: { in: allProfileIds }, happenedAt: { gte: d30 }, type: { not: "VISIT" } },
-    _count: true,
-  });
+  const [interactionCounts30d, communicationByOwner, lifecycleMap] = await Promise.all([
+    allProfileIds.length > 0
+      ? prisma.crmInteraction.groupBy({
+          by: ["profileId"],
+          where: { profileId: { in: allProfileIds }, happenedAt: { gte: d30 }, type: { not: "VISIT" } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    getCrmCommunicationMetricsByOwnerUserIds({
+      ownerUserIds,
+      from: d30,
+      to: now,
+    }),
+    getCrmLifecycleSummariesForCustomers(allAssignedCustomerIds),
+  ]);
   const interactionCountMap = new Map(interactionCounts30d.map((g) => [g.profileId, g._count]));
+  const ownerInteractionCountMap = new Map<string, number>();
+  for (const [ownerUserId, profileIds] of ownerProfileIds) {
+    let total = 0;
+    for (const profileId of profileIds) total += interactionCountMap.get(profileId) || 0;
+    ownerInteractionCountMap.set(ownerUserId, total);
+  }
+
+  const ownerLifecycleStats = new Map<string, {
+    orderedCustomerCount30d: number;
+    repeatCustomerCount30d: number;
+    dormantCustomerCount: number;
+    dormantWarningCustomerCount: number;
+  }>();
+  for (const summary of lifecycleMap.values()) {
+    const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
+      orderedCustomerCount30d: 0,
+      repeatCustomerCount30d: 0,
+      dormantCustomerCount: 0,
+      dormantWarningCustomerCount: 0,
+    };
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      current.orderedCustomerCount30d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      current.repeatCustomerCount30d += 1;
+    }
+    if (summary.stage === "DORMANT") current.dormantCustomerCount += 1;
+    if (summary.dormantRisk && summary.stage !== "DORMANT") current.dormantWarningCustomerCount += 1;
+    ownerLifecycleStats.set(summary.ownerUserId, current);
+  }
 
   // Assemble per‑representative rows
   const representativeMetrics = reps.map((rep) => {
@@ -105,12 +150,7 @@ export async function GET() {
     const checkin30d = userId ? (checkin30dMap.get(userId) || 0) : 0;
     const lastCheckin = userId ? (lastCheckinMap.get(userId) || null) : null;
     const overdue = userId ? (overdueMap.get(userId) || 0) : 0;
-
-    const profileIds = userId ? (ownerProfileIds.get(userId) || []) : [];
-    let interactions30d = 0;
-    for (const pid of profileIds) {
-      interactions30d += interactionCountMap.get(pid) || 0;
-    }
+    const interactions30d = userId ? (ownerInteractionCountMap.get(userId) || 0) : 0;
 
     const visitDensity = profileCount > 0 ? checkin30d / profileCount : 0;
     const interactionDensity = profileCount > 0 ? interactions30d / profileCount : 0;
@@ -130,14 +170,13 @@ export async function GET() {
     };
   });
 
-  const enriched = await Promise.all(representativeMetrics.map(async (rep) => {
+  const enriched = representativeMetrics.map((rep) => {
     if (!rep.hasUser) {
       return {
         ...rep,
         dueCommunicationTaskCount: 0,
         doneCommunicationTaskCount: 0,
         overdueCommunicationTaskCount: 0,
-        communicationTaskCompletionRate: 0,
         communicatedCustomerCount30d: 0,
         communicationCoverageRate30d: 0,
         orderedCustomerCount30d: 0,
@@ -155,7 +194,6 @@ export async function GET() {
         dueCommunicationTaskCount: 0,
         doneCommunicationTaskCount: 0,
         overdueCommunicationTaskCount: 0,
-        communicationTaskCompletionRate: 0,
         communicatedCustomerCount30d: 0,
         communicationCoverageRate30d: 0,
         orderedCustomerCount30d: 0,
@@ -166,35 +204,30 @@ export async function GET() {
       };
     }
 
-    const repProfiles = await prisma.crmCustomerProfile.findMany({
-      where: { ownerUserId, archived: false, assignmentStatus: "ASSIGNED" },
-      select: { id: true, sourceCustomerId: true },
-    });
-    const lifecycleMap = await getCrmLifecycleSummariesForCustomers(repProfiles.map((profile) => profile.sourceCustomerId));
-    const lifecycleValues = [...lifecycleMap.values()];
-    const communication = await getCrmCommunicationMetrics({
-      ownerUserIds: [ownerUserId],
-      from: d30,
-      to: now,
-    });
-    const orderedCustomerCount30d = lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= d30).length;
-    const repeatCustomerCount30d = lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= d30).length;
+    const communication = communicationByOwner.get(ownerUserId);
+    const lifecycleStats = ownerLifecycleStats.get(ownerUserId) ?? {
+      orderedCustomerCount30d: 0,
+      repeatCustomerCount30d: 0,
+      dormantCustomerCount: 0,
+      dormantWarningCustomerCount: 0,
+    };
 
     return {
       ...rep,
-      dueCommunicationTaskCount: communication.dueCommunicationTaskCount,
-      doneCommunicationTaskCount: communication.doneCommunicationTaskCount,
-      overdueCommunicationTaskCount: communication.overdueCommunicationTaskCount,
-      communicationTaskCompletionRate: communication.communicationTaskCompletionRate,
-      communicatedCustomerCount30d: communication.communicatedCustomerCount,
-      communicationCoverageRate30d: communication.communicationCoverageRate,
-      orderedCustomerCount30d,
-      repeatCustomerCount30d,
-      repeatCustomerRate30d: orderedCustomerCount30d > 0 ? repeatCustomerCount30d / orderedCustomerCount30d : 0,
-      dormantCustomerCount: lifecycleValues.filter((item) => item.stage === "DORMANT").length,
-      dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length,
+      dueCommunicationTaskCount: communication?.dueCommunicationTaskCount ?? 0,
+      doneCommunicationTaskCount: communication?.doneCommunicationTaskCount ?? 0,
+      overdueCommunicationTaskCount: communication?.overdueCommunicationTaskCount ?? 0,
+      communicatedCustomerCount30d: communication?.communicatedCustomerCount ?? 0,
+      communicationCoverageRate30d: communication?.communicationCoverageRate ?? 0,
+      orderedCustomerCount30d: lifecycleStats.orderedCustomerCount30d,
+      repeatCustomerCount30d: lifecycleStats.repeatCustomerCount30d,
+      repeatCustomerRate30d: lifecycleStats.orderedCustomerCount30d > 0
+        ? lifecycleStats.repeatCustomerCount30d / lifecycleStats.orderedCustomerCount30d
+        : 0,
+      dormantCustomerCount: lifecycleStats.dormantCustomerCount,
+      dormantWarningCustomerCount: lifecycleStats.dormantWarningCustomerCount,
     };
-  }));
+  });
 
   return NextResponse.json({
     global: {

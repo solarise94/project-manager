@@ -59,7 +59,6 @@ function RepDetail() {
     longUnvisitedCount,
     dueCommunicationTaskCount,
     doneCommunicationTaskCount,
-    communicationTaskCompletionRate,
     communicatedCustomerCount30d,
     communicationCoverageRate30d,
     orderedCustomerCount30d,
@@ -175,7 +174,7 @@ function RepDetail() {
                 <h3 className="font-medium mb-2">运营指标</h3>
                 <dl className="text-sm space-y-1">
                   <div className="flex gap-2"><dt className="text-muted-foreground">沟通任务:</dt><dd>{dueCommunicationTaskCount || 0}</dd></div>
-                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通完成率:</dt><dd>{Math.round((communicationTaskCompletionRate || 0) * 100)}%</dd></div>
+                  <div className="flex gap-2"><dt className="text-muted-foreground">已完成沟通:</dt><dd>{doneCommunicationTaskCount || 0}</dd></div>
                   <div className="flex gap-2"><dt className="text-muted-foreground">沟通覆盖率:</dt><dd>{Math.round((communicationCoverageRate30d || 0) * 100)}%</dd></div>
                   <div className="flex gap-2"><dt className="text-muted-foreground">复购率:</dt><dd>{Math.round((repeatCustomerRate30d || 0) * 100)}%</dd></div>
                 </dl>
@@ -294,7 +293,6 @@ function RepDetail() {
                 <h3 className="font-medium">沟通任务检查</h3>
                 <div className="flex justify-between"><span className="text-muted-foreground">应沟通任务</span><span>{dueCommunicationTaskCount || 0}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">已完成沟通任务</span><span>{doneCommunicationTaskCount || 0}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">任务完成率</span><span>{Math.round((communicationTaskCompletionRate || 0) * 100)}%</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">30天有效沟通客户</span><span>{communicatedCustomerCount30d || 0}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">30天沟通覆盖率</span><span>{Math.round((communicationCoverageRate30d || 0) * 100)}%</span></div>
               </CardContent>

@@ -28,22 +28,39 @@ export async function POST(req: NextRequest) {
   const toMark: string[] = [];
   // Track per-owner count for aggregated notifications
   const ownerMarkedCount = new Map<string, number>();
+  const profileIds = profiles.map((profile) => profile.id);
+
+  const [completedCheckins, visitInteractions] = profileIds.length > 0
+    ? await Promise.all([
+        prisma.crmVisitCheckin.findMany({
+          where: { profileId: { in: profileIds }, status: "COMPLETED" },
+          select: { profileId: true, createdAt: true },
+          orderBy: [{ profileId: "asc" }, { createdAt: "desc" }],
+        }),
+        prisma.crmInteraction.findMany({
+          where: { profileId: { in: profileIds }, type: "VISIT" },
+          select: { profileId: true, happenedAt: true },
+          orderBy: [{ profileId: "asc" }, { happenedAt: "desc" }],
+        }),
+      ])
+    : [[], []];
+
+  const lastCheckinMap = new Map<string, Date>();
+  for (const checkin of completedCheckins) {
+    if (!lastCheckinMap.has(checkin.profileId)) {
+      lastCheckinMap.set(checkin.profileId, checkin.createdAt);
+    }
+  }
+
+  const lastVisitInteractionMap = new Map<string, Date>();
+  for (const interaction of visitInteractions) {
+    if (!lastVisitInteractionMap.has(interaction.profileId)) {
+      lastVisitInteractionMap.set(interaction.profileId, interaction.happenedAt);
+    }
+  }
 
   for (const p of profiles) {
-    const [lastCheckin, lastVisitInteraction] = await Promise.all([
-      prisma.crmVisitCheckin.findFirst({
-        where: { profileId: p.id, status: "COMPLETED" },
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      }),
-      prisma.crmInteraction.findFirst({
-        where: { profileId: p.id, type: "VISIT" },
-        orderBy: { happenedAt: "desc" },
-        select: { happenedAt: true },
-      }),
-    ]);
-
-    const lastActivity = lastCheckin?.createdAt ?? lastVisitInteraction?.happenedAt ?? null;
+    const lastActivity = lastCheckinMap.get(p.id) ?? lastVisitInteractionMap.get(p.id) ?? null;
     if (!lastActivity || lastActivity < thresholdDate) {
       toMark.push(p.id);
       ownerMarkedCount.set(p.ownerUserId, (ownerMarkedCount.get(p.ownerUserId) || 0) + 1);

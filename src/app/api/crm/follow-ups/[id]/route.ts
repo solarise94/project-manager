@@ -60,6 +60,7 @@ export async function PATCH(
   }
 
   const needsRecalc = body.status === "DONE" || body.status === "CANCELLED" || body.dueAt !== undefined;
+  let lifecycleSyncInput: { happenedAt: Date; nextActionAt: Date | null } | null = null;
 
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.crmFollowUpTask.update({
@@ -95,16 +96,28 @@ export async function PATCH(
         select: { happenedAt: true, nextActionAt: true, profileId: true },
       });
       if (interaction && interaction.profileId === task.profileId) {
-        await syncCrmLifecycleAfterInteraction(task.profileId, {
+        lifecycleSyncInput = {
           happenedAt: interaction.happenedAt,
           nextActionAt: interaction.nextActionAt,
-          actorUserId: session.user.id,
-        }, tx);
+        };
       }
     }
 
     return result;
   });
+
+  const syncInput = lifecycleSyncInput as { happenedAt: Date; nextActionAt: Date | null } | null;
+  if (syncInput) {
+    try {
+      await syncCrmLifecycleAfterInteraction(task.profileId, {
+        happenedAt: syncInput.happenedAt,
+        nextActionAt: syncInput.nextActionAt,
+        actorUserId: session.user.id,
+      });
+    } catch (error) {
+      console.error(`[CRM][FOLLOW_UP] lifecycle sync failed for profile ${task.profileId}:`, error);
+    }
+  }
 
   return NextResponse.json({ task: updated });
 }

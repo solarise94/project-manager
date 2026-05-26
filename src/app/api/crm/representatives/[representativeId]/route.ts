@@ -159,7 +159,6 @@ export async function GET(
     dueCommunicationTaskCount: communication.dueCommunicationTaskCount,
     doneCommunicationTaskCount: communication.doneCommunicationTaskCount,
     overdueCommunicationTaskCount: communication.overdueCommunicationTaskCount,
-    communicationTaskCompletionRate: communication.communicationTaskCompletionRate,
     communicatedCustomerCount30d: communication.communicatedCustomerCount,
     communicationCoverageRate30d: communication.communicationCoverageRate,
     orderedCustomerCount30d: lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length,

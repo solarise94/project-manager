@@ -540,15 +540,50 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+CRM_LIFECYCLE_SERVICE_NAME="${SERVICE_NAME%.service}-crm-lifecycle.service"
+CRM_LIFECYCLE_TIMER_NAME="${SERVICE_NAME%.service}-crm-lifecycle.timer"
+CRM_LIFECYCLE_SERVICE_FILE="${HOME}/.config/systemd/user/${CRM_LIFECYCLE_SERVICE_NAME}"
+CRM_LIFECYCLE_TIMER_FILE="${HOME}/.config/systemd/user/${CRM_LIFECYCLE_TIMER_NAME}"
+
+echo "[7.7/8] Writing CRM lifecycle timer units..."
+cat > "${CRM_LIFECYCLE_SERVICE_FILE}" <<EOF
+[Unit]
+Description=CRM Lifecycle Scanner (${SERVICE_NAME})
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${TARGET_DIR}
+EnvironmentFile=${TARGET_DIR}/.env
+ExecStart=/bin/bash -c 'set -a; source ${TARGET_DIR}/.env; set +a; exec curl -fsS -X POST -H "Authorization: Bearer \${CRM_LIFECYCLE_CRON_TOKEN:-\${CRM_REVIEW_CRON_TOKEN:-\${REMINDER_CRON_TOKEN}}}" http://127.0.0.1:${PORT}/api/internal/crm-lifecycle/run'
+EOF
+
+cat > "${CRM_LIFECYCLE_TIMER_FILE}" <<EOF
+[Unit]
+Description=CRM Lifecycle Timer (${SERVICE_NAME})
+Requires=${CRM_LIFECYCLE_SERVICE_NAME}
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 echo "[8/8] Restarting ${SERVICE_NAME}..."
 # Stop timers during restart to prevent cron runs against partially-deployed state.
 # Save state so we can restore on failure (set -e will exit on error).
 REMINDER_WAS_ACTIVE=false
 CRM_REVIEW_WAS_ACTIVE=false
+CRM_LIFECYCLE_WAS_ACTIVE=false
 systemctl --user is-active --quiet "${REMINDER_TIMER_NAME}" 2>/dev/null && REMINDER_WAS_ACTIVE=true || true
 systemctl --user is-active --quiet "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null && CRM_REVIEW_WAS_ACTIVE=true || true
+systemctl --user is-active --quiet "${CRM_LIFECYCLE_TIMER_NAME}" 2>/dev/null && CRM_LIFECYCLE_WAS_ACTIVE=true || true
 systemctl --user stop "${REMINDER_TIMER_NAME}" 2>/dev/null || true
 systemctl --user stop "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null || true
+systemctl --user stop "${CRM_LIFECYCLE_TIMER_NAME}" 2>/dev/null || true
 
 # Trap: restore timers on failure so they aren't left stopped
 restore_timers_on_failure() {
@@ -557,6 +592,7 @@ restore_timers_on_failure() {
     echo "  Deploy failed (exit=${exit_code}), restoring timers..."
     [[ "${REMINDER_WAS_ACTIVE}" == "true" ]] && systemctl --user start "${REMINDER_TIMER_NAME}" 2>/dev/null || true
     [[ "${CRM_REVIEW_WAS_ACTIVE}" == "true" ]] && systemctl --user start "${CRM_REVIEW_TIMER_NAME}" 2>/dev/null || true
+    [[ "${CRM_LIFECYCLE_WAS_ACTIVE}" == "true" ]] && systemctl --user start "${CRM_LIFECYCLE_TIMER_NAME}" 2>/dev/null || true
   fi
   return ${exit_code}
 }
@@ -572,6 +608,7 @@ fi
 systemctl --user restart "${SERVICE_NAME}"
 systemctl --user enable --now "${REMINDER_TIMER_NAME}"
 systemctl --user enable --now "${CRM_REVIEW_TIMER_NAME}"
+systemctl --user enable --now "${CRM_LIFECYCLE_TIMER_NAME}"
 
 # Deploy succeeded — disarm the failure-restore trap
 trap - EXIT
@@ -580,6 +617,7 @@ if [[ "${AGENT_RUNTIME_ENABLED}" == "true" ]]; then
 fi
 systemctl --user --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
 systemctl --user --no-pager --full status "${REMINDER_TIMER_NAME}" | sed -n '1,20p'
+systemctl --user --no-pager --full status "${CRM_LIFECYCLE_TIMER_NAME}" | sed -n '1,20p'
 
 echo ""
 echo "Smoke-testing /api/auth/session on port ${PORT}..."

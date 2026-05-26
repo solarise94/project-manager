@@ -10,9 +10,19 @@ export type CrmCommunicationMetrics = {
   doneCommunicationTaskCount: number;
   overdueCommunicationTaskCount: number;
   communicatedCustomerCount: number;
-  communicationTaskCompletionRate: number;
   communicationCoverageRate: number;
 };
+
+function emptyCrmCommunicationMetrics(): CrmCommunicationMetrics {
+  return {
+    assignedCustomerCount: 0,
+    dueCommunicationTaskCount: 0,
+    doneCommunicationTaskCount: 0,
+    overdueCommunicationTaskCount: 0,
+    communicatedCustomerCount: 0,
+    communicationCoverageRate: 0,
+  };
+}
 
 export async function getCrmCommunicationMetrics(
   params: {
@@ -38,15 +48,7 @@ export async function getCrmCommunicationMetrics(
   });
   const scopedProfileIds = profiles.map((profile) => profile.id);
   if (scopedProfileIds.length === 0) {
-    return {
-      assignedCustomerCount: 0,
-      dueCommunicationTaskCount: 0,
-      doneCommunicationTaskCount: 0,
-      overdueCommunicationTaskCount: 0,
-      communicatedCustomerCount: 0,
-      communicationTaskCompletionRate: 0,
-      communicationCoverageRate: 0,
-    };
+    return emptyCrmCommunicationMetrics();
   }
 
   const now = new Date();
@@ -93,12 +95,123 @@ export async function getCrmCommunicationMetrics(
     doneCommunicationTaskCount,
     overdueCommunicationTaskCount,
     communicatedCustomerCount,
-    communicationTaskCompletionRate: dueCommunicationTaskCount > 0
-      ? doneCommunicationTaskCount / dueCommunicationTaskCount
-      : 0,
     communicationCoverageRate: scopedProfileIds.length > 0
       ? communicatedCustomerCount / scopedProfileIds.length
       : 0,
   };
 }
 
+export async function getCrmCommunicationMetricsByOwnerUserIds(
+  params: {
+    ownerUserIds: string[];
+    from: Date;
+    to: Date;
+  },
+  db: DbClient = prisma,
+): Promise<Map<string, CrmCommunicationMetrics>> {
+  const ownerUserIds = [...new Set(params.ownerUserIds.filter(Boolean))];
+  const result = new Map<string, CrmCommunicationMetrics>(
+    ownerUserIds.map((ownerUserId) => [ownerUserId, emptyCrmCommunicationMetrics()]),
+  );
+  if (ownerUserIds.length === 0) return result;
+
+  const profiles = await db.crmCustomerProfile.findMany({
+    where: {
+      ownerUserId: { in: ownerUserIds },
+      archived: false,
+      assignmentStatus: "ASSIGNED",
+    },
+    select: { id: true, ownerUserId: true },
+  });
+  if (profiles.length === 0) return result;
+
+  const profileIds = profiles.map((profile) => profile.id);
+  const profileOwnerMap = new Map(profiles.map((profile) => [profile.id, profile.ownerUserId]));
+  const now = new Date();
+
+  for (const profile of profiles) {
+    const current = result.get(profile.ownerUserId) ?? emptyCrmCommunicationMetrics();
+    current.assignedCustomerCount += 1;
+    result.set(profile.ownerUserId, current);
+  }
+
+  const [dueCounts, doneCounts, overdueCounts, communicatedProfiles] = await Promise.all([
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: { in: ["OPEN", "DONE", "EXPIRED"] },
+        dueAt: { gte: params.from, lt: params.to },
+      },
+      _count: true,
+    }),
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: "DONE",
+        completedAt: { gte: params.from, lt: params.to },
+      },
+      _count: true,
+    }),
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: "OPEN",
+        dueAt: { lt: now },
+      },
+      _count: true,
+    }),
+    db.crmInteraction.findMany({
+      where: {
+        profileId: { in: profileIds },
+        type: { in: CRM_EFFECTIVE_INTERACTION_TYPES as unknown as string[] },
+        happenedAt: { gte: params.from, lt: params.to },
+      },
+      select: { profileId: true },
+      distinct: ["profileId"],
+    }),
+  ]);
+
+  for (const row of dueCounts) {
+    const ownerUserId = profileOwnerMap.get(row.profileId);
+    if (!ownerUserId) continue;
+    const current = result.get(ownerUserId) ?? emptyCrmCommunicationMetrics();
+    current.dueCommunicationTaskCount += row._count;
+    result.set(ownerUserId, current);
+  }
+  for (const row of doneCounts) {
+    const ownerUserId = profileOwnerMap.get(row.profileId);
+    if (!ownerUserId) continue;
+    const current = result.get(ownerUserId) ?? emptyCrmCommunicationMetrics();
+    current.doneCommunicationTaskCount += row._count;
+    result.set(ownerUserId, current);
+  }
+  for (const row of overdueCounts) {
+    const ownerUserId = profileOwnerMap.get(row.profileId);
+    if (!ownerUserId) continue;
+    const current = result.get(ownerUserId) ?? emptyCrmCommunicationMetrics();
+    current.overdueCommunicationTaskCount += row._count;
+    result.set(ownerUserId, current);
+  }
+  for (const row of communicatedProfiles) {
+    const ownerUserId = profileOwnerMap.get(row.profileId);
+    if (!ownerUserId) continue;
+    const current = result.get(ownerUserId) ?? emptyCrmCommunicationMetrics();
+    current.communicatedCustomerCount += 1;
+    result.set(ownerUserId, current);
+  }
+
+  for (const [ownerUserId, metrics] of result) {
+    metrics.communicationCoverageRate = metrics.assignedCustomerCount > 0
+      ? metrics.communicatedCustomerCount / metrics.assignedCustomerCount
+      : 0;
+    result.set(ownerUserId, metrics);
+  }
+
+  return result;
+}

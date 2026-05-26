@@ -196,13 +196,13 @@ export interface CrmRepresentativeOpsItem {
   userName: string | null;
   customerCount: number;
   visitCheckinCount: number;
+  interactionCount30d?: number;
   lastCheckinAt: string | null;
   overdueFollowUps: number;
   longUnvisitedCount: number;
   dueCommunicationTaskCount?: number;
   doneCommunicationTaskCount?: number;
   overdueCommunicationTaskCount?: number;
-  communicationTaskCompletionRate?: number;
   communicatedCustomerCount30d?: number;
   communicationCoverageRate30d?: number;
   orderedCustomerCount30d?: number;
@@ -211,6 +211,7 @@ export interface CrmRepresentativeOpsItem {
   dormantCustomerCount?: number;
   dormantWarningCustomerCount?: number;
   periodVisitCheckinCount?: number;
+  periodInteractionCount?: number;
   periodNewCustomerCount?: number;
   periodReservedOrderCount?: number;
   periodReservedOrderAmount?: number;
@@ -228,7 +229,6 @@ export interface CrmRepresentativeDetail {
   dueCommunicationTaskCount?: number;
   doneCommunicationTaskCount?: number;
   overdueCommunicationTaskCount?: number;
-  communicationTaskCompletionRate?: number;
   communicatedCustomerCount30d?: number;
   communicationCoverageRate30d?: number;
   orderedCustomerCount30d?: number;
@@ -309,7 +309,6 @@ export interface CrmRepresentativeReport {
     communicatedCustomerCount: number;
     dueCommunicationTaskCount?: number;
     doneCommunicationTaskCount?: number;
-    communicationTaskCompletionRate?: number;
   };
   customers: CrmReportCustomerItem[];
   lines: CrmReportLineItem[];

@@ -22,6 +22,68 @@ const profileInclude = {
   _count: { select: { interactions: true, followUpTasks: true, visitCheckins: true, addresses: true } },
 };
 
+type LifecycleSummaryMap = Awaited<ReturnType<typeof getCrmLifecycleSummariesForCustomers>>;
+
+function matchesLifecycleFilters(
+  lifecycle: LifecycleSummaryMap extends Map<string, infer TValue> ? TValue | undefined : never,
+  filters: {
+    hasOrder: string;
+    repeatCustomer: string;
+    dormantRisk: string;
+    communicationDue: string;
+  },
+) {
+  const validOrderCount = lifecycle?.validOrderCount ?? 0;
+  const isRepeat = lifecycle?.isRepeatCustomer ?? false;
+  const isDormantRisk = lifecycle?.dormantRisk ?? false;
+  const hasCommunicationDue = Boolean(lifecycle?.nextCommunicationTaskAt);
+
+  if (filters.hasOrder === "true" && validOrderCount <= 0) return false;
+  if (filters.hasOrder === "false" && validOrderCount > 0) return false;
+  if (filters.repeatCustomer === "true" && !isRepeat) return false;
+  if (filters.repeatCustomer === "false" && isRepeat) return false;
+  if (filters.dormantRisk === "true" && !isDormantRisk) return false;
+  if (filters.dormantRisk === "false" && isDormantRisk) return false;
+  if (filters.communicationDue === "true" && !hasCommunicationDue) return false;
+  if (filters.communicationDue === "false" && hasCommunicationDue) return false;
+
+  return true;
+}
+
+function enrichProfiles(
+  profiles: Array<{
+    sourceCustomerId: string;
+    personCategory: string | null;
+    graduationDate: Date | null;
+    lastOrderAt: Date | null;
+  } & Record<string, unknown>>,
+  lifecycleMap: LifecycleSummaryMap,
+) {
+  return profiles.map((profile) => {
+    const lifecycle = lifecycleMap.get(profile.sourceCustomerId);
+    return {
+      ...profile,
+      graduationStatus: deriveGraduationStatus(profile.personCategory, profile.graduationDate),
+      validOrderCount: lifecycle?.validOrderCount ?? 0,
+      lastOrderAt: lifecycle?.lastOrderAt?.toISOString() ?? null,
+      isRepeatCustomer: lifecycle?.isRepeatCustomer ?? false,
+      dormantRisk: lifecycle?.dormantRisk ?? false,
+      nextCommunicationTaskAt: lifecycle?.nextCommunicationTaskAt?.toISOString() ?? null,
+    };
+  });
+}
+
+function compareNullableDates(left: Date | null, right: Date | null, sortOrder: "asc" | "desc") {
+  if (!left && !right) return 0;
+  if (!left) return 1;
+  if (!right) return -1;
+  return sortOrder === "asc" ? left.getTime() - right.getTime() : right.getTime() - left.getTime();
+}
+
+function compareNumbers(left: number, right: number, sortOrder: "asc" | "desc") {
+  return sortOrder === "asc" ? left - right : right - left;
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -106,44 +168,95 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = andConditions.length === 1 ? andConditions[0] : { AND: andConditions };
 
-  const validSorts = ["updatedAt", "createdAt", "lastFollowUpAt", "nextFollowUpAt", "stage"];
+  const validSorts = ["updatedAt", "createdAt", "lastFollowUpAt", "nextFollowUpAt", "stage", "lastOrderAt", "validOrderCount"];
   const sortField = validSorts.includes(sort) ? sort : "updatedAt";
   const sortOrder = order === "asc" ? "asc" : "desc";
+  const lifecycleFilters = { hasOrder, repeatCustomer, dormantRisk, communicationDue };
+  const hasLifecycleFilters = Object.values(lifecycleFilters).some(Boolean);
+  const usesLifecycleSort = sortField === "lastOrderAt" || sortField === "validOrderCount";
 
-  const profiles = await prisma.crmCustomerProfile.findMany({
-    where,
-    include: profileInclude,
-    orderBy: { [sortField]: sortOrder },
-  });
+  let pagedProfiles: Awaited<ReturnType<typeof prisma.crmCustomerProfile.findMany>>;
+  let lifecycleMap: LifecycleSummaryMap;
+  let total: number;
 
-  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(profiles.map((profile) => profile.sourceCustomerId));
-  let enriched = profiles.map((p) => {
-    const lifecycle = lifecycleMap.get(p.sourceCustomerId);
-    return {
-      ...p,
-      graduationStatus: deriveGraduationStatus(p.personCategory, p.graduationDate),
-      validOrderCount: lifecycle?.validOrderCount ?? 0,
-      lastOrderAt: lifecycle?.lastOrderAt?.toISOString() ?? p.lastOrderAt?.toISOString?.() ?? null,
-      isRepeatCustomer: lifecycle?.isRepeatCustomer ?? false,
-      dormantRisk: lifecycle?.dormantRisk ?? false,
-      nextCommunicationTaskAt: lifecycle?.nextCommunicationTaskAt?.toISOString() ?? null,
-    };
-  });
+  if (!hasLifecycleFilters && !usesLifecycleSort) {
+    const [profiles, count] = await Promise.all([
+      prisma.crmCustomerProfile.findMany({
+        where,
+        include: profileInclude,
+        orderBy: { [sortField]: sortOrder },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.crmCustomerProfile.count({ where }),
+    ]);
+    pagedProfiles = profiles;
+    lifecycleMap = await getCrmLifecycleSummariesForCustomers(
+      profiles.map((profile) => profile.sourceCustomerId),
+    );
+    total = count;
+  } else {
+    const candidates = await prisma.crmCustomerProfile.findMany({
+      where,
+      select: {
+        sourceCustomerId: true,
+        updatedAt: true,
+      },
+      orderBy: usesLifecycleSort
+        ? [{ updatedAt: "desc" }]
+        : [{ [sortField]: sortOrder }],
+    });
+    lifecycleMap = await getCrmLifecycleSummariesForCustomers(
+      candidates.map((profile) => profile.sourceCustomerId),
+    );
 
-  if (hasOrder === "true") enriched = enriched.filter((profile) => profile.validOrderCount > 0);
-  if (hasOrder === "false") enriched = enriched.filter((profile) => profile.validOrderCount === 0);
-  if (repeatCustomer === "true") enriched = enriched.filter((profile) => profile.isRepeatCustomer);
-  if (repeatCustomer === "false") enriched = enriched.filter((profile) => !profile.isRepeatCustomer);
-  if (dormantRisk === "true") enriched = enriched.filter((profile) => profile.dormantRisk);
-  if (dormantRisk === "false") enriched = enriched.filter((profile) => !profile.dormantRisk);
-  if (communicationDue === "true") enriched = enriched.filter((profile) => !!profile.nextCommunicationTaskAt);
-  if (communicationDue === "false") enriched = enriched.filter((profile) => !profile.nextCommunicationTaskAt);
+    const filteredCandidates = candidates.filter((profile) =>
+      matchesLifecycleFilters(lifecycleMap.get(profile.sourceCustomerId), lifecycleFilters),
+    );
 
-  const total = enriched.length;
-  const paged = enriched.slice((page - 1) * pageSize, page * pageSize);
+    if (usesLifecycleSort) {
+      filteredCandidates.sort((left, right) => {
+        const leftLifecycle = lifecycleMap.get(left.sourceCustomerId);
+        const rightLifecycle = lifecycleMap.get(right.sourceCustomerId);
+        const primary = sortField === "lastOrderAt"
+          ? compareNullableDates(leftLifecycle?.lastOrderAt ?? null, rightLifecycle?.lastOrderAt ?? null, sortOrder)
+          : compareNumbers(leftLifecycle?.validOrderCount ?? 0, rightLifecycle?.validOrderCount ?? 0, sortOrder);
+        if (primary !== 0) return primary;
+        return right.updatedAt.getTime() - left.updatedAt.getTime();
+      });
+    }
+
+    const matchingCustomerIds = filteredCandidates.map((profile) => profile.sourceCustomerId);
+
+    total = matchingCustomerIds.length;
+    const pageCustomerIds = matchingCustomerIds.slice((page - 1) * pageSize, page * pageSize);
+
+    if (pageCustomerIds.length === 0) {
+      pagedProfiles = [];
+    } else {
+      const pageOrder = new Map(pageCustomerIds.map((customerId, index) => [customerId, index]));
+      const fetchedProfiles = await prisma.crmCustomerProfile.findMany({
+        where: {
+          AND: [
+            where,
+            { sourceCustomerId: { in: pageCustomerIds } },
+          ],
+        },
+        include: profileInclude,
+        orderBy: usesLifecycleSort ? { updatedAt: "desc" } : { [sortField]: sortOrder },
+      });
+      pagedProfiles = fetchedProfiles.sort(
+        (left, right) =>
+          (pageOrder.get(left.sourceCustomerId) ?? Number.MAX_SAFE_INTEGER)
+          - (pageOrder.get(right.sourceCustomerId) ?? Number.MAX_SAFE_INTEGER),
+      );
+    }
+  }
+
+  const enriched = enrichProfiles(pagedProfiles, lifecycleMap);
 
   return NextResponse.json({
-    profiles: paged,
+    profiles: enriched,
     total,
     page,
     pageSize,

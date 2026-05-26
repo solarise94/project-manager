@@ -131,6 +131,10 @@ on_exit() {
     echo "  Restoring CRM review timer (deploy failed, exit=${exit_code})..."
     remote_ssh "sudo systemctl start ${CRM_REVIEW_TIMER:-task-manager-crm-review.timer}" 2>/dev/null || true
   fi
+  if [[ "${CRM_LIFECYCLE_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
+    echo "  Restoring CRM lifecycle timer (deploy failed, exit=${exit_code})..."
+    remote_ssh "sudo systemctl start ${CRM_LIFECYCLE_TIMER:-task-manager-crm-lifecycle.timer}" 2>/dev/null || true
+  fi
 
   rm -rf "${TMP_DIR}"
 
@@ -280,6 +284,20 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     CRM_REVIEW_WAS_ACTIVE=true
     echo "  Stopping CRM review service (oneshot may still be running)..."
     remote_ssh "sudo systemctl stop ${CRM_REVIEW_SERVICE}" 2>/dev/null || true
+  fi
+
+  CRM_LIFECYCLE_TIMER="task-manager-crm-lifecycle.timer"
+  CRM_LIFECYCLE_SERVICE="task-manager-crm-lifecycle.service"
+  CRM_LIFECYCLE_WAS_ACTIVE=false
+  if remote_ssh "sudo systemctl is-active --quiet ${CRM_LIFECYCLE_TIMER}" 2>/dev/null; then
+    CRM_LIFECYCLE_WAS_ACTIVE=true
+    echo "  Stopping CRM lifecycle timer during DB migration..."
+    remote_ssh "sudo systemctl stop ${CRM_LIFECYCLE_TIMER}" 2>/dev/null || true
+  fi
+  if remote_ssh "sudo systemctl is-active --quiet ${CRM_LIFECYCLE_SERVICE}" 2>/dev/null; then
+    CRM_LIFECYCLE_WAS_ACTIVE=true
+    echo "  Stopping CRM lifecycle service (oneshot may still be running)..."
+    remote_ssh "sudo systemctl stop ${CRM_LIFECYCLE_SERVICE}" 2>/dev/null || true
   fi
 
   # Checkpoint WAL on the remote BEFORE pulling, so dev.db is self-consistent
@@ -717,6 +735,47 @@ UNITEOF"
     remote_ssh "sudo systemctl daemon-reload && sudo systemctl enable --now ${CRM_REVIEW_TIMER}"
   else
     echo "  Skipping CRM review timer (no token available)."
+  fi
+
+  echo ""
+  echo "[11.5/11] Setting up CRM lifecycle timer..."
+
+  CRM_LIFECYCLE_SERVICE="task-manager-crm-lifecycle.service"
+  CRM_LIFECYCLE_TIMER="task-manager-crm-lifecycle.timer"
+  CRM_LIFECYCLE_TOKEN_VALUE="${CRM_LIFECYCLE_CRON_TOKEN:-${CRM_REVIEW_CRON_TOKEN_VALUE:-${REMINDER_CRON_TOKEN_VALUE}}}"
+
+  if [[ -n "${CRM_LIFECYCLE_TOKEN_VALUE}" ]]; then
+    echo "  Writing ${CRM_LIFECYCLE_SERVICE}..."
+    remote_ssh "sudo tee /etc/systemd/system/${CRM_LIFECYCLE_SERVICE} > /dev/null <<'UNITEOF'
+[Unit]
+Description=CRM Lifecycle Scanner
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=${REMOTE_APP_DIR}/.env
+ExecStart=/bin/bash -c 'set -a; source ${REMOTE_APP_DIR}/.env; set +a; exec curl -fsS -X POST -H \"Authorization: Bearer \${CRM_LIFECYCLE_CRON_TOKEN:-\${CRM_REVIEW_CRON_TOKEN:-\${REMINDER_CRON_TOKEN}}}\" http://127.0.0.1:${REMOTE_PORT}/api/internal/crm-lifecycle/run'
+UNITEOF"
+
+    echo "  Writing ${CRM_LIFECYCLE_TIMER}..."
+    remote_ssh "sudo tee /etc/systemd/system/${CRM_LIFECYCLE_TIMER} > /dev/null <<'UNITEOF'
+[Unit]
+Description=CRM Lifecycle Timer
+Requires=${CRM_LIFECYCLE_SERVICE}
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 02:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNITEOF"
+
+    echo "  Enabling and starting CRM lifecycle timer..."
+    remote_ssh "sudo systemctl daemon-reload && sudo systemctl enable --now ${CRM_LIFECYCLE_TIMER}"
+  else
+    echo "  Skipping CRM lifecycle timer (no token available)."
   fi
 else
   echo ""

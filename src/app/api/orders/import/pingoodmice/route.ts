@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
-import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
+import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
 
 async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string; category?: string } | { error: string }> {
   const ct = req.headers.get("content-type") || "";
@@ -169,9 +169,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  for (const customerId of touchedCustomerIds) {
-    await syncCrmLifecycleForCustomer(customerId);
-  }
+  await syncCrmLifecycleForCustomersBestEffort(touchedCustomerIds, "orders.import.pingoodmice");
 
   return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });
 }

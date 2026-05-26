@@ -13,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeOpsItem } from "@/lib/crm/types";
 import Link from "next/link";
-import { Search, Users, MapPin, AlertTriangle, Clock, X, UserCog, ShoppingCart } from "lucide-react";
+import { Search, Users, MessageSquare, AlertTriangle, Clock, X, UserCog, ShoppingCart } from "lucide-react";
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("zh-CN", {
@@ -94,9 +94,9 @@ function RepOpsList() {
 
   const hasPeriod = period === "today" || period === "week";
   const totalCustomers = reps.reduce((s, r) => s + r.customerCount, 0);
-  const totalCheckins = hasPeriod
-    ? reps.reduce((s, r) => s + (r.periodVisitCheckinCount || 0), 0)
-    : reps.reduce((s, r) => s + r.visitCheckinCount, 0);
+  const totalInteractions = hasPeriod
+    ? reps.reduce((s, r) => s + (r.periodInteractionCount || 0), 0)
+    : reps.reduce((s, r) => s + (r.interactionCount30d || 0), 0);
   const totalNewCustomers = hasPeriod
     ? reps.reduce((s, r) => s + (r.periodNewCustomerCount || 0), 0)
     : 0;
@@ -122,7 +122,7 @@ function RepOpsList() {
       <div className={`grid grid-cols-2 gap-3 ${hasPeriod ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
         {hasPeriod ? (
           <>
-            <StatCard icon={MapPin} label="拜访签到" value={totalCheckins} />
+            <StatCard icon={MessageSquare} label="已有客户沟通" value={totalInteractions} />
             <StatCard icon={Users} label="新增客户" value={totalNewCustomers} />
             <StatCard icon={ShoppingCart} label="下单数" value={totalOrders} />
             <StatCard icon={ShoppingCart} label="下单金额" value={formatCurrency(totalOrderAmount)} />
@@ -131,7 +131,7 @@ function RepOpsList() {
         ) : (
           <>
             <StatCard icon={Users} label="总客户数" value={totalCustomers} />
-            <StatCard icon={MapPin} label="30天拜访" value={totalCheckins} />
+            <StatCard icon={MessageSquare} label="30天已有客户沟通" value={totalInteractions} />
             <StatCard icon={Clock} label="沟通任务" value={totalDueCommunication} />
             <StatCard icon={Clock} label="已完成沟通" value={totalDoneCommunication} />
             <StatCard icon={AlertTriangle} label="逾期跟进" value={totalOverdue} color={totalOverdue > 0 ? "text-red-600" : undefined} />
@@ -211,7 +211,7 @@ function RepOpsList() {
           <SelectContent>
             <SelectItem value="name">姓名</SelectItem>
             <SelectItem value="customerCount">客户数</SelectItem>
-            <SelectItem value="visitCheckinCount">拜访数</SelectItem>
+            <SelectItem value="interactionCount30d">沟通数</SelectItem>
             <SelectItem value="overdueFollowUps">逾期数</SelectItem>
             <SelectItem value="longUnvisitedCount">长期未访</SelectItem>
           </SelectContent>
@@ -240,7 +240,7 @@ function RepOpsList() {
                 <th className="text-left p-3 font-medium hidden lg:table-cell">地区</th>
                 {hasPeriod ? (
                   <>
-                    <th className="text-right p-3 font-medium">拜访签到</th>
+                    <th className="text-right p-3 font-medium">已有客户沟通</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">新增客户</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">下单数</th>
                     <th className="text-right p-3 font-medium hidden lg:table-cell">下单金额</th>
@@ -248,9 +248,9 @@ function RepOpsList() {
                 ) : (
                   <>
                     <th className="text-right p-3 font-medium">客户数</th>
-                    <th className="text-right p-3 font-medium hidden sm:table-cell">30天拜访</th>
+                    <th className="text-right p-3 font-medium hidden sm:table-cell">30天已有客户沟通</th>
                     <th className="text-right p-3 font-medium hidden md:table-cell">沟通任务</th>
-                    <th className="text-right p-3 font-medium hidden lg:table-cell">完成率</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">已完成沟通</th>
                     <th className="text-right p-3 font-medium hidden lg:table-cell">复购率</th>
                   </>
                 )}
@@ -280,7 +280,7 @@ function RepOpsList() {
                   </td>
                   {hasPeriod ? (
                     <>
-                      <td className="p-3 text-right font-medium">{r.periodVisitCheckinCount ?? 0}</td>
+                      <td className="p-3 text-right font-medium">{r.periodInteractionCount ?? 0}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.periodNewCustomerCount ?? 0}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.periodReservedOrderCount ?? 0}</td>
                       <td className="p-3 text-right hidden lg:table-cell">{formatCurrency(r.periodReservedOrderAmount ?? 0)}</td>
@@ -288,9 +288,9 @@ function RepOpsList() {
                   ) : (
                     <>
                       <td className="p-3 text-right font-medium">{r.customerCount}</td>
-                      <td className="p-3 text-right hidden sm:table-cell">{r.visitCheckinCount}</td>
+                      <td className="p-3 text-right hidden sm:table-cell">{r.interactionCount30d ?? 0}</td>
                       <td className="p-3 text-right hidden md:table-cell">{r.dueCommunicationTaskCount ?? 0}</td>
-                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.communicationTaskCompletionRate || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden lg:table-cell">{r.doneCommunicationTaskCount ?? 0}</td>
                       <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
                     </>
                   )}

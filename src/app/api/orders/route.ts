@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
+import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
 import { resolveCustomerBusinessContext } from "@/lib/business/customer-context";
 import { generateProjectNo } from "@/lib/project-number";
 import { linkOrderToProject, OrderProjectCustomerConflictError } from "@/lib/orders/link-project";
@@ -399,9 +399,10 @@ export async function POST(req: NextRequest) {
     ).catch(() => {});
   }
 
-  if (order?.customerId) {
-    await syncCrmLifecycleForCustomer(order.customerId);
-  }
+  await syncCrmLifecycleForCustomersBestEffort(
+    order?.customerId ? [order.customerId] : [],
+    "orders.create",
+  );
 
   return NextResponse.json({ order }, { status: 201 });
 }

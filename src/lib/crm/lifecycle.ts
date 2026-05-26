@@ -5,7 +5,7 @@ import {
   CRM_DORMANT_WARNING_DAYS,
   CRM_EFFECTIVE_INTERACTION_TYPES,
 } from "@/lib/crm/constants";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -13,6 +13,13 @@ type OrderAggregate = {
   validOrderCount: number;
   validOrderAmount: number;
   lastOrderAt: Date | null;
+};
+
+type OrderAggregateRow = {
+  customerId: string | null;
+  validOrderCount: number;
+  validOrderAmount: number | null;
+  lastOrderAt: Date | string | null;
 };
 
 type InteractionAggregate = {
@@ -66,12 +73,45 @@ function subtractDays(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-function resolveOrderRefDate(order: {
-  orderedAt: Date | null;
-  confirmedAt: Date | null;
-  createdAt: Date;
-}) {
-  return order.orderedAt ?? order.confirmedAt ?? order.createdAt;
+function isSameDateTime(left: Date | null, right: Date | null) {
+  if (!left && !right) return true;
+  if (!left || !right) return false;
+  return left.getTime() === right.getTime();
+}
+
+async function getOrderAggregatesForCustomers(
+  customerIds: string[],
+  db: DbClient = prisma,
+): Promise<Map<string, OrderAggregate>> {
+  const uniqueIds = [...new Set(customerIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Map();
+
+  const rows = await db.$queryRaw<OrderAggregateRow[]>(Prisma.sql`
+    SELECT
+      "customerId" AS "customerId",
+      COUNT(*) AS "validOrderCount",
+      SUM(COALESCE("financeAmountOverride", "totalAmount", 0)) AS "validOrderAmount",
+      MAX(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "lastOrderAt"
+    FROM "Order"
+    WHERE "customerId" IN (${Prisma.join(uniqueIds)})
+      AND "deleted" = ${false}
+      AND "archived" = ${false}
+      AND "status" IN (${Prisma.join(["CONFIRMED", "CLOSED"])})
+    GROUP BY "customerId"
+  `);
+
+  return new Map(
+    rows
+      .filter((row): row is OrderAggregateRow & { customerId: string } => Boolean(row.customerId))
+      .map((row) => [
+        row.customerId,
+        {
+          validOrderCount: Number(row.validOrderCount ?? 0),
+          validOrderAmount: Number(row.validOrderAmount ?? 0),
+          lastOrderAt: row.lastOrderAt ? new Date(row.lastOrderAt) : null,
+        },
+      ]),
+  );
 }
 
 export async function getCrmLifecycleSummaryByCustomerId(
@@ -166,23 +206,8 @@ export async function getCrmLifecycleSummariesForCustomers(
   const dormantWarningDate = subtractDays(CRM_DORMANT_WARNING_DAYS);
   const dormantThresholdDate = subtractDays(CRM_DORMANT_THRESHOLD_DAYS);
 
-  const [orders, interactions, openTasks, doneTasks30d] = await Promise.all([
-    db.order.findMany({
-      where: {
-        customerId: { in: uniqueIds },
-        deleted: false,
-        archived: false,
-        status: { in: ["CONFIRMED", "CLOSED"] },
-      },
-      select: {
-        customerId: true,
-        orderedAt: true,
-        confirmedAt: true,
-        createdAt: true,
-        totalAmount: true,
-        financeAmountOverride: true,
-      },
-    }),
+  const [orderAggMap, interactions, openTasks, doneTasks30d] = await Promise.all([
+    getOrderAggregatesForCustomers(uniqueIds, db),
     db.crmInteraction.findMany({
       where: {
         profileId: { in: profileIds },
@@ -218,21 +243,6 @@ export async function getCrmLifecycleSummariesForCustomers(
       },
     }),
   ]);
-
-  const orderAggMap = new Map<string, OrderAggregate>();
-  for (const order of orders) {
-    if (!order.customerId) continue;
-    const current = orderAggMap.get(order.customerId) ?? {
-      validOrderCount: 0,
-      validOrderAmount: 0,
-      lastOrderAt: null,
-    };
-    current.validOrderCount += 1;
-    current.validOrderAmount += order.financeAmountOverride ?? order.totalAmount ?? 0;
-    const refDate = resolveOrderRefDate(order);
-    if (!current.lastOrderAt || refDate > current.lastOrderAt) current.lastOrderAt = refDate;
-    orderAggMap.set(order.customerId, current);
-  }
 
   const interactionMap = new Map<string, Date>();
   for (const interaction of interactions) {
@@ -334,7 +344,25 @@ export async function syncCrmLifecycleForCustomer(
   }
 
   const nextFollowUpAt = summary.nextCommunicationTaskAt;
-  const changed = previousStage !== nextStage || summary.lastOrderAt !== null;
+  const currentProfile = await db.crmCustomerProfile.findUnique({
+    where: { id: summary.profileId },
+    select: { lastOrderAt: true, nextFollowUpAt: true },
+  });
+  const changed = previousStage !== nextStage
+    || !isSameDateTime(currentProfile?.lastOrderAt ?? null, summary.lastOrderAt)
+    || !isSameDateTime(currentProfile?.nextFollowUpAt ?? null, nextFollowUpAt);
+
+  if (!changed) {
+    return {
+      profileId: summary.profileId,
+      customerId: summary.customerId,
+      previousStage,
+      nextStage,
+      validOrderCount: summary.validOrderCount,
+      lastOrderAt: summary.lastOrderAt,
+      changed: false,
+    };
+  }
 
   await db.crmCustomerProfile.update({
     where: { id: summary.profileId },
@@ -354,6 +382,22 @@ export async function syncCrmLifecycleForCustomer(
     lastOrderAt: summary.lastOrderAt,
     changed,
   };
+}
+
+export async function syncCrmLifecycleForCustomersBestEffort(
+  customerIds: Iterable<string>,
+  context: string,
+  db: DbClient = prisma,
+): Promise<void> {
+  const uniqueCustomerIds = [...new Set(Array.from(customerIds).filter(Boolean))];
+
+  for (const customerId of uniqueCustomerIds) {
+    try {
+      await syncCrmLifecycleForCustomer(customerId, db);
+    } catch (error) {
+      console.error(`[CRM][LIFECYCLE] ${context} failed for customer ${customerId}:`, error);
+    }
+  }
 }
 
 export async function syncCrmLifecycleAfterInteraction(
@@ -456,8 +500,13 @@ export async function scanDormantCrmProfiles(
 
   let warnedCount = 0;
   let dormantCount = 0;
+  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(
+    profiles.map((profile) => profile.sourceCustomerId),
+    db,
+  );
+
   for (const profile of profiles) {
-    const summary = await getCrmLifecycleSummaryByCustomerId(profile.sourceCustomerId, db);
+    const summary = lifecycleMap.get(profile.sourceCustomerId);
     if (!summary) continue;
     const baseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
     if (summary.validOrderCount > 0) continue;
@@ -511,35 +560,9 @@ export async function getOrderAggregate(
   customerId: string,
   db: DbClient = prisma,
 ): Promise<OrderAggregate> {
-  const orders = await db.order.findMany({
-    where: {
-      customerId,
-      deleted: false,
-      archived: false,
-      status: { in: ["CONFIRMED", "CLOSED"] },
-    },
-    select: {
-      orderedAt: true,
-      confirmedAt: true,
-      createdAt: true,
-      totalAmount: true,
-      financeAmountOverride: true,
-    },
-  });
-
-  let lastOrderAt: Date | null = null;
-  let validOrderAmount = 0;
-  for (const order of orders) {
-    validOrderAmount += order.financeAmountOverride ?? order.totalAmount ?? 0;
-    const refDate = resolveOrderRefDate(order);
-    if (!lastOrderAt || refDate > lastOrderAt) lastOrderAt = refDate;
-  }
-
-  return {
-    validOrderCount: orders.length,
-    validOrderAmount,
-    lastOrderAt,
-  };
+  return getOrderAggregatesForCustomers([customerId], db).then(
+    (aggregates) => aggregates.get(customerId) ?? { validOrderCount: 0, validOrderAmount: 0, lastOrderAt: null },
+  );
 }
 
 async function getInteractionAggregate(profileId: string, db: DbClient): Promise<InteractionAggregate> {

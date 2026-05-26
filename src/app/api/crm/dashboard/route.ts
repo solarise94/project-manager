@@ -3,8 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
-import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
-import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { CRM_EFFECTIVE_INTERACTION_TYPES } from "@/lib/crm/constants";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -23,13 +22,31 @@ export async function GET() {
   const interactionProfileFilter = scopedUserIds
     ? { profile: { ownerUserId: { in: scopedUserIds } } }
     : {};
+  const visibleProfileWhere = { ...roleWhere, archived: false };
+  const assignedVisibleProfileWhere = { ...visibleProfileWhere, assignmentStatus: "ASSIGNED" };
+  const validOrderWhere = {
+    deleted: false,
+    archived: false,
+    status: { in: ["CONFIRMED", "CLOSED"] },
+  };
+  const warningDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-  const [profiles, totalProfiles, myProfiles, pendingFollowUps, overdueFollowUps, thisWeekCheckins, stageGroups, recentInteractions] = await Promise.all([
-    prisma.crmCustomerProfile.findMany({
-      where: { ...roleWhere, archived: false },
-      select: { id: true, sourceCustomerId: true },
-    }),
-    prisma.crmCustomerProfile.count({ where: { ...roleWhere, archived: false } }),
+  const [
+    totalProfiles,
+    myProfiles,
+    pendingFollowUps,
+    overdueFollowUps,
+    thisWeekCheckins,
+    stageGroups,
+    recentInteractions,
+    orderedCustomerCount,
+    dormantCustomerCount,
+    dormantWarningCustomerCount,
+    assignedCustomerCount,
+    communicatedInteractions,
+    repeatedOrderGroups,
+  ] = await Promise.all([
+    prisma.crmCustomerProfile.count({ where: visibleProfileWhere }),
     prisma.crmCustomerProfile.count({ where: { ownerUserId: session.user.id, archived: false } }),
     prisma.crmFollowUpTask.count({
       where: { status: "OPEN", ...followUpOwnerFilter },
@@ -42,7 +59,7 @@ export async function GET() {
     }),
     prisma.crmCustomerProfile.groupBy({
       by: ["stage"],
-      where: { ...roleWhere, archived: false },
+      where: visibleProfileWhere,
       _count: true,
     }),
     prisma.crmInteraction.findMany({
@@ -51,19 +68,63 @@ export async function GET() {
       orderBy: { happenedAt: "desc" },
       take: 10,
     }),
+    prisma.crmCustomerProfile.count({
+      where: {
+        ...visibleProfileWhere,
+        sourceCustomer: { orders: { some: validOrderWhere } },
+      },
+    }),
+    prisma.crmCustomerProfile.count({
+      where: { ...visibleProfileWhere, stage: "DORMANT" },
+    }),
+    prisma.crmCustomerProfile.count({
+      where: {
+        ...visibleProfileWhere,
+        assignmentStatus: "ASSIGNED",
+        stage: { in: ["NEW", "CONTACTED", "FOLLOWING"] },
+        sourceCustomer: { orders: { none: validOrderWhere } },
+        OR: [
+          { lastFollowUpAt: { lt: warningDate } },
+          { AND: [{ lastFollowUpAt: null }, { assignedAt: { lt: warningDate } }] },
+          { AND: [{ lastFollowUpAt: null }, { assignedAt: null }, { createdAt: { lt: warningDate } }] },
+        ],
+      },
+    }),
+    prisma.crmCustomerProfile.count({ where: assignedVisibleProfileWhere }),
+    prisma.crmInteraction.findMany({
+      where: {
+        profile: assignedVisibleProfileWhere,
+        type: { in: CRM_EFFECTIVE_INTERACTION_TYPES as unknown as string[] },
+        happenedAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), lt: now },
+      },
+      select: { profileId: true },
+      distinct: ["profileId"],
+    }),
+    prisma.order.groupBy({
+      by: ["customerId"],
+      where: {
+        ...validOrderWhere,
+        customerId: { not: null },
+      },
+      _count: true,
+    }),
   ]);
 
-  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(profiles.map((profile) => profile.sourceCustomerId));
-  const lifecycleValues = [...lifecycleMap.values()];
-  const orderedCustomerCount = lifecycleValues.filter((item) => item.validOrderCount > 0).length;
-  const repeatCustomerCount = lifecycleValues.filter((item) => item.isRepeatCustomer).length;
-  const dormantCustomerCount = lifecycleValues.filter((item) => item.stage === "DORMANT").length;
-  const dormantWarningCustomerCount = lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length;
-  const communicationMetrics = await getCrmCommunicationMetrics({
-    profileIds: profiles.map((profile) => profile.id),
-    from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
-    to: now,
-  });
+  const repeatedCustomerIds = repeatedOrderGroups
+    .filter((group) => group.customerId && group._count >= 2)
+    .map((group) => group.customerId as string);
+  const repeatCustomerCount = repeatedCustomerIds.length > 0
+    ? await prisma.crmCustomerProfile.count({
+        where: {
+          ...visibleProfileWhere,
+          sourceCustomerId: { in: repeatedCustomerIds },
+        },
+      })
+    : 0;
+  const communicatedCustomerCount = communicatedInteractions.length;
+  const communicationCoverageRate30d = assignedCustomerCount > 0
+    ? communicatedCustomerCount / assignedCustomerCount
+    : 0;
 
   return NextResponse.json({
     stats: {
@@ -77,8 +138,8 @@ export async function GET() {
       repeatCustomerRate: orderedCustomerCount > 0 ? repeatCustomerCount / orderedCustomerCount : 0,
       dormantCustomerCount,
       dormantWarningCustomerCount,
-      communicatedCustomerCount30d: communicationMetrics.communicatedCustomerCount,
-      communicationCoverageRate30d: communicationMetrics.communicationCoverageRate,
+      communicatedCustomerCount30d: communicatedCustomerCount,
+      communicationCoverageRate30d,
       stageDistribution: stageGroups.map((g) => ({ stage: g.stage, _count: g._count })),
       recentInteractions,
     },

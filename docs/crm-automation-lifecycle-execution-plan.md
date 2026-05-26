@@ -29,7 +29,7 @@ npm run build
 ### 产品目标
 
 1. CRM 首页展示生命周期分布和关键转化指标。
-2. 代表运营页面展示每个代表的客户数、沟通任务数、沟通完成率、下单客户数、复购客户数、复购率、休眠风险。
+2. 代表运营页面展示每个代表的客户数、沟通任务数、已完成沟通数、下单客户数、复购客户数、复购率、休眠风险。
 3. 客户列表支持按生命周期、是否下单、是否复购、是否长期未沟通筛选。
 4. 客户详情页展示最近下单、有效订单数、复购状态、最近沟通、下次沟通任务。
 
@@ -232,7 +232,7 @@ CRM_REACTIVATION
 1. 应沟通任务数：`CrmFollowUpTask.status in ("OPEN", "DONE", "EXPIRED")` 且 `sourceType` 属于 CRM 沟通类，`dueAt` 在统计窗口内。
 2. 已完成沟通任务数：`status = DONE` 且 `completedAt` 在统计窗口内。
 3. 逾期沟通任务数：`status = OPEN` 且 `dueAt < now`。
-4. 沟通任务完成率：`doneCommunicationTaskCount / dueCommunicationTaskCount`。
+4. 不默认生成自动“沟通任务完成率”指标；当前仅展示任务数、已完成沟通数等运营观察值，考核指标由 ADMIN 单独定义。
 5. 有效沟通客户数：窗口内有 `CrmInteraction` 且 `type != NOTE` 的去重客户数。
 6. 沟通覆盖率：`communicatedCustomerCount / assignedCustomerCount`。
 
@@ -965,4 +965,3 @@ Demo/生产部署后可由外部 cron 每天凌晨执行。
 5. `communication-metrics.ts`。
 6. 代表运营面板沟通任务统计。
 7. 客户列表筛选和客户详情运营摘要。
-

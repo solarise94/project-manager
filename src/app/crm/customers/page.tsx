@@ -289,13 +289,15 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
       <div className="space-y-2">
         <label className="text-xs text-muted-foreground font-medium">排序</label>
         <Select value={sort} onValueChange={(v) => { setSort(v || "updatedAt"); setPage(1); }}>
-          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "nextFollowUpAt" ? "下次跟进" : sort === "stage" ? "阶段" : "默认"}</span></SelectTrigger>
+          <SelectTrigger className="w-full min-w-0 h-8 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "nextFollowUpAt" ? "下次跟进" : sort === "stage" ? "阶段" : sort === "lastOrderAt" ? "最近下单" : sort === "validOrderCount" ? "下单次数" : "默认"}</span></SelectTrigger>
           <SelectContent>
             <SelectItem value="updatedAt">最近更新</SelectItem>
             <SelectItem value="createdAt">创建时间</SelectItem>
             <SelectItem value="lastFollowUpAt">最近跟进</SelectItem>
             <SelectItem value="nextFollowUpAt">下次跟进</SelectItem>
             <SelectItem value="stage">阶段</SelectItem>
+            <SelectItem value="lastOrderAt">最近下单</SelectItem>
+            <SelectItem value="validOrderCount">下单次数</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -370,13 +372,15 @@ function CustomerPool({ initialSearch, initialOrganizationId, initialOrganizatio
               </SelectContent>
             </Select>
             <Select value={sort} onValueChange={(v) => { setSort(v || "updatedAt"); setPage(1); }}>
-              <SelectTrigger className="w-[100px] h-9 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "stage" ? "阶段" : "排序"}</span></SelectTrigger>
+              <SelectTrigger className="w-[100px] h-9 text-xs"><span>{sort === "updatedAt" ? "最近更新" : sort === "createdAt" ? "创建时间" : sort === "lastFollowUpAt" ? "最近跟进" : sort === "nextFollowUpAt" ? "下次跟进" : sort === "stage" ? "阶段" : sort === "lastOrderAt" ? "最近下单" : sort === "validOrderCount" ? "下单次数" : "排序"}</span></SelectTrigger>
               <SelectContent>
                 <SelectItem value="updatedAt">最近更新</SelectItem>
                 <SelectItem value="createdAt">创建时间</SelectItem>
                 <SelectItem value="lastFollowUpAt">最近跟进</SelectItem>
                 <SelectItem value="nextFollowUpAt">下次跟进</SelectItem>
                 <SelectItem value="stage">阶段</SelectItem>
+                <SelectItem value="lastOrderAt">最近下单</SelectItem>
+                <SelectItem value="validOrderCount">下单次数</SelectItem>
               </SelectContent>
             </Select>
             <Button variant="ghost" size="sm" onClick={() => setOrder(order === "asc" ? "desc" : "asc")} className="h-9 text-xs">{order === "asc" ? "↑" : "↓"}</Button>

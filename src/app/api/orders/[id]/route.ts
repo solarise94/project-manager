@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
 import { ORDER_STATUS_TRANSITIONS, ORDER_DELIVERY_TRANSITIONS } from "@/lib/orders/constants";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
+import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
 import { getInvoicesForOrder } from "@/lib/finance/order-invoices";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -263,9 +263,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const syncCustomerIds = new Set<string>();
   if (existing.customerId) syncCustomerIds.add(existing.customerId);
   if (updated.customerId) syncCustomerIds.add(updated.customerId);
-  for (const customerId of syncCustomerIds) {
-    await syncCrmLifecycleForCustomer(customerId);
-  }
+  await syncCrmLifecycleForCustomersBestEffort(syncCustomerIds, "orders.update");
 
   return NextResponse.json({ order: updated });
 }

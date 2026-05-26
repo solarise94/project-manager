@@ -9,7 +9,7 @@ import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport 
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import * as XLSX from "xlsx";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
+import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
 
 function tryParseXlsx(buffer: Buffer): string | null {
   try {
@@ -340,9 +340,7 @@ export async function POST(req: NextRequest) {
     rowIndex++;
   }
 
-  for (const customerId of touchedCustomerIds) {
-    await syncCrmLifecycleForCustomer(customerId);
-  }
+  await syncCrmLifecycleForCustomersBestEffort(touchedCustomerIds, "orders.import.commit");
 
   return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });
 }

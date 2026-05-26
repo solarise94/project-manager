@@ -5,7 +5,7 @@ import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport 
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import type { NormalizedOrderRow } from "@/lib/external-order";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomer } from "@/lib/crm/lifecycle";
+import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
 
 export interface ImportBatchInput {
   source: string;
@@ -273,9 +273,7 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
     }
   }
 
-  for (const customerId of touchedCustomerIds) {
-    await syncCrmLifecycleForCustomer(customerId);
-  }
+  await syncCrmLifecycleForCustomersBestEffort(touchedCustomerIds, "orders.import.batch");
 
   return { created, updated, skipped, errors };
 }

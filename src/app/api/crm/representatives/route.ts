@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
-import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
+import { getCrmCommunicationMetricsByOwnerUserIds } from "@/lib/crm/communication-metrics";
 import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
 
 export async function GET(req: NextRequest) {
@@ -92,10 +92,12 @@ export async function GET(req: NextRequest) {
     select: { id: true, email: true, name: true, role: true },
   });
   const emailToUser = new Map(repUsers.map((u) => [u.email, u]));
+  const ownerUserIds = repUsers.map((user) => user.id);
 
   // Compute stats for each rep
   const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
   const now = new Date();
+  const d30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   // Period window for today/week stats
   let periodStart: Date | null = null;
@@ -118,175 +120,271 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  let representatives = await Promise.all(
-    reps.map(async (rep) => {
-      const linkedUser = emailToUser.get(rep.email);
-      const userId = linkedUser?.id;
-      const assignedProfiles = userId
-        ? await prisma.crmCustomerProfile.findMany({
-            where: {
-              ownerUserId: userId,
-              archived: false,
-              assignmentStatus: "ASSIGNED",
-            },
-            select: { sourceCustomerId: true },
-          })
-        : [];
-      const assignedCustomerIds = assignedProfiles.map((profile) => profile.sourceCustomerId);
+  const allProfiles = ownerUserIds.length > 0
+    ? await prisma.crmCustomerProfile.findMany({
+        where: { ownerUserId: { in: ownerUserIds }, archived: false },
+        select: {
+          id: true,
+          ownerUserId: true,
+          sourceCustomerId: true,
+          assignmentStatus: true,
+          assignedAt: true,
+          createdAt: true,
+        },
+      })
+    : [];
 
-      const base: {
-        representativeId: string;
-        name: string;
-        email: string;
-        archived: boolean;
-        userId: string | null;
-        userName: string | null;
-        customerCount: number;
-        visitCheckinCount: number;
-        lastCheckinAt: string | null;
-        overdueFollowUps: number;
-        longUnvisitedCount: number;
-        regions: { id: string; name: string; isPrimary: boolean }[];
-        periodVisitCheckinCount: number;
-        periodNewCustomerCount: number;
-        periodReservedOrderCount: number;
-        periodReservedOrderAmount: number;
-        dueCommunicationTaskCount?: number;
-        doneCommunicationTaskCount?: number;
-        overdueCommunicationTaskCount?: number;
-        communicationTaskCompletionRate?: number;
-        communicatedCustomerCount30d?: number;
-        communicationCoverageRate30d?: number;
-        orderedCustomerCount30d?: number;
-        repeatCustomerCount30d?: number;
-        repeatCustomerRate30d?: number;
-        dormantCustomerCount?: number;
-        dormantWarningCustomerCount?: number;
-      } = {
-        representativeId: rep.id,
-        name: rep.name,
-        email: rep.email,
-        archived: rep.archived,
-        userId: userId || null,
-        userName: linkedUser?.name || null,
-        customerCount: 0,
-        visitCheckinCount: 0,
-        lastCheckinAt: null as string | null,
-        overdueFollowUps: 0,
-        longUnvisitedCount: 0,
-        regions: rep.regionAssignments.map((a) => ({ id: a.region.id, name: a.region.name, isPrimary: a.isPrimary })),
-        periodVisitCheckinCount: 0,
-        periodNewCustomerCount: 0,
-        periodReservedOrderCount: 0,
-        periodReservedOrderAmount: 0,
-      };
+  const ownerAssignedProfileIds = new Map<string, string[]>();
+  const ownerAssignedCustomerIds = new Map<string, string[]>();
+  const ownerCustomerCountMap = new Map<string, number>();
+  const ownerPeriodNewCustomerCountMap = new Map<string, number>();
+  const customerOwnerMap = new Map<string, string>();
 
-      if (!userId) return base;
+  for (const profile of allProfiles) {
+    if (profile.assignmentStatus !== "ASSIGNED") continue;
+    const profileIds = ownerAssignedProfileIds.get(profile.ownerUserId) || [];
+    profileIds.push(profile.id);
+    ownerAssignedProfileIds.set(profile.ownerUserId, profileIds);
 
-      const statQueries: Array<Promise<number | { createdAt: Date } | null>> = [
-        Promise.resolve(assignedProfiles.length),
-        prisma.crmVisitCheckin.count({
-          where: { userId, status: "COMPLETED", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
-        }),
-        prisma.crmVisitCheckin.findFirst({
-          where: { userId, status: "COMPLETED" },
-          orderBy: { createdAt: "desc" },
-          select: { createdAt: true },
-        }),
-        prisma.crmFollowUpTask.count({
-          where: { ownerUserId: userId, status: "OPEN", dueAt: { lt: now } },
-        }),
-        prisma.crmCustomerProfile.count({
-          where: {
-            ownerUserId: userId,
-            archived: false,
-            assignmentStatus: "ASSIGNED",
-            visitCheckins: { none: { status: "COMPLETED", createdAt: { gte: thresholdDate } } },
-            interactions: { none: { type: "VISIT", happenedAt: { gte: thresholdDate } } },
-          },
-        }),
-      ];
+    const customerIds = ownerAssignedCustomerIds.get(profile.ownerUserId) || [];
+    customerIds.push(profile.sourceCustomerId);
+    ownerAssignedCustomerIds.set(profile.ownerUserId, customerIds);
+    ownerCustomerCountMap.set(profile.ownerUserId, (ownerCustomerCountMap.get(profile.ownerUserId) || 0) + 1);
+    customerOwnerMap.set(profile.sourceCustomerId, profile.ownerUserId);
 
-      // Period stats
-      if (periodStart && periodEnd) {
-        statQueries.push(
-          prisma.crmVisitCheckin.count({
-            where: { userId, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
-          }),
-          prisma.crmCustomerProfile.count({
-            where: {
-              ownerUserId: userId,
-              archived: false,
-              assignmentStatus: "ASSIGNED",
-              OR: [
-                { assignedAt: { gte: periodStart, lt: periodEnd } },
-                { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
-              ],
-            },
-          }),
+    if (periodStart && periodEnd) {
+      const isNewInPeriod = (profile.assignedAt && profile.assignedAt >= periodStart && profile.assignedAt < periodEnd)
+        || (!profile.assignedAt && profile.createdAt >= periodStart && profile.createdAt < periodEnd);
+      if (isNewInPeriod) {
+        ownerPeriodNewCustomerCountMap.set(
+          profile.ownerUserId,
+          (ownerPeriodNewCustomerCountMap.get(profile.ownerUserId) || 0) + 1,
         );
       }
+    }
+  }
 
-      const results = await Promise.all(statQueries);
-      const customerCount = results[0] as number;
-      const visitCheckinCount = results[1] as number;
-      const lastCheckin = results[2] as { createdAt: Date } | null;
-      const overdueFollowUps = results[3] as number;
-      const longUnvisitedCount = results[4] as number;
+  const allAssignedProfileIds = [...new Set(
+    Array.from(ownerAssignedProfileIds.values()).flat(),
+  )];
+  const allAssignedCustomerIds = [...new Set(
+    Array.from(ownerAssignedCustomerIds.values()).flat(),
+  )];
 
-      const out: typeof base = {
-        ...base,
-        customerCount,
-        visitCheckinCount,
-        lastCheckinAt: lastCheckin?.createdAt?.toISOString() ?? null,
-        overdueFollowUps,
-        longUnvisitedCount,
-      };
+  const [
+    checkinCounts30d,
+    lastCheckins,
+    overdueCounts,
+    interactionCounts30d,
+    periodVisitCheckinCounts,
+    periodInteractionCounts,
+    periodOrders,
+    completedCheckins,
+    visitInteractions,
+    communicationByOwner,
+    lifecycleMap,
+  ] = await Promise.all([
+    ownerUserIds.length > 0
+      ? prisma.crmVisitCheckin.groupBy({
+          by: ["userId"],
+          where: { userId: { in: ownerUserIds }, status: "COMPLETED", createdAt: { gte: d30 } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    ownerUserIds.length > 0
+      ? prisma.crmVisitCheckin.groupBy({
+          by: ["userId"],
+          where: { userId: { in: ownerUserIds }, status: "COMPLETED" },
+          _max: { createdAt: true },
+        })
+      : Promise.resolve([]),
+    ownerUserIds.length > 0
+      ? prisma.crmFollowUpTask.groupBy({
+          by: ["ownerUserId"],
+          where: { ownerUserId: { in: ownerUserIds }, status: "OPEN", dueAt: { lt: now } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    allAssignedProfileIds.length > 0
+      ? prisma.crmInteraction.groupBy({
+          by: ["profileId"],
+          where: { profileId: { in: allAssignedProfileIds }, happenedAt: { gte: d30 } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    periodStart && periodEnd && ownerUserIds.length > 0
+      ? prisma.crmVisitCheckin.groupBy({
+          by: ["userId"],
+          where: { userId: { in: ownerUserIds }, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    periodStart && periodEnd && allAssignedProfileIds.length > 0
+      ? prisma.crmInteraction.groupBy({
+          by: ["profileId"],
+          where: { profileId: { in: allAssignedProfileIds }, happenedAt: { gte: periodStart, lt: periodEnd } },
+          _count: true,
+        })
+      : Promise.resolve([]),
+    periodStart && periodEnd && allAssignedCustomerIds.length > 0
+      ? prisma.order.findMany({
+          where: {
+            customerId: { in: allAssignedCustomerIds },
+            orderedAt: { gte: periodStart, lt: periodEnd },
+            deleted: false,
+          },
+          select: { customerId: true, totalAmount: true, financeAmountOverride: true },
+        })
+      : Promise.resolve([]),
+    allAssignedProfileIds.length > 0
+      ? prisma.crmVisitCheckin.findMany({
+          where: { profileId: { in: allAssignedProfileIds }, status: "COMPLETED" },
+          select: { profileId: true, createdAt: true },
+          orderBy: [{ profileId: "asc" }, { createdAt: "desc" }],
+        })
+      : Promise.resolve([]),
+    allAssignedProfileIds.length > 0
+      ? prisma.crmInteraction.findMany({
+          where: { profileId: { in: allAssignedProfileIds }, type: "VISIT" },
+          select: { profileId: true, happenedAt: true },
+          orderBy: [{ profileId: "asc" }, { happenedAt: "desc" }],
+        })
+      : Promise.resolve([]),
+    getCrmCommunicationMetricsByOwnerUserIds({
+      ownerUserIds,
+      from: d30,
+      to: now,
+    }),
+    getCrmLifecycleSummariesForCustomers(allAssignedCustomerIds),
+  ]);
 
-      const communication = await getCrmCommunicationMetrics({
-        ownerUserIds: [userId],
-        from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-        to: now,
-      });
-      const lifecycleMap = await getCrmLifecycleSummariesForCustomers(assignedCustomerIds);
-      const lifecycleValues = [...lifecycleMap.values()];
-      out.dueCommunicationTaskCount = communication.dueCommunicationTaskCount;
-      out.doneCommunicationTaskCount = communication.doneCommunicationTaskCount;
-      out.overdueCommunicationTaskCount = communication.overdueCommunicationTaskCount;
-      out.communicationTaskCompletionRate = communication.communicationTaskCompletionRate;
-      out.communicatedCustomerCount30d = communication.communicatedCustomerCount;
-      out.communicationCoverageRate30d = communication.communicationCoverageRate;
-      out.orderedCustomerCount30d = lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length;
-      out.repeatCustomerCount30d = lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length;
-      out.repeatCustomerRate30d = (out.orderedCustomerCount30d || 0) > 0
-        ? (out.repeatCustomerCount30d || 0) / (out.orderedCustomerCount30d || 1)
-        : 0;
-      out.dormantCustomerCount = lifecycleValues.filter((item) => item.stage === "DORMANT").length;
-      out.dormantWarningCustomerCount = lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length;
+  const checkin30dMap = new Map(checkinCounts30d.map((row) => [row.userId, row._count]));
+  const lastCheckinMap = new Map(lastCheckins.map((row) => [row.userId, row._max.createdAt]));
+  const overdueMap = new Map(overdueCounts.map((row) => [row.ownerUserId, row._count]));
+  const interaction30dMap = new Map(interactionCounts30d.map((row) => [row.profileId, row._count]));
+  const periodVisitCheckinMap = new Map(periodVisitCheckinCounts.map((row) => [row.userId, row._count]));
+  const periodInteractionMap = new Map(periodInteractionCounts.map((row) => [row.profileId, row._count]));
 
-      if (periodStart && periodEnd) {
-        out.periodVisitCheckinCount = results[5] as number;
-        out.periodNewCustomerCount = results[6] as number;
-        if (assignedCustomerIds.length > 0) {
-          const periodOrders = await prisma.order.findMany({
-            where: {
-              customerId: { in: assignedCustomerIds },
-              orderedAt: { gte: periodStart, lt: periodEnd },
-              deleted: false,
-            },
-            select: { totalAmount: true, financeAmountOverride: true },
-          });
-          out.periodReservedOrderCount = periodOrders.length;
-          out.periodReservedOrderAmount = periodOrders.reduce(
-            (sum, order) => sum + (order.financeAmountOverride ?? order.totalAmount ?? 0),
-            0,
-          );
+  const lastCheckinByProfile = new Map<string, Date>();
+  for (const checkin of completedCheckins) {
+    if (!lastCheckinByProfile.has(checkin.profileId)) {
+      lastCheckinByProfile.set(checkin.profileId, checkin.createdAt);
+    }
+  }
+  const lastVisitInteractionByProfile = new Map<string, Date>();
+  for (const interaction of visitInteractions) {
+    if (!lastVisitInteractionByProfile.has(interaction.profileId)) {
+      lastVisitInteractionByProfile.set(interaction.profileId, interaction.happenedAt);
+    }
+  }
+
+  const ownerLongUnvisitedCountMap = new Map<string, number>();
+  const ownerInteractionCount30dMap = new Map<string, number>();
+  const ownerPeriodInteractionCountMap = new Map<string, number>();
+  for (const [ownerUserId, profileIds] of ownerAssignedProfileIds) {
+    let longUnvisitedCount = 0;
+    let interactionCount30d = 0;
+    let periodInteractionCount = 0;
+    for (const profileId of profileIds) {
+      const lastActivity = lastCheckinByProfile.get(profileId) ?? lastVisitInteractionByProfile.get(profileId) ?? null;
+      if (!lastActivity || lastActivity < thresholdDate) longUnvisitedCount += 1;
+      interactionCount30d += interaction30dMap.get(profileId) || 0;
+      periodInteractionCount += periodInteractionMap.get(profileId) || 0;
+    }
+    ownerLongUnvisitedCountMap.set(ownerUserId, longUnvisitedCount);
+    ownerInteractionCount30dMap.set(ownerUserId, interactionCount30d);
+    ownerPeriodInteractionCountMap.set(ownerUserId, periodInteractionCount);
+  }
+
+  const ownerPeriodOrderStatsMap = new Map<string, { count: number; amount: number }>();
+  for (const order of periodOrders) {
+    if (!order.customerId) continue;
+    const ownerUserId = customerOwnerMap.get(order.customerId);
+    if (!ownerUserId) continue;
+    const current = ownerPeriodOrderStatsMap.get(ownerUserId) ?? { count: 0, amount: 0 };
+    current.count += 1;
+    current.amount += order.financeAmountOverride ?? order.totalAmount ?? 0;
+    ownerPeriodOrderStatsMap.set(ownerUserId, current);
+  }
+
+  const ownerLifecycleStats = new Map<string, {
+    orderedCustomerCount30d: number;
+    repeatCustomerCount30d: number;
+    dormantCustomerCount: number;
+    dormantWarningCustomerCount: number;
+  }>();
+  for (const summary of lifecycleMap.values()) {
+    const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
+      orderedCustomerCount30d: 0,
+      repeatCustomerCount30d: 0,
+      dormantCustomerCount: 0,
+      dormantWarningCustomerCount: 0,
+    };
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      current.orderedCustomerCount30d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      current.repeatCustomerCount30d += 1;
+    }
+    if (summary.stage === "DORMANT") current.dormantCustomerCount += 1;
+    if (summary.dormantRisk && summary.stage !== "DORMANT") current.dormantWarningCustomerCount += 1;
+    ownerLifecycleStats.set(summary.ownerUserId, current);
+  }
+
+  let representatives = reps.map((rep) => {
+    const linkedUser = emailToUser.get(rep.email);
+    const userId = linkedUser?.id || null;
+    const communication = userId ? communicationByOwner.get(userId) : null;
+    const lifecycleStats = userId
+      ? ownerLifecycleStats.get(userId) ?? {
+          orderedCustomerCount30d: 0,
+          repeatCustomerCount30d: 0,
+          dormantCustomerCount: 0,
+          dormantWarningCustomerCount: 0,
         }
-      }
+      : {
+          orderedCustomerCount30d: 0,
+          repeatCustomerCount30d: 0,
+          dormantCustomerCount: 0,
+          dormantWarningCustomerCount: 0,
+        };
+    const periodOrderStats = userId
+      ? ownerPeriodOrderStatsMap.get(userId) ?? { count: 0, amount: 0 }
+      : { count: 0, amount: 0 };
 
-      return out;
-    })
-  );
+    return {
+      representativeId: rep.id,
+      name: rep.name,
+      email: rep.email,
+      archived: rep.archived,
+      userId,
+      userName: linkedUser?.name || null,
+      customerCount: userId ? (ownerCustomerCountMap.get(userId) || 0) : 0,
+      visitCheckinCount: userId ? (checkin30dMap.get(userId) || 0) : 0,
+      interactionCount30d: userId ? (ownerInteractionCount30dMap.get(userId) || 0) : 0,
+      lastCheckinAt: userId ? (lastCheckinMap.get(userId)?.toISOString() ?? null) : null,
+      overdueFollowUps: userId ? (overdueMap.get(userId) || 0) : 0,
+      longUnvisitedCount: userId ? (ownerLongUnvisitedCountMap.get(userId) || 0) : 0,
+      regions: rep.regionAssignments.map((a) => ({ id: a.region.id, name: a.region.name, isPrimary: a.isPrimary })),
+      periodVisitCheckinCount: userId ? (periodVisitCheckinMap.get(userId) || 0) : 0,
+      periodInteractionCount: userId ? (ownerPeriodInteractionCountMap.get(userId) || 0) : 0,
+      periodNewCustomerCount: userId ? (ownerPeriodNewCustomerCountMap.get(userId) || 0) : 0,
+      periodReservedOrderCount: periodOrderStats.count,
+      periodReservedOrderAmount: periodOrderStats.amount,
+      dueCommunicationTaskCount: communication?.dueCommunicationTaskCount ?? 0,
+      doneCommunicationTaskCount: communication?.doneCommunicationTaskCount ?? 0,
+      overdueCommunicationTaskCount: communication?.overdueCommunicationTaskCount ?? 0,
+      communicatedCustomerCount30d: communication?.communicatedCustomerCount ?? 0,
+      communicationCoverageRate30d: communication?.communicationCoverageRate ?? 0,
+      orderedCustomerCount30d: lifecycleStats.orderedCustomerCount30d,
+      repeatCustomerCount30d: lifecycleStats.repeatCustomerCount30d,
+      repeatCustomerRate30d: lifecycleStats.orderedCustomerCount30d > 0
+        ? lifecycleStats.repeatCustomerCount30d / lifecycleStats.orderedCustomerCount30d
+        : 0,
+      dormantCustomerCount: lifecycleStats.dormantCustomerCount,
+      dormantWarningCustomerCount: lifecycleStats.dormantWarningCustomerCount,
+    };
+  });
 
   // Post-filter: hasUser
   if (hasUserParam === "true") {
@@ -318,6 +416,8 @@ export async function GET(req: NextRequest) {
       case "name": cmp = a.name.localeCompare(b.name); break;
       case "customerCount": cmp = a.customerCount - b.customerCount; break;
       case "visitCheckinCount": cmp = a.visitCheckinCount - b.visitCheckinCount; break;
+      case "interactionCount30d":
+        cmp = (a.interactionCount30d || 0) - (b.interactionCount30d || 0); break;
       case "overdueFollowUps": cmp = a.overdueFollowUps - b.overdueFollowUps; break;
       case "longUnvisitedCount": cmp = a.longUnvisitedCount - b.longUnvisitedCount; break;
       default: cmp = a.name.localeCompare(b.name);
