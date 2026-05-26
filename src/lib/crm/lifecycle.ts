@@ -588,7 +588,12 @@ export async function getOrderAggregate(
   db: DbClient = prisma,
 ): Promise<OrderAggregate> {
   return getOrderAggregatesForCustomers([customerId], db).then(
-    (aggregates) => aggregates.get(customerId) ?? { validOrderCount: 0, validOrderAmount: 0, lastOrderAt: null },
+    (aggregates) => aggregates.get(customerId) ?? {
+      validOrderCount: 0,
+      validOrderAmount: 0,
+      lastOrderAt: null,
+      firstOrderAt: null,
+    },
   );
 }
 
