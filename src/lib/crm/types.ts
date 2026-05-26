@@ -208,6 +208,10 @@ export interface CrmRepresentativeOpsItem {
   orderedCustomerCount30d?: number;
   repeatCustomerCount30d?: number;
   repeatCustomerRate30d?: number;
+  activeCustomerCount?: number;
+  newCustomerCount30d?: number;
+  convertedCustomerCount30d?: number;
+  conversionRate30d?: number;
   dormantCustomerCount?: number;
   dormantWarningCustomerCount?: number;
   periodVisitCheckinCount?: number;

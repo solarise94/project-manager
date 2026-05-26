@@ -14,7 +14,7 @@ import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeOpsItem } from "@/lib/crm/types";
 import { fetchJsonOrThrow } from "@/lib/fetch-client";
 import Link from "next/link";
-import { Search, Users, MessageSquare, AlertTriangle, Clock, X, UserCog, ShoppingCart } from "lucide-react";
+import { Search, Users, MessageSquare, AlertTriangle, X, UserCog, ShoppingCart, TrendingUp, RefreshCw } from "lucide-react";
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("zh-CN", {
@@ -108,11 +108,18 @@ function RepOpsList() {
     ? reps.reduce((s, r) => s + (r.periodReservedOrderAmount || 0), 0)
     : 0;
   const totalOverdue = reps.reduce((s, r) => s + r.overdueFollowUps, 0);
-  const totalLongUnvisited = reps.reduce((s, r) => s + r.longUnvisitedCount, 0);
-  const totalDueCommunication = reps.reduce((s, r) => s + (r.dueCommunicationTaskCount || 0), 0);
-  const totalDoneCommunication = reps.reduce((s, r) => s + (r.doneCommunicationTaskCount || 0), 0);
-  const totalDormant = reps.reduce((s, r) => s + (r.dormantCustomerCount || 0), 0);
-  const totalDormantWarning = reps.reduce((s, r) => s + (r.dormantWarningCustomerCount || 0), 0);
+
+  const totalActiveCustomers = reps.reduce((s, r) => s + (r.activeCustomerCount || 0), 0);
+  const totalNewCustomerCount30d = reps.reduce((s, r) => s + (r.newCustomerCount30d || 0), 0);
+  const totalConvertedCustomerCount30d = reps.reduce((s, r) => s + (r.convertedCustomerCount30d || 0), 0);
+  const totalConversionRate30d = totalNewCustomerCount30d > 0
+    ? totalConvertedCustomerCount30d / totalNewCustomerCount30d
+    : 0;
+  const totalOrderedCustomerCount30d = reps.reduce((s, r) => s + (r.orderedCustomerCount30d || 0), 0);
+  const totalRepeatCustomerCount30d = reps.reduce((s, r) => s + (r.repeatCustomerCount30d || 0), 0);
+  const totalRepeatCustomerRate30d = totalOrderedCustomerCount30d > 0
+    ? totalRepeatCustomerCount30d / totalOrderedCustomerCount30d
+    : 0;
 
   const activeFilterCount = (archived !== "active" ? 1 : 0) + (hasOverdue ? 1 : 0) + (hasLongUnvisited ? 1 : 0) + (regionId ? 1 : 0) + (selectedRepIds.length > 0 ? 1 : 0) + (period ? 1 : 0);
 
@@ -120,7 +127,7 @@ function RepOpsList() {
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">代表运营</h1>
 
-      <div className={`grid grid-cols-2 gap-3 ${hasPeriod ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {hasPeriod ? (
           <>
             <StatCard icon={MessageSquare} label="已有客户沟通" value={totalInteractions} />
@@ -132,13 +139,10 @@ function RepOpsList() {
         ) : (
           <>
             <StatCard icon={Users} label="总客户数" value={totalCustomers} />
-            <StatCard icon={MessageSquare} label="30天已有客户沟通" value={totalInteractions} />
-            <StatCard icon={Clock} label="沟通任务" value={totalDueCommunication} />
-            <StatCard icon={Clock} label="已完成沟通" value={totalDoneCommunication} />
+            <StatCard icon={Users} label="活跃客户数" value={totalActiveCustomers} />
+            <StatCard icon={TrendingUp} label="30天内转化率" value={`${Math.round(totalConversionRate30d * 100)}%`} />
+            <StatCard icon={RefreshCw} label="30天内复购率" value={`${Math.round(totalRepeatCustomerRate30d * 100)}%`} />
             <StatCard icon={AlertTriangle} label="逾期跟进" value={totalOverdue} color={totalOverdue > 0 ? "text-red-600" : undefined} />
-            <StatCard icon={Clock} label="长期未拜访" value={totalLongUnvisited} color={totalLongUnvisited > 0 ? "text-orange-600" : undefined} />
-            <StatCard icon={Users} label="休眠客户" value={totalDormant} color={totalDormant > 0 ? "text-slate-600" : undefined} />
-            <StatCard icon={AlertTriangle} label="休眠预警" value={totalDormantWarning} color={totalDormantWarning > 0 ? "text-amber-600" : undefined} />
           </>
         )}
       </div>
@@ -253,14 +257,14 @@ function RepOpsList() {
                 ) : (
                   <>
                     <th className="text-right p-3 font-medium">客户数</th>
+                    <th className="text-right p-3 font-medium hidden md:table-cell">活跃客户</th>
                     <th className="text-right p-3 font-medium hidden sm:table-cell">30天已有客户沟通</th>
-                    <th className="text-right p-3 font-medium hidden md:table-cell">沟通任务</th>
-                    <th className="text-right p-3 font-medium hidden lg:table-cell">已完成沟通</th>
-                    <th className="text-right p-3 font-medium hidden lg:table-cell">复购率</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">30天内转化率</th>
+                    <th className="text-right p-3 font-medium hidden lg:table-cell">30天内复购率</th>
                   </>
                 )}
                 <th className="text-right p-3 font-medium hidden sm:table-cell">逾期跟进</th>
-                <th className="text-right p-3 font-medium hidden lg:table-cell">休眠</th>
+                <th className="text-right p-3 font-medium hidden md:table-cell">休眠</th>
                 <th className="text-right p-3 font-medium hidden lg:table-cell">长期未拜访</th>
               </tr>
             </thead>
@@ -273,7 +277,6 @@ function RepOpsList() {
                     </Link>
                     {r.archived && <span className="text-xs text-muted-foreground ml-2">已归档</span>}
                   </td>
-                  <td className="p-3 hidden md:table-cell text-muted-foreground">{r.email}</td>
                   <td className="p-3 hidden lg:table-cell">
                     <div className="flex gap-1 flex-wrap">
                       {(r as CrmRepresentativeOpsItem & { regions?: { id: string; name: string; isPrimary: boolean }[] }).regions?.map((region) => (
@@ -293,16 +296,16 @@ function RepOpsList() {
                   ) : (
                     <>
                       <td className="p-3 text-right font-medium">{r.customerCount}</td>
+                      <td className="p-3 text-right hidden md:table-cell">{r.activeCustomerCount ?? 0}</td>
                       <td className="p-3 text-right hidden sm:table-cell">{r.interactionCount30d ?? 0}</td>
-                      <td className="p-3 text-right hidden md:table-cell">{r.dueCommunicationTaskCount ?? 0}</td>
-                      <td className="p-3 text-right hidden lg:table-cell">{r.doneCommunicationTaskCount ?? 0}</td>
+                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.conversionRate30d || 0) * 100)}%</td>
                       <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
                     </>
                   )}
                   <td className="p-3 text-right hidden sm:table-cell">
                     <span className={r.overdueFollowUps > 0 ? "text-red-600 font-medium" : ""}>{r.overdueFollowUps}</span>
                   </td>
-                  <td className="p-3 text-right hidden lg:table-cell">
+                  <td className="p-3 text-right hidden md:table-cell">
                     <span className={(r.dormantCustomerCount || 0) > 0 ? "text-slate-600 font-medium" : ""}>{r.dormantCustomerCount || 0}</span>
                   </td>
                   <td className="p-3 text-right hidden lg:table-cell">

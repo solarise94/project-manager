@@ -317,6 +317,9 @@ export async function GET(req: NextRequest) {
   const ownerLifecycleStats = new Map<string, {
     orderedCustomerCount30d: number;
     repeatCustomerCount30d: number;
+    activeCustomerCount: number;
+    newCustomerCount30d: number;
+    convertedCustomerCount30d: number;
     dormantCustomerCount: number;
     dormantWarningCustomerCount: number;
   }>();
@@ -324,9 +327,31 @@ export async function GET(req: NextRequest) {
     const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
       orderedCustomerCount30d: 0,
       repeatCustomerCount30d: 0,
+      activeCustomerCount: 0,
+      newCustomerCount30d: 0,
+      convertedCustomerCount30d: 0,
       dormantCustomerCount: 0,
       dormantWarningCustomerCount: 0,
     };
+
+    const anchorAt = summary.assignedAt ?? summary.createdAt;
+
+    if (summary.stage === "ACTIVE") {
+      current.activeCustomerCount += 1;
+    }
+
+    if (anchorAt >= d30) {
+      current.newCustomerCount30d += 1;
+
+      if (
+        summary.firstOrderAt &&
+        summary.firstOrderAt >= d30 &&
+        summary.firstOrderAt >= anchorAt
+      ) {
+        current.convertedCustomerCount30d += 1;
+      }
+    }
+
     if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d30) {
       current.orderedCustomerCount30d += 1;
     }
@@ -346,12 +371,18 @@ export async function GET(req: NextRequest) {
       ? ownerLifecycleStats.get(userId) ?? {
           orderedCustomerCount30d: 0,
           repeatCustomerCount30d: 0,
+          activeCustomerCount: 0,
+          newCustomerCount30d: 0,
+          convertedCustomerCount30d: 0,
           dormantCustomerCount: 0,
           dormantWarningCustomerCount: 0,
         }
       : {
           orderedCustomerCount30d: 0,
           repeatCustomerCount30d: 0,
+          activeCustomerCount: 0,
+          newCustomerCount30d: 0,
+          convertedCustomerCount30d: 0,
           dormantCustomerCount: 0,
           dormantWarningCustomerCount: 0,
         };
@@ -383,6 +414,12 @@ export async function GET(req: NextRequest) {
       overdueCommunicationTaskCount: communication?.overdueCommunicationTaskCount ?? 0,
       communicatedCustomerCount30d: communication?.communicatedCustomerCount ?? 0,
       communicationCoverageRate30d: communication?.communicationCoverageRate ?? 0,
+      activeCustomerCount: lifecycleStats.activeCustomerCount,
+      newCustomerCount30d: lifecycleStats.newCustomerCount30d,
+      convertedCustomerCount30d: lifecycleStats.convertedCustomerCount30d,
+      conversionRate30d: lifecycleStats.newCustomerCount30d > 0
+        ? lifecycleStats.convertedCustomerCount30d / lifecycleStats.newCustomerCount30d
+        : 0,
       orderedCustomerCount30d: lifecycleStats.orderedCustomerCount30d,
       repeatCustomerCount30d: lifecycleStats.repeatCustomerCount30d,
       repeatCustomerRate30d: lifecycleStats.orderedCustomerCount30d > 0

@@ -13,6 +13,7 @@ type OrderAggregate = {
   validOrderCount: number;
   validOrderAmount: number;
   lastOrderAt: Date | null;
+  firstOrderAt: Date | null;
 };
 
 /**
@@ -25,6 +26,7 @@ type OrderAggregateRow = {
   validOrderCount: bigint;
   validOrderAmount: bigint | null;
   lastOrderAt: string | null;
+  firstOrderAt: string | null;
 };
 
 function normalizeNumber(value: bigint | number | null | undefined): number {
@@ -64,6 +66,7 @@ export type CrmLifecycleSummary = {
   validOrderCount: number;
   validOrderAmount: number;
   lastOrderAt: Date | null;
+  firstOrderAt: Date | null;
   isRepeatCustomer: boolean;
   lastEffectiveInteractionAt: Date | null;
   nextCommunicationTaskAt: Date | null;
@@ -110,7 +113,8 @@ async function getOrderAggregatesForCustomers(
       "customerId" AS "customerId",
       COUNT(*) AS "validOrderCount",
       SUM(COALESCE("financeAmountOverride", "totalAmount", 0)) AS "validOrderAmount",
-      MAX(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "lastOrderAt"
+      MAX(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "lastOrderAt",
+      MIN(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "firstOrderAt"
     FROM "Order"
     WHERE "customerId" IN (${Prisma.join(uniqueIds)})
       AND "deleted" = ${false}
@@ -128,6 +132,7 @@ async function getOrderAggregatesForCustomers(
           validOrderCount: normalizeNumber(row.validOrderCount),
           validOrderAmount: normalizeNumber(row.validOrderAmount),
           lastOrderAt: normalizeDate(row.lastOrderAt),
+          firstOrderAt: normalizeDate(row.firstOrderAt),
         },
       ]),
   );
@@ -182,6 +187,7 @@ export async function getCrmLifecycleSummaryByCustomerId(
     validOrderCount: orderAgg.validOrderCount,
     validOrderAmount: orderAgg.validOrderAmount,
     lastOrderAt: orderAgg.lastOrderAt,
+    firstOrderAt: orderAgg.firstOrderAt,
     isRepeatCustomer: orderAgg.validOrderCount >= 2,
     lastEffectiveInteractionAt: interactionAgg.lastEffectiveInteractionAt,
     nextCommunicationTaskAt: taskAgg.nextCommunicationTaskAt,
@@ -305,6 +311,7 @@ export async function getCrmLifecycleSummariesForCustomers(
       validOrderCount: 0,
       validOrderAmount: 0,
       lastOrderAt: null,
+      firstOrderAt: null,
     };
     const taskAgg = taskAggMap.get(profile.id) ?? {
       nextCommunicationTaskAt: null,
@@ -325,6 +332,7 @@ export async function getCrmLifecycleSummariesForCustomers(
       validOrderCount: orderAgg.validOrderCount,
       validOrderAmount: orderAgg.validOrderAmount,
       lastOrderAt: orderAgg.lastOrderAt,
+      firstOrderAt: orderAgg.firstOrderAt,
       isRepeatCustomer: orderAgg.validOrderCount >= 2,
       lastEffectiveInteractionAt: interactionMap.get(profile.id) ?? null,
       nextCommunicationTaskAt: taskAgg.nextCommunicationTaskAt,
