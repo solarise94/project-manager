@@ -6,7 +6,7 @@ import type { Prisma } from "@prisma/client";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
 import { getCrmCommunicationMetricsByOwnerUserIds } from "@/lib/crm/communication-metrics";
-import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
+import { getCrmLifecycleSummariesForCustomers, getEffectiveCrmLifecycleStage } from "@/lib/crm/lifecycle";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -335,8 +335,9 @@ export async function GET(req: NextRequest) {
     };
 
     const anchorAt = summary.assignedAt ?? summary.createdAt;
+    const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
 
-    if (summary.stage === "ACTIVE") {
+    if (lifecycleStage === "ACTIVE") {
       current.activeCustomerCount += 1;
     }
 
@@ -358,8 +359,8 @@ export async function GET(req: NextRequest) {
     if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
       current.repeatCustomerCount30d += 1;
     }
-    if (summary.stage === "DORMANT") current.dormantCustomerCount += 1;
-    if (summary.dormantRisk && summary.stage !== "DORMANT") current.dormantWarningCustomerCount += 1;
+    if (lifecycleStage === "DORMANT") current.dormantCustomerCount += 1;
+    if (summary.dormantRisk && lifecycleStage !== "DORMANT") current.dormantWarningCustomerCount += 1;
     ownerLifecycleStats.set(summary.ownerUserId, current);
   }
 

@@ -90,6 +90,7 @@ export type CrmLifecycleSyncResult = {
 
 const EFFECTIVE_INTERACTION_TYPE_SET = new Set<string>(CRM_EFFECTIVE_INTERACTION_TYPES);
 const COMMUNICATION_TASK_SOURCE_TYPE_SET = new Set<string>(CRM_COMMUNICATION_TASK_SOURCE_TYPES);
+const DORMANCY_ELIGIBLE_STAGE_SET = new Set(["NEW", "CONTACTED", "FOLLOWING", "DORMANT"]);
 
 function subtractDays(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -99,6 +100,18 @@ function isSameDateTime(left: Date | null, right: Date | null) {
   if (!left && !right) return true;
   if (!left || !right) return false;
   return left.getTime() === right.getTime();
+}
+
+export function getEffectiveCrmLifecycleStage(
+  summary: Pick<CrmLifecycleSummary, "stage" | "validOrderCount" | "dormantCandidate">,
+) {
+  if (summary.validOrderCount > 0) {
+    return "ACTIVE";
+  }
+  if (summary.dormantCandidate && DORMANCY_ELIGIBLE_STAGE_SET.has(summary.stage)) {
+    return "DORMANT";
+  }
+  return summary.stage;
 }
 
 async function getOrderAggregatesForCustomers(
@@ -362,13 +375,7 @@ export async function syncCrmLifecycleForCustomer(
   if (!summary) return null;
 
   const previousStage = summary.stage;
-  let nextStage = previousStage;
-
-  if (summary.validOrderCount > 0) {
-    nextStage = "ACTIVE";
-  } else if (summary.dormantCandidate && ["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(previousStage)) {
-    nextStage = "DORMANT";
-  }
+  const nextStage = getEffectiveCrmLifecycleStage(summary);
 
   const nextFollowUpAt = summary.nextCommunicationTaskAt;
   const currentProfile = await db.crmCustomerProfile.findUnique({
@@ -522,6 +529,8 @@ export async function scanDormantCrmProfiles(
       assignedAt: true,
       createdAt: true,
       lastFollowUpAt: true,
+      lastOrderAt: true,
+      nextFollowUpAt: true,
     },
   });
 
@@ -535,18 +544,30 @@ export async function scanDormantCrmProfiles(
   for (const profile of profiles) {
     const summary = lifecycleMap.get(profile.sourceCustomerId);
     if (!summary) continue;
+    const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
     const baseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
+
+    if (!dryRun) {
+      const shouldUpdate = profile.stage !== lifecycleStage
+        || !isSameDateTime(profile.lastOrderAt ?? null, summary.lastOrderAt)
+        || !isSameDateTime(profile.nextFollowUpAt ?? null, summary.nextCommunicationTaskAt);
+      if (shouldUpdate) {
+        await db.crmCustomerProfile.update({
+          where: { id: profile.id },
+          data: {
+            stage: lifecycleStage,
+            lastOrderAt: summary.lastOrderAt,
+            nextFollowUpAt: summary.nextCommunicationTaskAt,
+          },
+        });
+      }
+    }
+
     if (summary.validOrderCount > 0) continue;
-    if (!["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(profile.stage)) continue;
+    if (!DORMANCY_ELIGIBLE_STAGE_SET.has(lifecycleStage)) continue;
 
     if (baseAt < dormantThresholdDate) {
       dormantCount += 1;
-      if (!dryRun) {
-        await db.crmCustomerProfile.update({
-          where: { id: profile.id },
-          data: { stage: "DORMANT", nextFollowUpAt: summary.nextCommunicationTaskAt },
-        });
-      }
       continue;
     }
 

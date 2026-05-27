@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
 import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
-import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
+import { getCrmLifecycleSummariesForCustomers, getEffectiveCrmLifecycleStage } from "@/lib/crm/lifecycle";
 
 export async function GET(
   _req: NextRequest,
@@ -167,8 +167,8 @@ export async function GET(
       ? lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
         / lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
       : 0,
-    dormantCustomerCount: lifecycleValues.filter((item) => item.stage === "DORMANT").length,
-    dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && item.stage !== "DORMANT").length,
+    dormantCustomerCount: lifecycleValues.filter((item) => getEffectiveCrmLifecycleStage(item) === "DORMANT").length,
+    dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && getEffectiveCrmLifecycleStage(item) !== "DORMANT").length,
     customers,
     recentCheckins,
     openFollowUps,
