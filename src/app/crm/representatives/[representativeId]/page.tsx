@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Users, MapPin, AlertTriangle, Clock, Network, MessageSquare, ShoppingCart } from "lucide-react";
+import { ArrowLeft, Users, MapPin, AlertTriangle, Clock, Network, MessageSquare, TrendingUp, RefreshCw } from "lucide-react";
 
 export default function RepDetailPage() {
   const { status } = useSession();
@@ -53,6 +53,7 @@ function RepDetail() {
     representative,
     linkedUser,
     customerCount,
+    activeCustomerCount,
     visitCheckinCount,
     lastCheckinAt,
     overdueFollowUps,
@@ -61,9 +62,14 @@ function RepDetail() {
     doneCommunicationTaskCount,
     communicatedCustomerCount30d,
     communicationCoverageRate30d,
+    conversionRate30d,
+    conversionRate90d,
     orderedCustomerCount30d,
     repeatCustomerCount30d,
     repeatCustomerRate30d,
+    orderedCustomerCount90d,
+    repeatCustomerCount90d,
+    repeatCustomerRate90d,
     dormantCustomerCount,
     dormantWarningCustomerCount,
     customers,
@@ -88,12 +94,15 @@ function RepDetail() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard icon={Users} label="客户数" value={customerCount} />
+        <StatCard icon={Users} label="活跃客户" value={activeCustomerCount || 0} />
         <StatCard icon={MapPin} label="30天拜访" value={visitCheckinCount} />
         <StatCard icon={MessageSquare} label="30天沟通客户" value={communicatedCustomerCount30d || 0} />
         <StatCard icon={AlertTriangle} label="逾期跟进" value={overdueFollowUps} />
         <StatCard icon={Clock} label="长期未拜访" value={longUnvisitedCount} />
-        <StatCard icon={ShoppingCart} label="30天下单客户" value={orderedCustomerCount30d || 0} />
-        <StatCard icon={ShoppingCart} label="30天复购客户" value={repeatCustomerCount30d || 0} />
+        <StatCard icon={TrendingUp} label="30天转化率" value={`${Math.round((conversionRate30d || 0) * 100)}%`} />
+        <StatCard icon={TrendingUp} label="90天转化率" value={`${Math.round((conversionRate90d || 0) * 100)}%`} />
+        <StatCard icon={RefreshCw} label="30天复购率" value={`${Math.round((repeatCustomerRate30d || 0) * 100)}%`} />
+        <StatCard icon={RefreshCw} label="90天复购率" value={`${Math.round((repeatCustomerRate90d || 0) * 100)}%`} />
         <StatCard icon={AlertTriangle} label="休眠客户" value={dormantCustomerCount || 0} />
         <StatCard icon={AlertTriangle} label="休眠预警" value={dormantWarningCustomerCount || 0} />
         <StatCard icon={Network} label="关系网络" value={relationCount} />
@@ -170,14 +179,24 @@ function RepDetail() {
             </Card>
 
             <Card>
-              <CardContent className="p-4">
-                <h3 className="font-medium mb-2">运营指标</h3>
-                <dl className="text-sm space-y-1">
-                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通任务:</dt><dd>{dueCommunicationTaskCount || 0}</dd></div>
-                  <div className="flex gap-2"><dt className="text-muted-foreground">已完成沟通:</dt><dd>{doneCommunicationTaskCount || 0}</dd></div>
-                  <div className="flex gap-2"><dt className="text-muted-foreground">沟通覆盖率:</dt><dd>{Math.round((communicationCoverageRate30d || 0) * 100)}%</dd></div>
-                  <div className="flex gap-2"><dt className="text-muted-foreground">复购率:</dt><dd>{Math.round((repeatCustomerRate30d || 0) * 100)}%</dd></div>
-                </dl>
+              <CardContent className="p-4 space-y-3">
+                <div>
+                  <h3 className="font-medium mb-2">当前状态</h3>
+                  <dl className="text-sm space-y-1">
+                    <div className="flex gap-2"><dt className="text-muted-foreground">活跃客户:</dt><dd>{activeCustomerCount || 0}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">休眠客户:</dt><dd>{dormantCustomerCount || 0}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">休眠预警:</dt><dd>{dormantWarningCustomerCount || 0}</dd></div>
+                  </dl>
+                </div>
+                <div className="border-t pt-2">
+                  <h3 className="font-medium mb-2">运营效率</h3>
+                  <dl className="text-sm space-y-1">
+                    <div className="flex gap-2"><dt className="text-muted-foreground">30天转化率:</dt><dd>{Math.round((conversionRate30d || 0) * 100)}%</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">90天转化率:</dt><dd>{Math.round((conversionRate90d || 0) * 100)}%</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">30天复购率:</dt><dd>{Math.round((repeatCustomerRate30d || 0) * 100)}%</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">90天复购率:</dt><dd>{Math.round((repeatCustomerRate90d || 0) * 100)}%</dd></div>
+                  </dl>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -303,6 +322,9 @@ function RepDetail() {
                 <div className="flex justify-between"><span className="text-muted-foreground">30天下单客户</span><span>{orderedCustomerCount30d || 0}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">30天复购客户</span><span>{repeatCustomerCount30d || 0}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">30天复购率</span><span>{Math.round((repeatCustomerRate30d || 0) * 100)}%</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">90天下单客户</span><span>{orderedCustomerCount90d || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">90天复购客户</span><span>{repeatCustomerCount90d || 0}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">90天复购率</span><span>{Math.round((repeatCustomerRate90d || 0) * 100)}%</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">休眠客户</span><span>{dormantCustomerCount || 0}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">休眠预警</span><span>{dormantWarningCustomerCount || 0}</span></div>
               </CardContent>
@@ -324,7 +346,7 @@ function RepDetail() {
   );
 }
 
-function StatCard({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number }) {
+function StatCard({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number | string }) {
   return (
     <Card>
       <CardContent className="pt-3 pb-2 px-3">

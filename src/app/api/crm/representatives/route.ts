@@ -98,6 +98,7 @@ export async function GET(req: NextRequest) {
   const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
   const now = new Date();
   const d30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const d90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
   // Period window for today/week stats
   let periodStart: Date | null = null;
@@ -317,9 +318,13 @@ export async function GET(req: NextRequest) {
   const ownerLifecycleStats = new Map<string, {
     orderedCustomerCount30d: number;
     repeatCustomerCount30d: number;
+    orderedCustomerCount90d: number;
+    repeatCustomerCount90d: number;
     activeCustomerCount: number;
     newCustomerCount30d: number;
     convertedCustomerCount30d: number;
+    newCustomerCount90d: number;
+    convertedCustomerCount90d: number;
     dormantCustomerCount: number;
     dormantWarningCustomerCount: number;
   }>();
@@ -327,9 +332,13 @@ export async function GET(req: NextRequest) {
     const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
       orderedCustomerCount30d: 0,
       repeatCustomerCount30d: 0,
+      orderedCustomerCount90d: 0,
+      repeatCustomerCount90d: 0,
       activeCustomerCount: 0,
       newCustomerCount30d: 0,
       convertedCustomerCount30d: 0,
+      newCustomerCount90d: 0,
+      convertedCustomerCount90d: 0,
       dormantCustomerCount: 0,
       dormantWarningCustomerCount: 0,
     };
@@ -353,12 +362,32 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    if (anchorAt >= d90) {
+      current.newCustomerCount90d += 1;
+
+      if (
+        summary.firstOrderAt &&
+        summary.firstOrderAt >= d90 &&
+        summary.firstOrderAt >= anchorAt
+      ) {
+        current.convertedCustomerCount90d += 1;
+      }
+    }
+
     if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d30) {
       current.orderedCustomerCount30d += 1;
     }
     if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
       current.repeatCustomerCount30d += 1;
     }
+
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      current.orderedCustomerCount90d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      current.repeatCustomerCount90d += 1;
+    }
+
     if (lifecycleStage === "DORMANT") current.dormantCustomerCount += 1;
     if (summary.dormantRisk && lifecycleStage !== "DORMANT") current.dormantWarningCustomerCount += 1;
     ownerLifecycleStats.set(summary.ownerUserId, current);
@@ -372,18 +401,26 @@ export async function GET(req: NextRequest) {
       ? ownerLifecycleStats.get(userId) ?? {
           orderedCustomerCount30d: 0,
           repeatCustomerCount30d: 0,
+          orderedCustomerCount90d: 0,
+          repeatCustomerCount90d: 0,
           activeCustomerCount: 0,
           newCustomerCount30d: 0,
           convertedCustomerCount30d: 0,
+          newCustomerCount90d: 0,
+          convertedCustomerCount90d: 0,
           dormantCustomerCount: 0,
           dormantWarningCustomerCount: 0,
         }
       : {
           orderedCustomerCount30d: 0,
           repeatCustomerCount30d: 0,
+          orderedCustomerCount90d: 0,
+          repeatCustomerCount90d: 0,
           activeCustomerCount: 0,
           newCustomerCount30d: 0,
           convertedCustomerCount30d: 0,
+          newCustomerCount90d: 0,
+          convertedCustomerCount90d: 0,
           dormantCustomerCount: 0,
           dormantWarningCustomerCount: 0,
         };
@@ -421,10 +458,20 @@ export async function GET(req: NextRequest) {
       conversionRate30d: lifecycleStats.newCustomerCount30d > 0
         ? lifecycleStats.convertedCustomerCount30d / lifecycleStats.newCustomerCount30d
         : 0,
+      newCustomerCount90d: lifecycleStats.newCustomerCount90d,
+      convertedCustomerCount90d: lifecycleStats.convertedCustomerCount90d,
+      conversionRate90d: lifecycleStats.newCustomerCount90d > 0
+        ? lifecycleStats.convertedCustomerCount90d / lifecycleStats.newCustomerCount90d
+        : 0,
       orderedCustomerCount30d: lifecycleStats.orderedCustomerCount30d,
       repeatCustomerCount30d: lifecycleStats.repeatCustomerCount30d,
       repeatCustomerRate30d: lifecycleStats.orderedCustomerCount30d > 0
         ? lifecycleStats.repeatCustomerCount30d / lifecycleStats.orderedCustomerCount30d
+        : 0,
+      orderedCustomerCount90d: lifecycleStats.orderedCustomerCount90d,
+      repeatCustomerCount90d: lifecycleStats.repeatCustomerCount90d,
+      repeatCustomerRate90d: lifecycleStats.orderedCustomerCount90d > 0
+        ? lifecycleStats.repeatCustomerCount90d / lifecycleStats.orderedCustomerCount90d
         : 0,
       dormantCustomerCount: lifecycleStats.dormantCustomerCount,
       dormantWarningCustomerCount: lifecycleStats.dormantWarningCustomerCount,

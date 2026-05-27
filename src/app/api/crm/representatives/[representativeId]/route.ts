@@ -44,6 +44,8 @@ export async function GET(
   const userId = linkedUser?.id;
   const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
   const now = new Date();
+  const d30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const d90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
   if (!userId) {
     return NextResponse.json({
@@ -58,6 +60,26 @@ export async function GET(
       recentCheckins: [],
       openFollowUps: [],
       relationCount: 0,
+      dueCommunicationTaskCount: 0,
+      doneCommunicationTaskCount: 0,
+      overdueCommunicationTaskCount: 0,
+      communicatedCustomerCount30d: 0,
+      communicationCoverageRate30d: 0,
+      activeCustomerCount: 0,
+      newCustomerCount30d: 0,
+      convertedCustomerCount30d: 0,
+      conversionRate30d: 0,
+      newCustomerCount90d: 0,
+      convertedCustomerCount90d: 0,
+      conversionRate90d: 0,
+      orderedCustomerCount30d: 0,
+      repeatCustomerCount30d: 0,
+      repeatCustomerRate30d: 0,
+      orderedCustomerCount90d: 0,
+      repeatCustomerCount90d: 0,
+      repeatCustomerRate90d: 0,
+      dormantCustomerCount: 0,
+      dormantWarningCustomerCount: 0,
       regions: rep.regionAssignments.map((a) => ({
         id: a.region.id,
         name: a.region.name,
@@ -144,9 +166,60 @@ export async function GET(
   const lifecycleValues = [...lifecycleMap.values()];
   const communication = await getCrmCommunicationMetrics({
     ownerUserIds: [userId],
-    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    from: d30,
     to: now,
   });
+
+  // Pre-calculate lifecycle metrics
+  let activeCustomerCount = 0;
+  let newCustomerCount30d = 0;
+  let convertedCustomerCount30d = 0;
+  let newCustomerCount90d = 0;
+  let convertedCustomerCount90d = 0;
+  let orderedCustomerCount30d = 0;
+  let repeatCustomerCount30d = 0;
+  let orderedCustomerCount90d = 0;
+  let repeatCustomerCount90d = 0;
+  let dormantCustomerCount = 0;
+  let dormantWarningCustomerCount = 0;
+
+  for (const summary of lifecycleValues) {
+    const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
+    const anchorAt = summary.assignedAt ?? summary.createdAt;
+
+    if (lifecycleStage === "ACTIVE") activeCustomerCount += 1;
+
+    if (anchorAt >= d30) {
+      newCustomerCount30d += 1;
+      if (summary.firstOrderAt && summary.firstOrderAt >= d30 && summary.firstOrderAt >= anchorAt) {
+        convertedCustomerCount30d += 1;
+      }
+    }
+
+    if (anchorAt >= d90) {
+      newCustomerCount90d += 1;
+      if (summary.firstOrderAt && summary.firstOrderAt >= d90 && summary.firstOrderAt >= anchorAt) {
+        convertedCustomerCount90d += 1;
+      }
+    }
+
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      orderedCustomerCount30d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
+      repeatCustomerCount30d += 1;
+    }
+
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      orderedCustomerCount90d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      repeatCustomerCount90d += 1;
+    }
+
+    if (lifecycleStage === "DORMANT") dormantCustomerCount += 1;
+    if (summary.dormantRisk && lifecycleStage !== "DORMANT") dormantWarningCustomerCount += 1;
+  }
 
   return NextResponse.json({
     representative: { id: rep.id, name: rep.name, email: rep.email, archived: rep.archived },
@@ -161,14 +234,21 @@ export async function GET(
     overdueCommunicationTaskCount: communication.overdueCommunicationTaskCount,
     communicatedCustomerCount30d: communication.communicatedCustomerCount,
     communicationCoverageRate30d: communication.communicationCoverageRate,
-    orderedCustomerCount30d: lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length,
-    repeatCustomerCount30d: lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length,
-    repeatCustomerRate30d: lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length > 0
-      ? lifecycleValues.filter((item) => item.isRepeatCustomer && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
-        / lifecycleValues.filter((item) => item.validOrderCount > 0 && item.lastOrderAt && item.lastOrderAt >= new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)).length
-      : 0,
-    dormantCustomerCount: lifecycleValues.filter((item) => getEffectiveCrmLifecycleStage(item) === "DORMANT").length,
-    dormantWarningCustomerCount: lifecycleValues.filter((item) => item.dormantRisk && getEffectiveCrmLifecycleStage(item) !== "DORMANT").length,
+    activeCustomerCount,
+    newCustomerCount30d,
+    convertedCustomerCount30d,
+    conversionRate30d: newCustomerCount30d > 0 ? convertedCustomerCount30d / newCustomerCount30d : 0,
+    newCustomerCount90d,
+    convertedCustomerCount90d,
+    conversionRate90d: newCustomerCount90d > 0 ? convertedCustomerCount90d / newCustomerCount90d : 0,
+    orderedCustomerCount30d,
+    repeatCustomerCount30d,
+    repeatCustomerRate30d: orderedCustomerCount30d > 0 ? repeatCustomerCount30d / orderedCustomerCount30d : 0,
+    orderedCustomerCount90d,
+    repeatCustomerCount90d,
+    repeatCustomerRate90d: orderedCustomerCount90d > 0 ? repeatCustomerCount90d / orderedCustomerCount90d : 0,
+    dormantCustomerCount,
+    dormantWarningCustomerCount,
     customers,
     recentCheckins,
     openFollowUps,

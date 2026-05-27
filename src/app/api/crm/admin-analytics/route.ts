@@ -15,6 +15,7 @@ export async function GET() {
   const now = new Date();
   const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const d90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
   // ── Global aggregates ────────────────────────────────────────────
   const [
@@ -127,6 +128,8 @@ export async function GET() {
   const ownerLifecycleStats = new Map<string, {
     orderedCustomerCount30d: number;
     repeatCustomerCount30d: number;
+    orderedCustomerCount90d: number;
+    repeatCustomerCount90d: number;
     dormantCustomerCount: number;
     dormantWarningCustomerCount: number;
   }>();
@@ -134,6 +137,8 @@ export async function GET() {
     const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
       orderedCustomerCount30d: 0,
       repeatCustomerCount30d: 0,
+      orderedCustomerCount90d: 0,
+      repeatCustomerCount90d: 0,
       dormantCustomerCount: 0,
       dormantWarningCustomerCount: 0,
     };
@@ -143,6 +148,12 @@ export async function GET() {
     }
     if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d30) {
       current.repeatCustomerCount30d += 1;
+    }
+    if (summary.validOrderCount > 0 && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      current.orderedCustomerCount90d += 1;
+    }
+    if (summary.isRepeatCustomer && summary.lastOrderAt && summary.lastOrderAt >= d90) {
+      current.repeatCustomerCount90d += 1;
     }
     if (lifecycleStage === "DORMANT") current.dormantCustomerCount += 1;
     if (summary.dormantRisk && lifecycleStage !== "DORMANT") current.dormantWarningCustomerCount += 1;
@@ -188,6 +199,9 @@ export async function GET() {
         orderedCustomerCount30d: 0,
         repeatCustomerCount30d: 0,
         repeatCustomerRate30d: 0,
+        orderedCustomerCount90d: 0,
+        repeatCustomerCount90d: 0,
+        repeatCustomerRate90d: 0,
         dormantCustomerCount: 0,
         dormantWarningCustomerCount: 0,
       };
@@ -205,6 +219,9 @@ export async function GET() {
         orderedCustomerCount30d: 0,
         repeatCustomerCount30d: 0,
         repeatCustomerRate30d: 0,
+        orderedCustomerCount90d: 0,
+        repeatCustomerCount90d: 0,
+        repeatCustomerRate90d: 0,
         dormantCustomerCount: 0,
         dormantWarningCustomerCount: 0,
       };
@@ -214,6 +231,8 @@ export async function GET() {
     const lifecycleStats = ownerLifecycleStats.get(ownerUserId) ?? {
       orderedCustomerCount30d: 0,
       repeatCustomerCount30d: 0,
+      orderedCustomerCount90d: 0,
+      repeatCustomerCount90d: 0,
       dormantCustomerCount: 0,
       dormantWarningCustomerCount: 0,
     };
@@ -229,6 +248,11 @@ export async function GET() {
       repeatCustomerCount30d: lifecycleStats.repeatCustomerCount30d,
       repeatCustomerRate30d: lifecycleStats.orderedCustomerCount30d > 0
         ? lifecycleStats.repeatCustomerCount30d / lifecycleStats.orderedCustomerCount30d
+        : 0,
+      orderedCustomerCount90d: lifecycleStats.orderedCustomerCount90d,
+      repeatCustomerCount90d: lifecycleStats.repeatCustomerCount90d,
+      repeatCustomerRate90d: lifecycleStats.orderedCustomerCount90d > 0
+        ? lifecycleStats.repeatCustomerCount90d / lifecycleStats.orderedCustomerCount90d
         : 0,
       dormantCustomerCount: lifecycleStats.dormantCustomerCount,
       dormantWarningCustomerCount: lifecycleStats.dormantWarningCustomerCount,

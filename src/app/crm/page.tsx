@@ -57,7 +57,7 @@ function CrmDashboard() {
 
   const { data: analyticsData } = useQuery<{
     global: { interactionCount7d: number; interactionCount30d: number; checkinCount7d: number; checkinCount30d: number };
-    representatives: Array<{ representativeId: string; name: string; email: string; hasUser: boolean; profileCount: number; checkinCount30d: number; lastCheckinAt: string | null; overdueFollowUps: number; interactionCount30d: number; visitDensity: number; interactionDensity: number; dueCommunicationTaskCount: number; doneCommunicationTaskCount: number; communicatedCustomerCount30d: number; communicationCoverageRate30d: number; orderedCustomerCount30d: number; repeatCustomerCount30d: number; repeatCustomerRate30d: number; dormantCustomerCount: number; dormantWarningCustomerCount: number }>;
+    representatives: Array<{ representativeId: string; name: string; email: string; hasUser: boolean; profileCount: number; checkinCount30d: number; lastCheckinAt: string | null; overdueFollowUps: number; interactionCount30d: number; visitDensity: number; interactionDensity: number; dueCommunicationTaskCount: number; doneCommunicationTaskCount: number; communicatedCustomerCount30d: number; communicationCoverageRate30d: number; orderedCustomerCount30d: number; repeatCustomerCount30d: number; repeatCustomerRate30d: number; orderedCustomerCount90d: number; repeatCustomerCount90d: number; repeatCustomerRate90d: number; dormantCustomerCount: number; dormantWarningCustomerCount: number }>;
   }>({
     queryKey: ["crm-admin-analytics"],
     queryFn: () => fetch("/api/crm/admin-analytics").then((r) => r.json()),
@@ -153,7 +153,8 @@ function CrmDashboard() {
                     <th className="py-1.5 pr-2 font-medium text-right">30天签到</th>
                     <th className="py-1.5 pr-2 font-medium text-right">30天沟通</th>
                     <th className="py-1.5 pr-2 font-medium text-right">已完成沟通</th>
-                    <th className="py-1.5 pr-2 font-medium text-right">复购率</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">30天复购率</th>
+                    <th className="py-1.5 pr-2 font-medium text-right">90天复购率</th>
                     <th className="py-1.5 pr-2 font-medium text-right">逾期</th>
                     <th className="py-1.5 pr-2 font-medium text-right">拜访密度</th>
                     <th className="py-1.5 font-medium">最近签到</th>
@@ -173,6 +174,7 @@ function CrmDashboard() {
                       <td className="py-1.5 pr-2 text-right">{r.interactionCount30d}</td>
                       <td className="py-1.5 pr-2 text-right">{r.doneCommunicationTaskCount || 0}</td>
                       <td className="py-1.5 pr-2 text-right">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
+                      <td className="py-1.5 pr-2 text-right">{Math.round((r.repeatCustomerRate90d || 0) * 100)}%</td>
                       <td className="py-1.5 pr-2 text-right">{r.overdueFollowUps > 0 ? <span className="text-red-500">{r.overdueFollowUps}</span> : 0}</td>
                       <td className="py-1.5 pr-2 text-right font-mono">{r.visitDensity.toFixed(1)}</td>
                       <td className="py-1.5 text-muted-foreground">

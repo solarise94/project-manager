@@ -94,7 +94,6 @@ function RepOpsList() {
   const [repSelectOpen, setRepSelectOpen] = useState(false);
 
   const hasPeriod = period === "today" || period === "week";
-  const totalCustomers = reps.reduce((s, r) => s + r.customerCount, 0);
   const totalInteractions = hasPeriod
     ? reps.reduce((s, r) => s + (r.periodInteractionCount || 0), 0)
     : reps.reduce((s, r) => s + (r.interactionCount30d || 0), 0);
@@ -109,16 +108,27 @@ function RepOpsList() {
     : 0;
   const totalOverdue = reps.reduce((s, r) => s + r.overdueFollowUps, 0);
 
+  const totalCustomers = reps.reduce((s, r) => s + r.customerCount, 0);
   const totalActiveCustomers = reps.reduce((s, r) => s + (r.activeCustomerCount || 0), 0);
   const totalNewCustomerCount30d = reps.reduce((s, r) => s + (r.newCustomerCount30d || 0), 0);
   const totalConvertedCustomerCount30d = reps.reduce((s, r) => s + (r.convertedCustomerCount30d || 0), 0);
   const totalConversionRate30d = totalNewCustomerCount30d > 0
     ? totalConvertedCustomerCount30d / totalNewCustomerCount30d
     : 0;
+  const totalNewCustomerCount90d = reps.reduce((s, r) => s + (r.newCustomerCount90d || 0), 0);
+  const totalConvertedCustomerCount90d = reps.reduce((s, r) => s + (r.convertedCustomerCount90d || 0), 0);
+  const totalConversionRate90d = totalNewCustomerCount90d > 0
+    ? totalConvertedCustomerCount90d / totalNewCustomerCount90d
+    : 0;
   const totalOrderedCustomerCount30d = reps.reduce((s, r) => s + (r.orderedCustomerCount30d || 0), 0);
   const totalRepeatCustomerCount30d = reps.reduce((s, r) => s + (r.repeatCustomerCount30d || 0), 0);
   const totalRepeatCustomerRate30d = totalOrderedCustomerCount30d > 0
     ? totalRepeatCustomerCount30d / totalOrderedCustomerCount30d
+    : 0;
+  const totalOrderedCustomerCount90d = reps.reduce((s, r) => s + (r.orderedCustomerCount90d || 0), 0);
+  const totalRepeatCustomerCount90d = reps.reduce((s, r) => s + (r.repeatCustomerCount90d || 0), 0);
+  const totalRepeatCustomerRate90d = totalOrderedCustomerCount90d > 0
+    ? totalRepeatCustomerCount90d / totalOrderedCustomerCount90d
     : 0;
 
   const activeFilterCount = (archived !== "active" ? 1 : 0) + (hasOverdue ? 1 : 0) + (hasLongUnvisited ? 1 : 0) + (regionId ? 1 : 0) + (selectedRepIds.length > 0 ? 1 : 0) + (period ? 1 : 0);
@@ -127,7 +137,7 @@ function RepOpsList() {
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">代表运营</h1>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
         {hasPeriod ? (
           <>
             <StatCard icon={MessageSquare} label="已有客户沟通" value={totalInteractions} />
@@ -139,9 +149,11 @@ function RepOpsList() {
         ) : (
           <>
             <StatCard icon={Users} label="总客户数" value={totalCustomers} />
-            <StatCard icon={Users} label="活跃客户数" value={totalActiveCustomers} />
-            <StatCard icon={TrendingUp} label="30天内转化率" value={`${Math.round(totalConversionRate30d * 100)}%`} />
-            <StatCard icon={RefreshCw} label="30天内复购率" value={`${Math.round(totalRepeatCustomerRate30d * 100)}%`} />
+            <StatCard icon={Users} label="总活跃客户" value={totalActiveCustomers} />
+            <StatCard icon={TrendingUp} label="整体30天转化率" value={`${Math.round(totalConversionRate30d * 100)}%`} />
+            <StatCard icon={TrendingUp} label="整体90天转化率" value={`${Math.round(totalConversionRate90d * 100)}%`} />
+            <StatCard icon={RefreshCw} label="整体30天复购率" value={`${Math.round(totalRepeatCustomerRate30d * 100)}%`} />
+            <StatCard icon={RefreshCw} label="整体90天复购率" value={`${Math.round(totalRepeatCustomerRate90d * 100)}%`} />
             <StatCard icon={AlertTriangle} label="逾期跟进" value={totalOverdue} color={totalOverdue > 0 ? "text-red-600" : undefined} />
           </>
         )}
@@ -257,9 +269,10 @@ function RepOpsList() {
                   <>
                     <th className="text-right p-3 font-medium">客户数</th>
                     <th className="text-right p-3 font-medium hidden md:table-cell">活跃客户</th>
-                    <th className="text-right p-3 font-medium hidden sm:table-cell">30天已有客户沟通</th>
-                    <th className="text-right p-3 font-medium hidden lg:table-cell">30天内转化率</th>
-                    <th className="text-right p-3 font-medium hidden lg:table-cell">30天内复购率</th>
+                    <th className="text-right p-3 font-medium hidden sm:table-cell">30天转化率</th>
+                    <th className="text-right p-3 font-medium hidden xl:table-cell">90天转化率</th>
+                    <th className="text-right p-3 font-medium hidden sm:table-cell">30天复购率</th>
+                    <th className="text-right p-3 font-medium hidden xl:table-cell">90天复购率</th>
                   </>
                 )}
                 <th className="text-right p-3 font-medium hidden sm:table-cell">逾期跟进</th>
@@ -296,9 +309,10 @@ function RepOpsList() {
                     <>
                       <td className="p-3 text-right font-medium">{r.customerCount}</td>
                       <td className="p-3 text-right hidden md:table-cell">{r.activeCustomerCount ?? 0}</td>
-                      <td className="p-3 text-right hidden sm:table-cell">{r.interactionCount30d ?? 0}</td>
-                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.conversionRate30d || 0) * 100)}%</td>
-                      <td className="p-3 text-right hidden lg:table-cell">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden sm:table-cell">{Math.round((r.conversionRate30d || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden xl:table-cell">{Math.round((r.conversionRate90d || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden sm:table-cell">{Math.round((r.repeatCustomerRate30d || 0) * 100)}%</td>
+                      <td className="p-3 text-right hidden xl:table-cell">{Math.round((r.repeatCustomerRate90d || 0) * 100)}%</td>
                     </>
                   )}
                   <td className="p-3 text-right hidden sm:table-cell">
