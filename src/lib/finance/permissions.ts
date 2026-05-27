@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getOrderScopeWhere } from "@/lib/orders/permissions";
+import { getEffectiveCrmVisibleCustomerIds } from "@/lib/crm/permissions";
 
 const FINANCE_READ_ROLES = new Set(["ADMIN", "USER", "REGIONAL_MANAGER"]);
 const FINANCE_ADVANCE_READ_ROLES = new Set(["ADMIN", "USER", "REPRESENTATIVE", "REGIONAL_MANAGER"]);
@@ -114,19 +115,11 @@ export async function getFinanceCustomerScopeWhere(
 
   if (role === "REPRESENTATIVE" || role === "REGIONAL_MANAGER") {
     const customerIds = new Set<string>();
-    const { representativeUserIds } = await getSalesFinanceContext(userId, role);
 
-    if (representativeUserIds.length > 0) {
-      const crmProfiles = await prisma.crmCustomerProfile.findMany({
-        where: {
-          ownerUserId: { in: representativeUserIds },
-          assignmentStatus: "ASSIGNED",
-        },
-        select: { sourceCustomerId: true },
-      });
-      for (const profile of crmProfiles) {
-        customerIds.add(profile.sourceCustomerId);
-      }
+    // CRM customer scope via effective representative (covers explicit + fallback bindings)
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(userId, role);
+    if (visibleCustomerIds) {
+      for (const cid of visibleCustomerIds) customerIds.add(cid);
     }
 
     const projectScope = await getFinanceProjectScopeWhere(userId, role);

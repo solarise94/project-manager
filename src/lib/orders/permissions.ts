@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getEffectiveCrmVisibleCustomerIds } from "@/lib/crm/permissions";
 
 export function canAccessOrders(role: string): boolean {
   return role === "ADMIN" || role === "USER" || role === "REPRESENTATIVE" || role === "REGIONAL_MANAGER";
@@ -12,7 +13,7 @@ export function isOrderAccessBlocked(role: string): boolean {
  * Build a Prisma where clause for Order scoping.
  * ADMIN → null (all orders)
  * USER  → scoped to project-linked orders, CRM customer orders, and own created orders
- * REP / REGIONAL_MANAGER → orders linked to the representative's projects
+ * REP / REGIONAL_MANAGER → project-linked orders + CRM customer orders via effective representative
  */
 export async function getOrderScopeWhere(
   userId: string,
@@ -102,28 +103,9 @@ export async function getOrderScopeWhere(
       }
     }
 
-    // ── CRM Customer scope: orders of customers owned by the rep(s) ──
-    // Resolve user IDs for all representatives
-    const repUsers = await prisma.user.findMany({
-      where: { email: { not: "" }, role: { in: ["REPRESENTATIVE", "REGIONAL_MANAGER"] } },
-      select: { id: true, email: true },
-    });
-
-    const repEmails = await prisma.representative.findMany({
-      where: { id: { in: repIds } },
-      select: { email: true },
-    });
-    const repEmailSet = new Set(repEmails.map((r) => r.email));
-    const repUserIds = repUsers.filter((u) => repEmailSet.has(u.email)).map((u) => u.id);
-
-    let crmCustomerIds: string[] = [];
-    if (repUserIds.length > 0) {
-      const profiles = await prisma.crmCustomerProfile.findMany({
-        where: { ownerUserId: { in: repUserIds }, assignmentStatus: "ASSIGNED" },
-        select: { sourceCustomerId: true },
-      });
-      crmCustomerIds = profiles.map((p) => p.sourceCustomerId);
-    }
+    // ── CRM Customer scope: orders of customers visible via effective representative ──
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(userId, role);
+    const crmCustomerIds = visibleCustomerIds ? [...visibleCustomerIds] : [];
 
     if (repIds.length === 0 && crmCustomerIds.length === 0) {
       return { id: { in: ["__NO_MATCH__"] } };

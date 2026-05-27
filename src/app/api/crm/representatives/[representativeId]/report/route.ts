@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { deriveGraduationStatus } from "@/lib/crm/profile-filters";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 /** Compute week boundaries: Monday 00:00:00 to next Monday 00:00:00 */
 function getWeekWindow() {
@@ -82,43 +83,57 @@ export async function GET(
     });
   }
 
-  const assignedProfiles = await prisma.crmCustomerProfile.findMany({
-    where: {
-      ownerUserId: userId,
-      archived: false,
-      assignmentStatus: "ASSIGNED",
-    },
-    select: { sourceCustomerId: true },
+  // Resolve effective representatives for all non-archived profiles
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: { id: true, sourceCustomerId: true, createdAt: true, assignedAt: true },
   });
-  const assignedCustomerIds = assignedProfiles.map((profile) => profile.sourceCustomerId);
+  const profileCustomerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(profileCustomerIds);
+
+  // Collect effective customers belonging to this rep
+  const effectiveCustomerIds: string[] = [];
+  const effectiveProfileMap = new Map<string, { createdAt: Date; assignedAt: Date | null }>();
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (effective?.ownerUserId === userId) {
+      effectiveCustomerIds.push(profile.sourceCustomerId);
+      effectiveProfileMap.set(profile.sourceCustomerId, { createdAt: profile.createdAt, assignedAt: profile.assignedAt });
+    }
+  }
 
   // Summary stats
-  const [visitCheckinCount, newCustomerCount, reservedOrders] = await Promise.all([
+  const [visitCheckinCount, reservedOrders] = await Promise.all([
     prisma.crmVisitCheckin.count({
       where: { userId, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
     }),
-    prisma.crmCustomerProfile.count({
-      where: {
-        ownerUserId: userId,
-        archived: false,
-        assignmentStatus: "ASSIGNED",
-        OR: [
-          { assignedAt: { gte: periodStart, lt: periodEnd } },
-          { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
-        ],
-      },
-    }),
-    assignedCustomerIds.length > 0
+    effectiveCustomerIds.length > 0
       ? prisma.order.findMany({
           where: {
-            customerId: { in: assignedCustomerIds },
-            orderedAt: { gte: periodStart, lt: periodEnd },
+            customerId: { in: effectiveCustomerIds },
+            OR: [
+              { orderedAt: { gte: periodStart, lt: periodEnd } },
+              { orderedAt: null, confirmedAt: { gte: periodStart, lt: periodEnd } },
+              { orderedAt: null, confirmedAt: null, createdAt: { gte: periodStart, lt: periodEnd } },
+            ],
             deleted: false,
           },
           select: { customerId: true, totalAmount: true, financeAmountOverride: true },
         })
       : Promise.resolve([]),
   ]);
+
+  // New customers this week: based on effective anchorAt
+  const newCustomerIds: string[] = [];
+  for (const customerId of effectiveCustomerIds) {
+    const effective = effectiveMap.get(customerId);
+    const anchorAt = effective?.anchorAt;
+    if (anchorAt && anchorAt >= periodStart && anchorAt < periodEnd) {
+      newCustomerIds.push(customerId);
+    }
+  }
+  const newCustomerCount = newCustomerIds.length;
+
   const reservedOrderCount = reservedOrders.length;
   const reservedOrderAmount = reservedOrders.reduce(
     (sum, order) => sum + (order.financeAmountOverride ?? order.totalAmount ?? 0),
@@ -133,21 +148,6 @@ export async function GET(
       distinct: ["profileId"],
     })
   ).map((v) => v.profile?.sourceCustomerId).filter(Boolean) as string[];
-
-  const newCustomerIds = (
-    await prisma.crmCustomerProfile.findMany({
-      where: {
-        ownerUserId: userId,
-        archived: false,
-        assignmentStatus: "ASSIGNED",
-        OR: [
-          { assignedAt: { gte: periodStart, lt: periodEnd } },
-          { AND: [{ assignedAt: null }, { createdAt: { gte: periodStart, lt: periodEnd } }] },
-        ],
-      },
-      select: { sourceCustomerId: true },
-    })
-  ).map((p) => p.sourceCustomerId);
 
   const orderCustomerIds = reservedOrders
     .map((order) => order.customerId)
@@ -463,17 +463,13 @@ export async function PATCH(
       note: String(l.note || "").slice(0, MAX_LEN),
     }));
 
-    // Ownership validation: each customerId must belong to this rep
-    const customerIds = normalizedLines.map((l) => l.customerId);
-    if (customerIds.length > 0) {
-      const profiles = await prisma.crmCustomerProfile.findMany({
-        where: { sourceCustomerId: { in: customerIds } },
-        select: { sourceCustomerId: true, ownerUserId: true },
-      });
-      const profileOwnerMap = new Map(profiles.map((p) => [p.sourceCustomerId, p.ownerUserId]));
-      for (let i = 0; i < customerIds.length; i++) {
-        const ownerId = profileOwnerMap.get(customerIds[i]);
-        if (ownerId !== linkedUser.id) {
+    // Ownership validation: each customerId must belong to this rep via effective representative
+    const lineCustomerIds = normalizedLines.map((l) => l.customerId);
+    if (lineCustomerIds.length > 0) {
+      const effectiveMap = await resolveEffectiveCustomerRepresentatives(lineCustomerIds);
+      for (let i = 0; i < lineCustomerIds.length; i++) {
+        const effective = effectiveMap.get(lineCustomerIds[i]);
+        if (effective?.ownerUserId !== linkedUser.id) {
           return NextResponse.json(
             { error: `lines[${i}].customerId does not belong to you` },
             { status: 403 }

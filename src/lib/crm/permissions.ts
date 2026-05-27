@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 export function isRepresentativeRole(role: string) {
   return role === "REPRESENTATIVE";
@@ -95,6 +96,9 @@ export async function canManageRepresentativeBindings(
  * ADMIN / USER       -> {} (all profiles)
  * REGIONAL_MANAGER   -> { ownerUserId: { in: [...] } } (profiles of managed reps)
  * REPRESENTATIVE     -> { ownerUserId: ownUserId } (own profiles only)
+ *
+ * @deprecated This only covers explicit assignment. For effective representative
+ * fallback, use filterProfilesByEffectiveAccess or assertCrmProfileAccess instead.
  */
 export async function getCrmProfileScopeWhere(
   userId: string,
@@ -127,6 +131,94 @@ export async function buildCrmWhereForRole(userId: string, role: string, opts?: 
   return getCrmProfileScopeWhere(userId, role, opts);
 }
 
+/**
+ * Resolve the set of profileIds visible to a user based on effective representatives.
+ * Returns null for ADMIN/USER (meaning all profiles are visible).
+ */
+export async function getEffectiveCrmVisibleProfileIds(
+  userId: string,
+  role: string,
+): Promise<Set<string> | null> {
+  if (role === "ADMIN" || role === "USER") return null;
+
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: {
+      id: true,
+      sourceCustomerId: true,
+    },
+  });
+
+  const customerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(customerIds);
+
+  let allowedOwnerIds: string[];
+  if (role === "REGIONAL_MANAGER") {
+    const repUserIds = await getRegionalManagerUserIds(userId);
+    allowedOwnerIds = repUserIds && repUserIds.length > 0 ? [userId, ...repUserIds] : [userId];
+  } else if (role === "REPRESENTATIVE") {
+    allowedOwnerIds = [userId];
+  } else {
+    return new Set<string>();
+  }
+
+  const visibleProfileIds = new Set<string>();
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (effective?.ownerUserId && allowedOwnerIds.includes(effective.ownerUserId)) {
+      visibleProfileIds.add(profile.id);
+    }
+  }
+
+  return visibleProfileIds;
+}
+
+/**
+ * Resolve the set of customerIds visible to a user based on effective representatives.
+ * Returns null for ADMIN/USER (meaning all customers are visible).
+ */
+export async function getEffectiveCrmVisibleCustomerIds(
+  userId: string,
+  role: string,
+): Promise<Set<string> | null> {
+  if (role === "ADMIN" || role === "USER") return null;
+
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: {
+      id: true,
+      sourceCustomerId: true,
+    },
+  });
+
+  const customerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(customerIds);
+
+  let allowedOwnerIds: string[];
+  if (role === "REGIONAL_MANAGER") {
+    const repUserIds = await getRegionalManagerUserIds(userId);
+    allowedOwnerIds = repUserIds && repUserIds.length > 0 ? [userId, ...repUserIds] : [userId];
+  } else if (role === "REPRESENTATIVE") {
+    allowedOwnerIds = [userId];
+  } else {
+    return new Set<string>();
+  }
+
+  const visibleCustomerIds = new Set<string>();
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (effective?.ownerUserId && allowedOwnerIds.includes(effective.ownerUserId)) {
+      visibleCustomerIds.add(profile.sourceCustomerId);
+    }
+  }
+
+  return visibleCustomerIds;
+}
+
+/**
+ * Check if a user can access a CRM profile based on effective representative.
+ * Throws "NOT_FOUND" or "FORBIDDEN" on failure.
+ */
 export async function assertCrmProfileAccess(
   profileId: string,
   userId: string,
@@ -142,22 +234,23 @@ export async function assertCrmProfileAccess(
     return profile;
   }
 
+  const effective = await resolveEffectiveCustomerRepresentatives([profile.sourceCustomerId]);
+  const eff = effective.get(profile.sourceCustomerId);
+
   if (role === "REGIONAL_MANAGER") {
     const repUserIds = await getRegionalManagerUserIds(userId);
     const allowed = new Set(repUserIds || []);
     allowed.add(userId);
-    if (!allowed.has(profile.ownerUserId)) throw new Error("FORBIDDEN");
-    if (profile.assignmentStatus !== "ASSIGNED") throw new Error("FORBIDDEN");
+    if (!eff?.ownerUserId || !allowed.has(eff.ownerUserId)) throw new Error("FORBIDDEN");
     return profile;
   }
 
-  if (profile.ownerUserId !== userId) {
-    throw new Error("FORBIDDEN");
+  if (role === "REPRESENTATIVE") {
+    if (eff?.ownerUserId !== userId) throw new Error("FORBIDDEN");
+    return profile;
   }
-  if (profile.assignmentStatus !== "ASSIGNED") {
-    throw new Error("FORBIDDEN");
-  }
-  return profile;
+
+  throw new Error("FORBIDDEN");
 }
 
 export async function assertCrmProfileAccessByCustomerId(
@@ -175,20 +268,21 @@ export async function assertCrmProfileAccessByCustomerId(
     return profile;
   }
 
+  const effective = await resolveEffectiveCustomerRepresentatives([sourceCustomerId]);
+  const eff = effective.get(sourceCustomerId);
+
   if (role === "REGIONAL_MANAGER") {
     const repUserIds = await getRegionalManagerUserIds(userId);
     const allowed = new Set(repUserIds || []);
     allowed.add(userId);
-    if (!allowed.has(profile.ownerUserId)) throw new Error("FORBIDDEN");
-    if (profile.assignmentStatus !== "ASSIGNED") throw new Error("FORBIDDEN");
+    if (!eff?.ownerUserId || !allowed.has(eff.ownerUserId)) throw new Error("FORBIDDEN");
     return profile;
   }
 
-  if (profile.ownerUserId !== userId) {
-    throw new Error("FORBIDDEN");
+  if (role === "REPRESENTATIVE") {
+    if (eff?.ownerUserId !== userId) throw new Error("FORBIDDEN");
+    return profile;
   }
-  if (profile.assignmentStatus !== "ASSIGNED") {
-    throw new Error("FORBIDDEN");
-  }
-  return profile;
+
+  throw new Error("FORBIDDEN");
 }

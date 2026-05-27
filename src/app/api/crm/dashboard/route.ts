@@ -2,28 +2,79 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
+import { isRepresentativeRole, isRegionalManagerRole, getRegionalManagerUserIds } from "@/lib/crm/permissions";
 import { CRM_EFFECTIVE_INTERACTION_TYPES } from "@/lib/crm/constants";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const roleWhere = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-  const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
-  // For scoped roles, resolve the set of userIds visible to this user
-  const scopedUserIds = isScoped ? extractScopedUserIds(roleWhere) : null;
+  // Resolve effective representatives for all non-archived profiles
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: {
+      id: true,
+      sourceCustomerId: true,
+      ownerUserId: true,
+      stage: true,
+      assignmentStatus: true,
+      lastFollowUpAt: true,
+      assignedAt: true,
+      createdAt: true,
+    },
+  });
 
-  const followUpOwnerFilter = scopedUserIds ? { ownerUserId: { in: scopedUserIds } } : {};
-  const checkinUserFilter = scopedUserIds ? { userId: { in: scopedUserIds } } : {};
-  const interactionProfileFilter = scopedUserIds
-    ? { profile: { ownerUserId: { in: scopedUserIds } } }
+  const allCustomerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(allCustomerIds);
+
+  // Determine visible customerIds for scoped roles
+  let allowedOwnerIds: string[] | null = null;
+  if (isScoped) {
+    if (session.user.role === "REPRESENTATIVE") {
+      allowedOwnerIds = [session.user.id];
+    } else if (session.user.role === "REGIONAL_MANAGER") {
+      const repUserIds = await getRegionalManagerUserIds(session.user.id);
+      allowedOwnerIds = repUserIds && repUserIds.length > 0 ? [session.user.id, ...repUserIds] : [session.user.id];
+    }
+  }
+
+  const visibleCustomerIds = new Set<string>();
+  const visibleProfileIds = new Set<string>();
+  const myCustomerIds = new Set<string>();
+  const myProfileIds = new Set<string>();
+
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    const effectiveOwnerId = effective?.ownerUserId;
+
+    if (!isScoped || (effectiveOwnerId && allowedOwnerIds?.includes(effectiveOwnerId))) {
+      visibleCustomerIds.add(profile.sourceCustomerId);
+      visibleProfileIds.add(profile.id);
+    }
+
+    if (effectiveOwnerId === session.user.id) {
+      myCustomerIds.add(profile.sourceCustomerId);
+      myProfileIds.add(profile.id);
+    }
+  }
+
+  const visibleCustomerIdArray = [...visibleCustomerIds];
+  const visibleProfileIdArray = [...visibleProfileIds];
+
+  const followUpOwnerFilter = isScoped
+    ? { profileId: { in: visibleProfileIdArray } }
     : {};
-  const visibleProfileWhere = { ...roleWhere, archived: false };
-  const assignedVisibleProfileWhere = { ...visibleProfileWhere, assignmentStatus: "ASSIGNED" };
+  const checkinUserFilter = isScoped
+    ? { profileId: { in: visibleProfileIdArray } }
+    : {};
+  const interactionProfileFilter = isScoped
+    ? { profileId: { in: visibleProfileIdArray } }
+    : {};
   const validOrderWhere = {
     deleted: false,
     archived: false,
@@ -46,8 +97,8 @@ export async function GET() {
     communicatedInteractions,
     repeatedOrderGroups,
   ] = await Promise.all([
-    prisma.crmCustomerProfile.count({ where: visibleProfileWhere }),
-    prisma.crmCustomerProfile.count({ where: { ownerUserId: session.user.id, archived: false } }),
+    visibleProfileIdArray.length,
+    myProfileIds.size,
     prisma.crmFollowUpTask.count({
       where: { status: "OPEN", ...followUpOwnerFilter },
     }),
@@ -59,7 +110,7 @@ export async function GET() {
     }),
     prisma.crmCustomerProfile.groupBy({
       by: ["stage"],
-      where: visibleProfileWhere,
+      where: { id: { in: visibleProfileIdArray } },
       _count: true,
     }),
     prisma.crmInteraction.findMany({
@@ -70,16 +121,16 @@ export async function GET() {
     }),
     prisma.crmCustomerProfile.count({
       where: {
-        ...visibleProfileWhere,
+        id: { in: visibleProfileIdArray },
         sourceCustomer: { orders: { some: validOrderWhere } },
       },
     }),
     prisma.crmCustomerProfile.count({
-      where: { ...visibleProfileWhere, stage: "DORMANT" },
+      where: { id: { in: visibleProfileIdArray }, stage: "DORMANT" },
     }),
     prisma.crmCustomerProfile.count({
       where: {
-        ...visibleProfileWhere,
+        id: { in: visibleProfileIdArray },
         assignmentStatus: "ASSIGNED",
         stage: { in: ["NEW", "CONTACTED", "FOLLOWING"] },
         sourceCustomer: { orders: { none: validOrderWhere } },
@@ -90,10 +141,10 @@ export async function GET() {
         ],
       },
     }),
-    prisma.crmCustomerProfile.count({ where: assignedVisibleProfileWhere }),
+    myProfileIds.size,
     prisma.crmInteraction.findMany({
       where: {
-        profile: assignedVisibleProfileWhere,
+        profileId: { in: [...myProfileIds] },
         type: { in: CRM_EFFECTIVE_INTERACTION_TYPES as unknown as string[] },
         happenedAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000), lt: now },
       },
@@ -104,7 +155,7 @@ export async function GET() {
       by: ["customerId"],
       where: {
         ...validOrderWhere,
-        customerId: { not: null },
+        customerId: { in: visibleCustomerIdArray },
       },
       _count: true,
     }),
@@ -116,7 +167,7 @@ export async function GET() {
   const repeatCustomerCount = repeatedCustomerIds.length > 0
     ? await prisma.crmCustomerProfile.count({
         where: {
-          ...visibleProfileWhere,
+          id: { in: visibleProfileIdArray },
           sourceCustomerId: { in: repeatedCustomerIds },
         },
       })

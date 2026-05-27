@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { generateCustomerCode } from "@/lib/customer-code";
 import { resolveOrganization } from "@/lib/organization-resolver";
-import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
+import { syncEffectiveRepresentativeLinksForOrganization } from "@/lib/crm/customer-representative-sync";
 
 // ── Duplicate detection ─────────────────────────────────────────────────────
 
@@ -214,67 +214,26 @@ export function checkCustomerOwnershipConflict(
 
 // ── Auto-assign shared helper ────────────────────────────────────────────────
 
+/**
+ * Sync effective representative snapshots for customers under an organization
+ * (and optionally a specific site) when a binding is activated.
+ *
+ * Note: This no longer "auto-assigns" CRM profiles (does not modify ownerUserId
+ * or assignmentStatus). It only syncs Order/Project representative fields via
+ * the effective representative resolver.
+ *
+ * @deprecated Prefer calling syncEffectiveRepresentativeLinksForOrganization directly.
+ */
 export async function autoAssignOrgCustomersToRep(
   organizationId: string,
-  representativeEmail: string,
-  assignerUserId: string,
+  _representativeEmail: string,
+  _assignerUserId: string,
   organizationSiteId?: string | null,
 ): Promise<number> {
-  const repUser = await prisma.user.findFirst({
-    where: { email: representativeEmail, role: { in: ["REPRESENTATIVE", "REGIONAL_MANAGER"] } },
-    select: { id: true },
+  return syncEffectiveRepresentativeLinksForOrganization({
+    organizationId,
+    organizationSiteId,
   });
-  if (!repUser) return 0;
-
-  // Conservative strategy:
-  // - Site-level binding: only assign customers with that exact organizationSiteId
-  // - Org-level binding: only assign customers without organizationSiteId (unscoped)
-  const sourceCustomerWhere: Record<string, unknown> = { organizationId, deleted: false };
-  if (organizationSiteId) {
-    sourceCustomerWhere.organizationSiteId = organizationSiteId;
-  } else {
-    sourceCustomerWhere.organizationSiteId = null;
-  }
-
-  const unassigned = await prisma.crmCustomerProfile.findMany({
-    where: {
-      sourceCustomer: sourceCustomerWhere,
-      OR: [
-        { assignmentStatus: { not: "ASSIGNED" } },
-        { ownerUserId: { not: repUser.id } },
-      ],
-    },
-    select: { id: true, ownerUserId: true, sourceCustomerId: true },
-  });
-
-  if (unassigned.length > 0) {
-    await prisma.$transaction(async (tx) => {
-      for (const profile of unassigned) {
-        await tx.crmCustomerProfile.update({
-          where: { id: profile.id },
-          data: { ownerUserId: repUser.id, assignmentStatus: "ASSIGNED" },
-        });
-        await tx.crmCustomerAssignmentLog.create({
-          data: {
-            profileId: profile.id,
-            action: "ASSIGN",
-            reason: "organization_binding_auto_assign",
-            fromOwnerUserId: profile.ownerUserId,
-            toOwnerUserId: repUser.id,
-            createdByUserId: assignerUserId,
-          },
-        });
-        await syncCustomerRepresentativeLinksByOwnerUser(
-          profile.sourceCustomerId,
-          repUser.id,
-          true,
-          tx,
-        );
-      }
-    });
-  }
-
-  return unassigned.length;
 }
 
 // ── Legacy helpers ───────────────────────────────────────────────────────────

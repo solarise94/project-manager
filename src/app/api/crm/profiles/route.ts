@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { buildCrmWhereForRole, isRegionalManagerRole, isRepresentativeRole, extractScopedUserIds } from "@/lib/crm/permissions";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
 import { deriveGraduationStatus, buildGraduationStatusWhere } from "@/lib/crm/profile-filters";
 import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 import { getCrmLifecycleSummariesForCustomers } from "@/lib/crm/lifecycle";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
+import { isRegionalManagerRole, isRepresentativeRole, getRegionalManagerUserIds } from "@/lib/crm/permissions";
 
 const profileInclude = {
   sourceCustomer: {
@@ -111,33 +112,13 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
   const pageSize = Math.min(100, Math.max(10, parseInt(searchParams.get("pageSize") || "50") || 50));
 
-  const hasAssigneeFilter = assignee !== "";
-  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role, { includeUnassigned: hasAssigneeFilter });
   const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
-  const andConditions: Record<string, unknown>[] = [{ ...roleWhere, archived: false }];
+  // Build filters that can be expressed in Prisma WHERE
+  const andConditions: Record<string, unknown>[] = [{ archived: false }];
   if (sourceCustomerId) andConditions.push({ sourceCustomerId });
   if (stage) andConditions.push({ stage });
   if (importance) andConditions.push({ importance });
-  if (assignee === "UNASSIGNED") {
-    andConditions.push({ assignmentStatus: { in: ["UNASSIGNED", "RECALLED"] } });
-  } else if (assignee) {
-    if (isScoped) {
-      const scopedIds = extractScopedUserIds(roleWhere);
-      if (scopedIds && !scopedIds.includes(assignee)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-    }
-    andConditions.push({ ownerUserId: assignee });
-  } else if (ownerUserId) {
-    if (isScoped) {
-      const scopedIds = extractScopedUserIds(roleWhere);
-      if (scopedIds && !scopedIds.includes(ownerUserId)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-    }
-    andConditions.push({ ownerUserId });
-  }
   if (personCategory) andConditions.push({ personCategory });
   if (jobTitle) andConditions.push({ jobTitle: { contains: jobTitle } });
   if (graduationDateFrom || graduationDateTo) {
@@ -150,6 +131,9 @@ export async function GET(req: NextRequest) {
     const gradWhere = buildGraduationStatusWhere(graduationStatus);
     if (gradWhere) andConditions.push(gradWhere);
   }
+
+  // Note: we no longer filter by ownerUserId/assignee at the DB level.
+  // Effective representative filtering is applied after resolution.
 
   const sourceCustomerWhere: Record<string, unknown> = {};
   if (search) {
@@ -175,82 +159,109 @@ export async function GET(req: NextRequest) {
   const hasLifecycleFilters = Object.values(lifecycleFilters).some(Boolean);
   const usesLifecycleSort = sortField === "lastOrderAt" || sortField === "validOrderCount";
 
-  let pagedProfiles: Awaited<ReturnType<typeof prisma.crmCustomerProfile.findMany>>;
+  // Step 1: Query all candidate profiles (without owner filter)
+  const candidates = await prisma.crmCustomerProfile.findMany({
+    where,
+    select: {
+      id: true,
+      sourceCustomerId: true,
+      updatedAt: true,
+    },
+    orderBy: usesLifecycleSort
+      ? [{ updatedAt: "desc" }]
+      : [{ [sortField]: sortOrder }],
+  });
+
+  // Step 2: Resolve effective representatives for all candidates
+  const candidateCustomerIds = [...new Set(candidates.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(candidateCustomerIds);
+
+  // Step 3: Filter by effective owner for scoped roles and assignee filter
+  let allowedOwnerIds: string[] | null = null;
+  if (isScoped) {
+    if (session.user.role === "REPRESENTATIVE") {
+      allowedOwnerIds = [session.user.id];
+    } else if (session.user.role === "REGIONAL_MANAGER") {
+      const repUserIds = await getRegionalManagerUserIds(session.user.id);
+      allowedOwnerIds = repUserIds && repUserIds.length > 0 ? [session.user.id, ...repUserIds] : [session.user.id];
+    }
+  }
+
+  // Apply assignee/ownerUserId/scope filtering (effective owner)
+  let filteredCandidates = candidates.filter((p) => {
+    const effective = effectiveMap.get(p.sourceCustomerId);
+    const effOwnerId = effective?.ownerUserId;
+
+    if (assignee === "UNASSIGNED") {
+      if (effOwnerId) return false;
+    } else if (assignee) {
+      if (effOwnerId !== assignee) return false;
+    } else if (ownerUserId) {
+      if (effOwnerId !== ownerUserId) return false;
+    }
+
+    // Scoped roles must also intersect with allowedOwnerIds
+    if (allowedOwnerIds) {
+      if (!effOwnerId || !allowedOwnerIds.includes(effOwnerId)) return false;
+    }
+
+    return true;
+  });
+
+  // Step 4: Lifecycle filtering
   let lifecycleMap: LifecycleSummaryMap;
-  let total: number;
-
-  if (!hasLifecycleFilters && !usesLifecycleSort) {
-    const [profiles, count] = await Promise.all([
-      prisma.crmCustomerProfile.findMany({
-        where,
-        include: profileInclude,
-        orderBy: { [sortField]: sortOrder },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      prisma.crmCustomerProfile.count({ where }),
-    ]);
-    pagedProfiles = profiles;
+  if (hasLifecycleFilters || usesLifecycleSort) {
     lifecycleMap = await getCrmLifecycleSummariesForCustomers(
-      profiles.map((profile) => profile.sourceCustomerId),
-    );
-    total = count;
-  } else {
-    const candidates = await prisma.crmCustomerProfile.findMany({
-      where,
-      select: {
-        sourceCustomerId: true,
-        updatedAt: true,
-      },
-      orderBy: usesLifecycleSort
-        ? [{ updatedAt: "desc" }]
-        : [{ [sortField]: sortOrder }],
-    });
-    lifecycleMap = await getCrmLifecycleSummariesForCustomers(
-      candidates.map((profile) => profile.sourceCustomerId),
+      filteredCandidates.map((p) => p.sourceCustomerId),
     );
 
-    const filteredCandidates = candidates.filter((profile) =>
-      matchesLifecycleFilters(lifecycleMap.get(profile.sourceCustomerId), lifecycleFilters),
-    );
+    if (hasLifecycleFilters) {
+      filteredCandidates = filteredCandidates.filter((p) =>
+        matchesLifecycleFilters(lifecycleMap.get(p.sourceCustomerId), lifecycleFilters),
+      );
+    }
 
     if (usesLifecycleSort) {
       filteredCandidates.sort((left, right) => {
         const leftLifecycle = lifecycleMap.get(left.sourceCustomerId);
         const rightLifecycle = lifecycleMap.get(right.sourceCustomerId);
         const primary = sortField === "lastOrderAt"
-          ? compareNullableDates(leftLifecycle?.lastOrderAt ?? null, rightLifecycle?.lastOrderAt ?? null, sortOrder)
-          : compareNumbers(leftLifecycle?.validOrderCount ?? 0, rightLifecycle?.validOrderCount ?? 0, sortOrder);
+          ? compareNullableDates(leftLifecycle?.lastOrderAt ?? null, rightLifecycle?.lastOrderAt ?? null, sortOrder as "asc" | "desc")
+          : compareNumbers(leftLifecycle?.validOrderCount ?? 0, rightLifecycle?.validOrderCount ?? 0, sortOrder as "asc" | "desc");
         if (primary !== 0) return primary;
         return right.updatedAt.getTime() - left.updatedAt.getTime();
       });
     }
+  } else {
+    lifecycleMap = await getCrmLifecycleSummariesForCustomers(
+      filteredCandidates.map((p) => p.sourceCustomerId),
+    );
+  }
 
-    const matchingCustomerIds = filteredCandidates.map((profile) => profile.sourceCustomerId);
+  // Step 5: Pagination
+  const total = filteredCandidates.length;
+  const pageCandidateIds = filteredCandidates.slice((page - 1) * pageSize, page * pageSize);
 
-    total = matchingCustomerIds.length;
-    const pageCustomerIds = matchingCustomerIds.slice((page - 1) * pageSize, page * pageSize);
-
-    if (pageCustomerIds.length === 0) {
-      pagedProfiles = [];
-    } else {
-      const pageOrder = new Map(pageCustomerIds.map((customerId, index) => [customerId, index]));
-      const fetchedProfiles = await prisma.crmCustomerProfile.findMany({
-        where: {
-          AND: [
-            where,
-            { sourceCustomerId: { in: pageCustomerIds } },
-          ],
-        },
-        include: profileInclude,
-        orderBy: usesLifecycleSort ? { updatedAt: "desc" } : { [sortField]: sortOrder },
-      });
-      pagedProfiles = fetchedProfiles.sort(
-        (left, right) =>
-          (pageOrder.get(left.sourceCustomerId) ?? Number.MAX_SAFE_INTEGER)
-          - (pageOrder.get(right.sourceCustomerId) ?? Number.MAX_SAFE_INTEGER),
-      );
-    }
+  let pagedProfiles: Awaited<ReturnType<typeof prisma.crmCustomerProfile.findMany>>;
+  if (pageCandidateIds.length === 0) {
+    pagedProfiles = [];
+  } else {
+    const pageOrder = new Map(pageCandidateIds.map((c, index) => [c.id, index]));
+    const fetchedProfiles = await prisma.crmCustomerProfile.findMany({
+      where: {
+        AND: [
+          where,
+          { id: { in: pageCandidateIds.map((c) => c.id) } },
+        ],
+      },
+      include: profileInclude,
+      orderBy: usesLifecycleSort ? { updatedAt: "desc" } : { [sortField]: sortOrder },
+    });
+    pagedProfiles = fetchedProfiles.sort(
+      (left, right) =>
+        (pageOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (pageOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    );
   }
 
   const enriched = enrichProfiles(pagedProfiles, lifecycleMap);

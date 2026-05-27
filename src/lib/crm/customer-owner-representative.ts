@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolveEffectiveCustomerRepresentative } from "@/lib/crm/customer-effective-representative";
 
 type DbLike = typeof prisma | Prisma.TransactionClient;
 
@@ -41,14 +42,16 @@ export async function resolveRepresentativeForOwnerUserId(
 }
 
 /**
- * Resolve the representative for a customer via their CRM profile owner.
+ * Resolve the effective representative for a customer.
  *
- * Chain: customerId → CrmCustomerProfile(owner ASSIGNED, sales role)
- *        → Representative (email match, non-archived)
+ * This function now uses the unified effective representative resolver,
+ * which supports fallback via organization/site bindings.
  *
- * Returns null for both fields when: customerId is null/undefined,
- * no CRM profile exists, profile is not ASSIGNED, owner is not a sales user,
- * or no active Representative matches the owner's email.
+ * Resolution priority:
+ * 1. EXPLICIT_ASSIGNMENT: profile is ASSIGNED and owner maps to a valid rep.
+ * 2. SITE_BINDING: customer has organizationSiteId with an ACTIVE binding.
+ * 3. ORG_BINDING: customer has organizationId with an ACTIVE org-level binding.
+ * 4. NONE: no match.
  */
 export async function resolveCustomerRepresentative(
   customerId: string | null | undefined,
@@ -56,16 +59,9 @@ export async function resolveCustomerRepresentative(
 ): Promise<{ representativeId: string | null; representativeName: string | null }> {
   if (!customerId) return { representativeId: null, representativeName: null };
 
-  const profile = await db.crmCustomerProfile.findUnique({
-    where: { sourceCustomerId: customerId },
-    select: {
-      assignmentStatus: true,
-      ownerUser: { select: { email: true, role: true } },
-    },
-  });
-
-  if (!profile?.ownerUser) return { representativeId: null, representativeName: null };
-  if (profile.assignmentStatus !== "ASSIGNED") return { representativeId: null, representativeName: null };
-
-  return resolveRepresentativeForOwnerUser(profile.ownerUser, db);
+  const effective = await resolveEffectiveCustomerRepresentative(customerId, db);
+  return {
+    representativeId: effective.representativeId,
+    representativeName: effective.representativeName,
+  };
 }

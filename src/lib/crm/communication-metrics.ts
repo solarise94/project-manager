@@ -215,3 +215,99 @@ export async function getCrmCommunicationMetricsByOwnerUserIds(
 
   return result;
 }
+
+/**
+ * Get communication metrics grouped by an arbitrary key derived from profile ownership.
+ * The caller provides a map of profileId -> groupKey (e.g. effective ownerUserId).
+ * Returns metrics per groupKey.
+ */
+export async function getCrmCommunicationMetricsByProfileIds(
+  params: {
+    profileIds: string[];
+    from: Date;
+    to: Date;
+  },
+  db: DbClient = prisma,
+): Promise<Map<string, CrmCommunicationMetrics>> {
+  const profileIds = [...new Set(params.profileIds.filter(Boolean))];
+  const result = new Map<string, CrmCommunicationMetrics>();
+  if (profileIds.length === 0) return result;
+
+  const now = new Date();
+  const [dueCounts, doneCounts, overdueCounts, communicatedProfiles] = await Promise.all([
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: { in: ["OPEN", "DONE", "EXPIRED"] },
+        dueAt: { gte: params.from, lt: params.to },
+      },
+      _count: true,
+    }),
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: "DONE",
+        completedAt: { gte: params.from, lt: params.to },
+      },
+      _count: true,
+    }),
+    db.crmFollowUpTask.groupBy({
+      by: ["profileId"],
+      where: {
+        profileId: { in: profileIds },
+        sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
+        status: "OPEN",
+        dueAt: { lt: now },
+      },
+      _count: true,
+    }),
+    db.crmInteraction.findMany({
+      where: {
+        profileId: { in: profileIds },
+        type: { in: CRM_EFFECTIVE_INTERACTION_TYPES as unknown as string[] },
+        happenedAt: { gte: params.from, lt: params.to },
+      },
+      select: { profileId: true },
+      distinct: ["profileId"],
+    }),
+  ]);
+
+  // Return per-profileId metrics. Caller is responsible for grouping by ownerUserId.
+  for (const profileId of profileIds) {
+    result.set(profileId, emptyCrmCommunicationMetrics());
+  }
+
+  for (const row of dueCounts) {
+    const current = result.get(row.profileId) ?? emptyCrmCommunicationMetrics();
+    current.dueCommunicationTaskCount += row._count;
+    result.set(row.profileId, current);
+  }
+  for (const row of doneCounts) {
+    const current = result.get(row.profileId) ?? emptyCrmCommunicationMetrics();
+    current.doneCommunicationTaskCount += row._count;
+    result.set(row.profileId, current);
+  }
+  for (const row of overdueCounts) {
+    const current = result.get(row.profileId) ?? emptyCrmCommunicationMetrics();
+    current.overdueCommunicationTaskCount += row._count;
+    result.set(row.profileId, current);
+  }
+  for (const row of communicatedProfiles) {
+    const current = result.get(row.profileId) ?? emptyCrmCommunicationMetrics();
+    current.communicatedCustomerCount += 1;
+    result.set(row.profileId, current);
+  }
+
+  for (const [profileId, metrics] of result) {
+    metrics.communicationCoverageRate = metrics.assignedCustomerCount > 0
+      ? metrics.communicatedCustomerCount / metrics.assignedCustomerCount
+      : 0;
+    result.set(profileId, metrics);
+  }
+
+  return result;
+}

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { buildCrmWhereForRole, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
+import { isRepresentativeRole, isRegionalManagerRole, getEffectiveCrmVisibleProfileIds, assertCrmProfileAccess } from "@/lib/crm/permissions";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -12,22 +12,22 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get("status") || "OPEN";
   const ownerUserId = searchParams.get("ownerUserId") || "";
 
-  const roleWhere = await buildCrmWhereForRole(session.user.id, session.user.role);
   const isScoped = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
 
-  // For scoped roles: show tasks where the profile is in scope,
-  // OR tasks directly assigned to this user (e.g. pushed from projects)
+  let visibleProfileIds: Set<string> | null = null;
+  if (isScoped) {
+    visibleProfileIds = await getEffectiveCrmVisibleProfileIds(session.user.id, session.user.role);
+  }
+
   const where: Record<string, unknown> = { status };
   if (ownerUserId) where.ownerUserId = ownerUserId;
 
   if (isScoped) {
-    const profileScope = Object.keys(roleWhere).length > 0 ? { profile: roleWhere } : null;
+    const profileIds = visibleProfileIds ? [...visibleProfileIds] : [];
     where.OR = [
-      ...(profileScope ? [profileScope] : []),
+      { profileId: { in: profileIds } },
       { ownerUserId: session.user.id },
     ];
-  } else if (Object.keys(roleWhere).length > 0) {
-    where.profile = roleWhere;
   }
 
   const tasks = await prisma.crmFollowUpTask.findMany({
@@ -68,12 +68,9 @@ export async function POST(req: NextRequest) {
 
   const isScopedRole = isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role);
   if (isScopedRole) {
-    const scope = await buildCrmWhereForRole(session.user.id, session.user.role);
-    const ids = extractScopedUserIds(scope);
-    if (ids && !ids.includes(profile.ownerUserId)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-    if (profile.assignmentStatus !== "ASSIGNED") {
+    try {
+      await assertCrmProfileAccess(profileId, session.user.id, session.user.role);
+    } catch {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }

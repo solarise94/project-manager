@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, getRepresentativeProjectIds } from "@/lib/permissions";
-import { isRegionalManagerRole, getCrmProfileScopeWhere } from "@/lib/crm/permissions";
+import { isRegionalManagerRole, getEffectiveCrmVisibleCustomerIds } from "@/lib/crm/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { resolveCustomerSelectOptions } from "@/lib/customers/customer-select-options";
 
@@ -44,14 +44,10 @@ export async function GET(req: NextRequest) {
   let customerIds: string[] | undefined;
 
   if (isRepresentative(session.user.role)) {
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(session.user.id, session.user.role);
     if (crmScope) {
-      // CRM-scoped customers only — must match POST /api/crm/relations gate
-      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-      const crmProfiles = await prisma.crmCustomerProfile.findMany({
-        where: scope as Record<string, unknown>,
-        select: { sourceCustomerId: true },
-      });
-      customerIds = crmProfiles.map((p) => p.sourceCustomerId);
+      // CRM-scoped customers only
+      customerIds = visibleCustomerIds ? [...visibleCustomerIds] : [];
     } else {
       // Union of project-linked and CRM-scoped customers
       const projectIds = await getRepresentativeProjectIds(session.user.id);
@@ -60,23 +56,14 @@ export async function GET(req: NextRequest) {
         select: { customerId: true },
       });
       const idSet = new Set(projects.map((p) => p.customerId!));
-
-      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-      const crmProfiles = await prisma.crmCustomerProfile.findMany({
-        where: scope as Record<string, unknown>,
-        select: { sourceCustomerId: true },
-      });
-      for (const p of crmProfiles) idSet.add(p.sourceCustomerId);
-
+      if (visibleCustomerIds) {
+        for (const cid of visibleCustomerIds) idSet.add(cid);
+      }
       customerIds = [...idSet];
     }
   } else if (crmScope && isRegionalManagerRole(session.user.role)) {
-    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-    const crmProfiles = await prisma.crmCustomerProfile.findMany({
-      where: scope as Record<string, unknown>,
-      select: { sourceCustomerId: true },
-    });
-    customerIds = crmProfiles.map((p) => p.sourceCustomerId);
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(session.user.id, session.user.role);
+    customerIds = visibleCustomerIds ? [...visibleCustomerIds] : [];
   }
 
   if (customerIds !== undefined) {

@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolveBindingReviewers } from "@/lib/crm/supervisor";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
+import { syncEffectiveRepresentativeLinksForOrganization } from "@/lib/crm/customer-representative-sync";
 import {
   findRepresentativeBindingByScope,
   validateRepresentativeBindingScope,
@@ -146,6 +147,15 @@ export async function PATCH(
         reviewNote: reviewNote?.trim() || null,
       },
     });
+
+    // Sync affected customers: they may lose this fallback binding
+    if (binding.organizationId) {
+      syncEffectiveRepresentativeLinksForOrganization({
+        organizationId: binding.organizationId,
+        organizationSiteId: binding.organizationSiteId,
+      }).catch(() => {});
+    }
+
     return NextResponse.json({ binding: updated });
   }
 
@@ -162,6 +172,15 @@ export async function PATCH(
         reviewNote: reviewNote?.trim() || null,
       },
     });
+
+    // Sync affected customers: they may regain this fallback binding
+    if (binding.organizationId) {
+      syncEffectiveRepresentativeLinksForOrganization({
+        organizationId: binding.organizationId,
+        organizationSiteId: binding.organizationSiteId,
+      }).catch(() => {});
+    }
+
     return NextResponse.json({ binding: updated });
   }
 
@@ -209,12 +228,25 @@ export async function PATCH(
       },
     });
 
+    // Sync old scope: customers may lose this site binding
+    if (binding.organizationId) {
+      syncEffectiveRepresentativeLinksForOrganization({
+        organizationId: binding.organizationId,
+        organizationSiteId: binding.organizationSiteId,
+      }).catch(() => {});
+    }
+
+    // Sync new scope: customers may gain this site binding
     const autoAssigned = await autoAssignOrgCustomersToRep(
       binding.organizationId,
       binding.representative.email,
       session.user.id,
       nextSiteId,
     );
+    syncEffectiveRepresentativeLinksForOrganization({
+      organizationId: binding.organizationId,
+      organizationSiteId: nextSiteId,
+    }).catch(() => {});
 
     return NextResponse.json({ binding: updated, autoAssigned });
   }

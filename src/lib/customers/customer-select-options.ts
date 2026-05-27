@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 export interface CustomerSelectOption {
   id: string;
@@ -22,42 +23,41 @@ type CustomerWithOwner = {
 };
 
 /**
- * Generic helper: batch-resolve representatives and merge into original objects.
+ * Generic helper: batch-resolve effective representatives and merge into original objects.
+ * Uses the unified effective resolver (explicit assignment > site binding > org binding).
  * Preserves ALL original fields — does not strip anything.
  */
 export async function appendCustomerRepresentativeInfo<T extends CustomerWithOwner>(
   customers: T[],
 ): Promise<Array<T & { representativeId: string | null; representativeName: string | null }>> {
-  const ownerEmails = [...new Set(
-    customers
-      .filter((c) => c.crmProfile?.assignmentStatus === "ASSIGNED")
-      .map((c) => c.crmProfile?.ownerUser)
-      .filter((u): u is { email: string; role: string } => !!u && !!u.email && (u.role === "REPRESENTATIVE" || u.role === "REGIONAL_MANAGER"))
-      .map((u) => u.email),
+  if (customers.length === 0) return [];
+
+  const customerIds = customers.map((c) => c.id);
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(customerIds);
+
+  const repIds = [...new Set(
+    Array.from(effectiveMap.values())
+      .map((e) => e.representativeId)
+      .filter((id): id is string => !!id),
   )];
 
-  const reps = ownerEmails.length > 0
+  const reps = repIds.length > 0
     ? await prisma.representative.findMany({
-        where: { email: { in: ownerEmails }, archived: false },
-        select: { id: true, name: true, email: true },
+        where: { id: { in: repIds }, archived: false },
+        select: { id: true, name: true },
       })
     : [];
 
-  const emailToRep = new Map(reps.map((r) => [r.email, r]));
+  const repMap = new Map(reps.map((r) => [r.id, r]));
 
   return customers.map((c) => {
-    const ownerUser = c.crmProfile?.ownerUser;
-    const rep = c.crmProfile?.assignmentStatus === "ASSIGNED" &&
-      ownerUser &&
-      ownerUser.email &&
-      (ownerUser.role === "REPRESENTATIVE" || ownerUser.role === "REGIONAL_MANAGER")
-      ? emailToRep.get(ownerUser.email)
-      : undefined;
+    const effective = effectiveMap.get(c.id);
+    const rep = effective?.representativeId ? repMap.get(effective.representativeId) : undefined;
 
     return {
       ...c,
-      representativeId: rep?.id || null,
-      representativeName: rep?.name || null,
+      representativeId: rep?.id || effective?.representativeId || null,
+      representativeName: rep?.name || effective?.representativeName || null,
     };
   });
 }

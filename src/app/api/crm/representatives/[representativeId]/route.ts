@@ -6,6 +6,7 @@ import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
 import { getCrmCommunicationMetrics } from "@/lib/crm/communication-metrics";
 import { getCrmLifecycleSummariesForCustomers, getEffectiveCrmLifecycleStage } from "@/lib/crm/lifecycle";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 export async function GET(
   _req: NextRequest,
@@ -88,6 +89,35 @@ export async function GET(
     });
   }
 
+  // ── Effective representative resolution ───────────────────────────
+  // Find all customers effectively assigned to this representative
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: {
+      id: true,
+      sourceCustomerId: true,
+      ownerUserId: true,
+      assignmentStatus: true,
+    },
+  });
+
+  const allCustomerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(allCustomerIds);
+
+  const effectiveCustomerIds: string[] = [];
+  const effectiveProfileIds: string[] = [];
+  const profileByCustomerId = new Map<string, typeof allProfiles[0]>();
+
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (effective?.representativeId === rep.id) {
+      effectiveCustomerIds.push(profile.sourceCustomerId);
+      effectiveProfileIds.push(profile.id);
+      profileByCustomerId.set(profile.sourceCustomerId, profile);
+    }
+  }
+
+  // ── Stats queries scoped to effective customers ──────────────────
   const [
     customerCount,
     visitCheckinCount,
@@ -99,11 +129,9 @@ export async function GET(
     openFollowUps,
     relationCount,
   ] = await Promise.all([
-    prisma.crmCustomerProfile.count({
-      where: { ownerUserId: userId, archived: false, assignmentStatus: "ASSIGNED" },
-    }),
+    effectiveCustomerIds.length,
     prisma.crmVisitCheckin.count({
-      where: { userId, status: "COMPLETED", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+      where: { userId, status: "COMPLETED", createdAt: { gte: d30 } },
     }),
     prisma.crmVisitCheckin.findFirst({
       where: { userId, status: "COMPLETED" },
@@ -115,15 +143,13 @@ export async function GET(
     }),
     prisma.crmCustomerProfile.count({
       where: {
-        ownerUserId: userId,
-        archived: false,
-        assignmentStatus: "ASSIGNED",
+        id: { in: effectiveProfileIds },
         visitCheckins: { none: { status: "COMPLETED", createdAt: { gte: thresholdDate } } },
         interactions: { none: { type: "VISIT", happenedAt: { gte: thresholdDate } } },
       },
     }),
     prisma.crmCustomerProfile.findMany({
-      where: { ownerUserId: userId, archived: false, assignmentStatus: "ASSIGNED" },
+      where: { id: { in: effectiveProfileIds } },
       include: {
         sourceCustomer: {
           select: { id: true, name: true, customerCode: true, principal: true, email: true, wechat: true, organization: true, address: true },
@@ -150,27 +176,35 @@ export async function GET(
       orderBy: { dueAt: "asc" },
       take: 20,
     }),
-    // Count relations where the rep's customers are involved
+    // Count relations where the rep's effective customers are involved
     prisma.customerRelation.count({
       where: {
         OR: [
-          { fromCustomer: { crmProfile: { ownerUserId: userId, assignmentStatus: "ASSIGNED" } } },
-          { toCustomer: { crmProfile: { ownerUserId: userId, assignmentStatus: "ASSIGNED" } } },
+          { fromCustomerId: { in: effectiveCustomerIds } },
+          { toCustomerId: { in: effectiveCustomerIds } },
         ],
       },
     }),
   ]);
 
-  const customerIds = customers.map((customer) => customer.sourceCustomerId);
-  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(customerIds);
+  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(effectiveCustomerIds);
   const lifecycleValues = [...lifecycleMap.values()];
-  const communication = await getCrmCommunicationMetrics({
-    ownerUserIds: [userId],
-    from: d30,
-    to: now,
-  });
+  const communication = effectiveProfileIds.length > 0
+    ? await getCrmCommunicationMetrics({
+        profileIds: effectiveProfileIds,
+        from: d30,
+        to: now,
+      })
+    : {
+        assignedCustomerCount: 0,
+        dueCommunicationTaskCount: 0,
+        doneCommunicationTaskCount: 0,
+        overdueCommunicationTaskCount: 0,
+        communicatedCustomerCount: 0,
+        communicationCoverageRate: 0,
+      };
 
-  // Pre-calculate lifecycle metrics
+  // Pre-calculate lifecycle metrics using effective anchor
   let activeCustomerCount = 0;
   let newCustomerCount30d = 0;
   let convertedCustomerCount30d = 0;
@@ -184,8 +218,9 @@ export async function GET(
   let dormantWarningCustomerCount = 0;
 
   for (const summary of lifecycleValues) {
+    const effective = effectiveMap.get(summary.customerId);
     const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
-    const anchorAt = summary.assignedAt ?? summary.createdAt;
+    const anchorAt = effective?.anchorAt ?? summary.assignedAt ?? summary.createdAt;
 
     if (lifecycleStage === "ACTIVE") activeCustomerCount += 1;
 

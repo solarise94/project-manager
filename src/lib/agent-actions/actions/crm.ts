@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getCrmProfileScopeWhere, isRegionalManagerRole, isRepresentativeRole } from "@/lib/crm/permissions";
+import { getEffectiveCrmVisibleProfileIds, assertCrmProfileAccess, isRegionalManagerRole, isRepresentativeRole } from "@/lib/crm/permissions";
 import { registerAgentAction } from "../registry";
 import { AgentActionForbiddenError, AgentActionNotFoundError } from "../errors";
 import { arraySchema, clampLimit, ensureObject, integerSchema, objectSchema, readOptionalInteger, readOptionalString, readRequiredString, stringSchema } from "../schemas";
@@ -74,11 +74,11 @@ export function registerCrmActions() {
       return true;
     },
     async execute(actor, input) {
-      const scopeWhere = await getCrmProfileScopeWhere(actor.userId, actor.role);
-      const andConditions: Prisma.CrmCustomerProfileWhereInput[] = [
-        { archived: false },
-        scopeWhere as Prisma.CrmCustomerProfileWhereInput,
-      ];
+      const visibleProfileIds = await getEffectiveCrmVisibleProfileIds(actor.userId, actor.role);
+      const andConditions: Prisma.CrmCustomerProfileWhereInput[] = [{ archived: false }];
+      if (visibleProfileIds) {
+        andConditions.push({ id: { in: [...visibleProfileIds] } });
+      }
 
       if (input.stage) {
         andConditions.push({ stage: input.stage });
@@ -169,21 +169,12 @@ export function registerCrmActions() {
         throw new AgentActionNotFoundError(input.profileId);
       }
 
-      const scopeWhere = await getCrmProfileScopeWhere(actor.userId, actor.role);
-      const accessible = await prisma.crmCustomerProfile.findFirst({
-        where: {
-          AND: [
-            { id: input.profileId },
-            scopeWhere as Prisma.CrmCustomerProfileWhereInput,
-          ],
-        },
-        select: { id: true },
-      });
-      if (!accessible) {
-        throw new AgentActionForbiddenError();
-      }
-      if ((isRepresentativeRole(actor.role) || isRegionalManagerRole(actor.role)) && profile.assignmentStatus !== "ASSIGNED") {
-        throw new AgentActionForbiddenError();
+      if (isRepresentativeRole(actor.role) || isRegionalManagerRole(actor.role)) {
+        try {
+          await assertCrmProfileAccess(input.profileId, actor.userId, actor.role);
+        } catch {
+          throw new AgentActionForbiddenError();
+        }
       }
 
       const finalOwner = isRepresentativeRole(actor.role) ? actor.userId : (input.ownerUserId || actor.userId);
@@ -207,35 +198,21 @@ export function registerCrmActions() {
         throw new AgentActionNotFoundError(input.profileId);
       }
 
-      const scopeWhere = await getCrmProfileScopeWhere(actor.userId, actor.role);
-      const accessible = await prisma.crmCustomerProfile.findFirst({
-        where: {
-          AND: [
-            { id: input.profileId },
-            scopeWhere as Prisma.CrmCustomerProfileWhereInput,
-          ],
-        },
-        select: { id: true },
-      });
-      if (!accessible) {
-        throw new AgentActionForbiddenError();
-      }
-
-      if ((isRepresentativeRole(actor.role) || isRegionalManagerRole(actor.role)) && profile.assignmentStatus !== "ASSIGNED") {
-        throw new AgentActionForbiddenError();
+      if (isRepresentativeRole(actor.role) || isRegionalManagerRole(actor.role)) {
+        try {
+          await assertCrmProfileAccess(input.profileId, actor.userId, actor.role);
+        } catch {
+          throw new AgentActionForbiddenError();
+        }
       }
 
       let finalOwner = input.ownerUserId || actor.userId;
       if (isRepresentativeRole(actor.role)) {
         finalOwner = actor.userId;
       } else if (isRegionalManagerRole(actor.role) && input.ownerUserId) {
-        const allowedOwners = await getCrmProfileScopeWhere(actor.userId, actor.role, { includeUnassigned: true });
-        const ownerFilter = allowedOwners.ownerUserId;
-        const allowedIds = typeof ownerFilter === "string"
-          ? [ownerFilter]
-          : ownerFilter && typeof ownerFilter === "object" && "in" in ownerFilter && Array.isArray((ownerFilter as { in: string[] }).in)
-            ? (ownerFilter as { in: string[] }).in
-            : [actor.userId];
+        const { getRegionalManagerUserIds } = await import("@/lib/crm/permissions");
+        const repUserIds = await getRegionalManagerUserIds(actor.userId);
+        const allowedIds = repUserIds && repUserIds.length > 0 ? [actor.userId, ...repUserIds] : [actor.userId];
         if (!allowedIds.includes(input.ownerUserId)) {
           throw new AgentActionForbiddenError();
         }

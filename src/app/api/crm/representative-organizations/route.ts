@@ -11,6 +11,7 @@ import {
 } from "@/lib/crm/permissions";
 import { resolveOrganization } from "@/lib/organization-resolver";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
+import { syncEffectiveRepresentativeLinksForOrganization } from "@/lib/crm/customer-representative-sync";
 import { notifyBindingReviewers } from "@/lib/crm/supervisor";
 import {
   findRepresentativeBindingByScope,
@@ -324,6 +325,10 @@ export async function POST(req: NextRequest) {
         }
         if (status === "ACTIVE" && orgId) {
           autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id, siteId).catch(() => {});
+          syncEffectiveRepresentativeLinksForOrganization({
+            organizationId: orgId,
+            organizationSiteId: siteId,
+          }).catch(() => {});
         }
         return NextResponse.json({ binding: updated, warningCodes }, { status: 200 });
       }
@@ -369,6 +374,10 @@ export async function POST(req: NextRequest) {
 
   if (status === "ACTIVE" && orgId) {
     autoAssignOrgCustomersToRep(orgId, rep.email, session.user.id, siteId).catch(() => {});
+    syncEffectiveRepresentativeLinksForOrganization({
+      organizationId: orgId,
+      organizationSiteId: siteId,
+    }).catch(() => {});
   }
 
   return NextResponse.json({ binding, warningCodes }, { status: 201 });

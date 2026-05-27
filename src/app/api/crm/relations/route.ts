@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { SYMMETRIC_RELATION_TYPES } from "@/lib/crm/constants";
-import { isRepresentativeRole, isRegionalManagerRole, getCrmProfileScopeWhere } from "@/lib/crm/permissions";
+import { isRepresentativeRole, isRegionalManagerRole, getEffectiveCrmVisibleCustomerIds } from "@/lib/crm/permissions";
 
 const customerSelect = { id: true, name: true, customerCode: true, organization: true };
 
@@ -20,12 +20,8 @@ export async function GET(req: NextRequest) {
   let ownedCustomerIds: string[] = [];
 
   if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
-    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-    const ownedProfiles = await prisma.crmCustomerProfile.findMany({
-      where: scope as Record<string, unknown>,
-      select: { sourceCustomerId: true },
-    });
-    ownedCustomerIds = ownedProfiles.map((p) => p.sourceCustomerId);
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(session.user.id, session.user.role);
+    ownedCustomerIds = visibleCustomerIds ? [...visibleCustomerIds] : [];
     if (ownedCustomerIds.length === 0) {
       return NextResponse.json({ relations: [] });
     }
@@ -118,12 +114,8 @@ export async function POST(req: NextRequest) {
 
   // REPRESENTATIVE and REGIONAL_MANAGER may create relations, but only between customers in their CRM scope
   if (isRepresentativeRole(session.user.role) || isRegionalManagerRole(session.user.role)) {
-    const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-    const ownedProfiles = await prisma.crmCustomerProfile.findMany({
-      where: scope as Record<string, unknown>,
-      select: { sourceCustomerId: true },
-    });
-    const ownedCustomerIds = new Set(ownedProfiles.map((p) => p.sourceCustomerId));
+    const visibleCustomerIds = await getEffectiveCrmVisibleCustomerIds(session.user.id, session.user.role);
+    const ownedCustomerIds = visibleCustomerIds ?? new Set<string>();
     if (!ownedCustomerIds.has(fromCustomerId) || !ownedCustomerIds.has(toCustomerId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

@@ -5,8 +5,9 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { REFLOW_THRESHOLD_DAYS } from "@/lib/crm/constants";
-import { getCrmCommunicationMetricsByOwnerUserIds } from "@/lib/crm/communication-metrics";
+import { getCrmCommunicationMetricsByProfileIds } from "@/lib/crm/communication-metrics";
 import { getCrmLifecycleSummariesForCustomers, getEffectiveCrmLifecycleStage } from "@/lib/crm/lifecycle";
+import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -92,15 +93,55 @@ export async function GET(req: NextRequest) {
     select: { id: true, email: true, name: true, role: true },
   });
   const emailToUser = new Map(repUsers.map((u) => [u.email, u]));
-  const ownerUserIds = repUsers.map((user) => user.id);
 
-  // Compute stats for each rep
-  const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
+  // ── Effective representative resolution ───────────────────────────
+  // Query ALL non-archived CRM profiles to compute effective ownership
+  const allProfiles = await prisma.crmCustomerProfile.findMany({
+    where: { archived: false },
+    select: {
+      id: true,
+      ownerUserId: true,
+      sourceCustomerId: true,
+      assignmentStatus: true,
+      assignedAt: true,
+      createdAt: true,
+    },
+  });
+
+  const allCustomerIds = [...new Set(allProfiles.map((p) => p.sourceCustomerId))];
+  const effectiveMap = await resolveEffectiveCustomerRepresentatives(allCustomerIds);
+  // profile lookup not needed here — all metrics are resolved via effectiveMap
+
+  // Build effective owner groups
+  const ownerEffectiveCustomerIds = new Map<string, string[]>();
+  const ownerEffectiveProfileIds = new Map<string, string[]>();
+  const ownerCustomerCountMap = new Map<string, number>();
+  const customerEffectiveOwnerMap = new Map<string, string>();
+
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (!effective || !effective.ownerUserId) continue;
+
+    const ownerUserId = effective.ownerUserId;
+    customerEffectiveOwnerMap.set(profile.sourceCustomerId, ownerUserId);
+
+    const customerIds = ownerEffectiveCustomerIds.get(ownerUserId) || [];
+    customerIds.push(profile.sourceCustomerId);
+    ownerEffectiveCustomerIds.set(ownerUserId, customerIds);
+
+    const profileIds = ownerEffectiveProfileIds.get(ownerUserId) || [];
+    profileIds.push(profile.id);
+    ownerEffectiveProfileIds.set(ownerUserId, profileIds);
+
+    ownerCustomerCountMap.set(ownerUserId, (ownerCustomerCountMap.get(ownerUserId) || 0) + 1);
+  }
+
+  // Period window for today/week stats
   const now = new Date();
   const d30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const d90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const thresholdDate = new Date(Date.now() - REFLOW_THRESHOLD_DAYS * 24 * 60 * 60 * 1000);
 
-  // Period window for today/week stats
   let periodStart: Date | null = null;
   let periodEnd: Date | null = null;
   if (period === "today" || period === "week") {
@@ -121,56 +162,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const allProfiles = ownerUserIds.length > 0
-    ? await prisma.crmCustomerProfile.findMany({
-        where: { ownerUserId: { in: ownerUserIds }, archived: false },
-        select: {
-          id: true,
-          ownerUserId: true,
-          sourceCustomerId: true,
-          assignmentStatus: true,
-          assignedAt: true,
-          createdAt: true,
-        },
-      })
-    : [];
-
-  const ownerAssignedProfileIds = new Map<string, string[]>();
-  const ownerAssignedCustomerIds = new Map<string, string[]>();
-  const ownerCustomerCountMap = new Map<string, number>();
-  const ownerPeriodNewCustomerCountMap = new Map<string, number>();
-  const customerOwnerMap = new Map<string, string>();
-
-  for (const profile of allProfiles) {
-    if (profile.assignmentStatus !== "ASSIGNED") continue;
-    const profileIds = ownerAssignedProfileIds.get(profile.ownerUserId) || [];
-    profileIds.push(profile.id);
-    ownerAssignedProfileIds.set(profile.ownerUserId, profileIds);
-
-    const customerIds = ownerAssignedCustomerIds.get(profile.ownerUserId) || [];
-    customerIds.push(profile.sourceCustomerId);
-    ownerAssignedCustomerIds.set(profile.ownerUserId, customerIds);
-    ownerCustomerCountMap.set(profile.ownerUserId, (ownerCustomerCountMap.get(profile.ownerUserId) || 0) + 1);
-    customerOwnerMap.set(profile.sourceCustomerId, profile.ownerUserId);
-
-    if (periodStart && periodEnd) {
-      const isNewInPeriod = (profile.assignedAt && profile.assignedAt >= periodStart && profile.assignedAt < periodEnd)
-        || (!profile.assignedAt && profile.createdAt >= periodStart && profile.createdAt < periodEnd);
-      if (isNewInPeriod) {
-        ownerPeriodNewCustomerCountMap.set(
-          profile.ownerUserId,
-          (ownerPeriodNewCustomerCountMap.get(profile.ownerUserId) || 0) + 1,
-        );
-      }
-    }
-  }
-
-  const allAssignedProfileIds = [...new Set(
-    Array.from(ownerAssignedProfileIds.values()).flat(),
+  // Collect all effective profile IDs for batch queries
+  const allEffectiveProfileIds = [...new Set(
+    Array.from(ownerEffectiveProfileIds.values()).flat(),
   )];
-  const allAssignedCustomerIds = [...new Set(
-    Array.from(ownerAssignedCustomerIds.values()).flat(),
-  )];
+
+  // ── Batch queries ────────────────────────────────────────────────
+  const allOwnerUserIds = [...ownerEffectiveCustomerIds.keys()];
 
   const [
     checkinCounts30d,
@@ -182,56 +180,60 @@ export async function GET(req: NextRequest) {
     periodOrders,
     completedCheckins,
     visitInteractions,
-    communicationByOwner,
+    communicationByProfile,
     lifecycleMap,
   ] = await Promise.all([
-    ownerUserIds.length > 0
+    allOwnerUserIds.length > 0
       ? prisma.crmVisitCheckin.groupBy({
           by: ["userId"],
-          where: { userId: { in: ownerUserIds }, status: "COMPLETED", createdAt: { gte: d30 } },
+          where: { userId: { in: allOwnerUserIds }, status: "COMPLETED", createdAt: { gte: d30 } },
           _count: true,
         })
       : Promise.resolve([]),
-    ownerUserIds.length > 0
+    allOwnerUserIds.length > 0
       ? prisma.crmVisitCheckin.findMany({
-          where: { userId: { in: ownerUserIds }, status: "COMPLETED" },
+          where: { userId: { in: allOwnerUserIds }, status: "COMPLETED" },
           select: { userId: true, createdAt: true },
           orderBy: [{ userId: "asc" }, { createdAt: "desc" }],
         })
       : Promise.resolve([]),
-    ownerUserIds.length > 0
+    allOwnerUserIds.length > 0
       ? prisma.crmFollowUpTask.groupBy({
           by: ["ownerUserId"],
-          where: { ownerUserId: { in: ownerUserIds }, status: "OPEN", dueAt: { lt: now } },
+          where: { ownerUserId: { in: allOwnerUserIds }, status: "OPEN", dueAt: { lt: now } },
           _count: true,
         })
       : Promise.resolve([]),
-    allAssignedProfileIds.length > 0
+    allEffectiveProfileIds.length > 0
       ? prisma.crmInteraction.groupBy({
           by: ["profileId"],
-          where: { profileId: { in: allAssignedProfileIds }, happenedAt: { gte: d30 } },
+          where: { profileId: { in: allEffectiveProfileIds }, happenedAt: { gte: d30 } },
           _count: true,
         })
       : Promise.resolve([]),
-    periodStart && periodEnd && ownerUserIds.length > 0
+    periodStart && periodEnd && allOwnerUserIds.length > 0
       ? prisma.crmVisitCheckin.groupBy({
           by: ["userId"],
-          where: { userId: { in: ownerUserIds }, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
+          where: { userId: { in: allOwnerUserIds }, status: "COMPLETED", createdAt: { gte: periodStart, lt: periodEnd } },
           _count: true,
         })
       : Promise.resolve([]),
-    periodStart && periodEnd && allAssignedProfileIds.length > 0
+    periodStart && periodEnd && allEffectiveProfileIds.length > 0
       ? prisma.crmInteraction.groupBy({
           by: ["profileId"],
-          where: { profileId: { in: allAssignedProfileIds }, happenedAt: { gte: periodStart, lt: periodEnd } },
+          where: { profileId: { in: allEffectiveProfileIds }, happenedAt: { gte: periodStart, lt: periodEnd } },
           _count: true,
         })
       : Promise.resolve([]),
-    periodStart && periodEnd && allAssignedCustomerIds.length > 0
+    periodStart && periodEnd
       ? prisma.order.findMany({
           where: {
-            customerId: { in: allAssignedCustomerIds },
-            orderedAt: { gte: periodStart, lt: periodEnd },
+            customerId: { in: allCustomerIds },
+            OR: [
+              { orderedAt: { gte: periodStart, lt: periodEnd } },
+              { orderedAt: null, confirmedAt: { gte: periodStart, lt: periodEnd } },
+              { orderedAt: null, confirmedAt: null, createdAt: { gte: periodStart, lt: periodEnd } },
+            ],
             deleted: false,
             archived: false,
             status: { in: ["CONFIRMED", "CLOSED"] },
@@ -239,26 +241,26 @@ export async function GET(req: NextRequest) {
           select: { customerId: true, totalAmount: true, financeAmountOverride: true },
         })
       : Promise.resolve([]),
-    allAssignedProfileIds.length > 0
+    allEffectiveProfileIds.length > 0
       ? prisma.crmVisitCheckin.findMany({
-          where: { profileId: { in: allAssignedProfileIds }, status: "COMPLETED" },
+          where: { profileId: { in: allEffectiveProfileIds }, status: "COMPLETED" },
           select: { profileId: true, createdAt: true },
           orderBy: [{ profileId: "asc" }, { createdAt: "desc" }],
         })
       : Promise.resolve([]),
-    allAssignedProfileIds.length > 0
+    allEffectiveProfileIds.length > 0
       ? prisma.crmInteraction.findMany({
-          where: { profileId: { in: allAssignedProfileIds }, type: "VISIT" },
+          where: { profileId: { in: allEffectiveProfileIds }, type: "VISIT" },
           select: { profileId: true, happenedAt: true },
           orderBy: [{ profileId: "asc" }, { happenedAt: "desc" }],
         })
       : Promise.resolve([]),
-    getCrmCommunicationMetricsByOwnerUserIds({
-      ownerUserIds,
+    getCrmCommunicationMetricsByProfileIds({
+      profileIds: allEffectiveProfileIds,
       from: d30,
       to: now,
     }),
-    getCrmLifecycleSummariesForCustomers(allAssignedCustomerIds),
+    getCrmLifecycleSummariesForCustomers(allCustomerIds),
   ]);
 
   const checkin30dMap = new Map(checkinCounts30d.map((row) => [row.userId, row._count]));
@@ -286,28 +288,56 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const ownerLongUnvisitedCountMap = new Map<string, number>();
+  // Re-group profile-level metrics by effective owner
   const ownerInteractionCount30dMap = new Map<string, number>();
   const ownerPeriodInteractionCountMap = new Map<string, number>();
-  for (const [ownerUserId, profileIds] of ownerAssignedProfileIds) {
-    let longUnvisitedCount = 0;
-    let interactionCount30d = 0;
-    let periodInteractionCount = 0;
-    for (const profileId of profileIds) {
-      const lastActivity = lastCheckinByProfile.get(profileId) ?? lastVisitInteractionByProfile.get(profileId) ?? null;
-      if (!lastActivity || lastActivity < thresholdDate) longUnvisitedCount += 1;
-      interactionCount30d += interaction30dMap.get(profileId) || 0;
-      periodInteractionCount += periodInteractionMap.get(profileId) || 0;
+  const ownerLongUnvisitedCountMap = new Map<string, number>();
+  const ownerDueCommMap = new Map<string, number>();
+  const ownerDoneCommMap = new Map<string, number>();
+  const ownerOverdueCommMap = new Map<string, number>();
+  const ownerCommunicatedCountMap = new Map<string, number>();
+
+  for (const profile of allProfiles) {
+    const effective = effectiveMap.get(profile.sourceCustomerId);
+    if (!effective || !effective.ownerUserId) continue;
+    const ownerUserId = effective.ownerUserId;
+
+    // Interaction counts (re-mapped by effective owner)
+    ownerInteractionCount30dMap.set(
+      ownerUserId,
+      (ownerInteractionCount30dMap.get(ownerUserId) || 0) + (interaction30dMap.get(profile.id) || 0),
+    );
+    ownerPeriodInteractionCountMap.set(
+      ownerUserId,
+      (ownerPeriodInteractionCountMap.get(ownerUserId) || 0) + (periodInteractionMap.get(profile.id) || 0),
+    );
+
+    // Long unvisited
+    const lastActivity = lastCheckinByProfile.get(profile.id) ?? lastVisitInteractionByProfile.get(profile.id) ?? null;
+    if (!lastActivity || lastActivity < thresholdDate) {
+      ownerLongUnvisitedCountMap.set(
+        ownerUserId,
+        (ownerLongUnvisitedCountMap.get(ownerUserId) || 0) + 1,
+      );
     }
-    ownerLongUnvisitedCountMap.set(ownerUserId, longUnvisitedCount);
-    ownerInteractionCount30dMap.set(ownerUserId, interactionCount30d);
-    ownerPeriodInteractionCountMap.set(ownerUserId, periodInteractionCount);
+
+    // Communication metrics (re-mapped by effective owner)
+    const comm = communicationByProfile.get(profile.id);
+    if (comm) {
+      ownerDueCommMap.set(ownerUserId, (ownerDueCommMap.get(ownerUserId) || 0) + comm.dueCommunicationTaskCount);
+      ownerDoneCommMap.set(ownerUserId, (ownerDoneCommMap.get(ownerUserId) || 0) + comm.doneCommunicationTaskCount);
+      ownerOverdueCommMap.set(ownerUserId, (ownerOverdueCommMap.get(ownerUserId) || 0) + comm.overdueCommunicationTaskCount);
+      ownerCommunicatedCountMap.set(ownerUserId, (ownerCommunicatedCountMap.get(ownerUserId) || 0) + comm.communicatedCustomerCount);
+    }
   }
 
+  // Period orders grouped by effective owner
   const ownerPeriodOrderStatsMap = new Map<string, { count: number; amount: number }>();
+  const ownerPeriodNewCustomerCountMap = new Map<string, number>();
+
   for (const order of periodOrders) {
     if (!order.customerId) continue;
-    const ownerUserId = customerOwnerMap.get(order.customerId);
+    const ownerUserId = customerEffectiveOwnerMap.get(order.customerId);
     if (!ownerUserId) continue;
     const current = ownerPeriodOrderStatsMap.get(ownerUserId) ?? { count: 0, amount: 0 };
     current.count += 1;
@@ -315,6 +345,23 @@ export async function GET(req: NextRequest) {
     ownerPeriodOrderStatsMap.set(ownerUserId, current);
   }
 
+  // Period new customers (by effective anchor)
+  if (periodStart && periodEnd) {
+    for (const profile of allProfiles) {
+      const effective = effectiveMap.get(profile.sourceCustomerId);
+      if (!effective || !effective.ownerUserId) continue;
+      const anchorAt = effective.anchorAt;
+      if (!anchorAt) continue;
+      if (anchorAt >= periodStart && anchorAt < periodEnd) {
+        ownerPeriodNewCustomerCountMap.set(
+          effective.ownerUserId,
+          (ownerPeriodNewCustomerCountMap.get(effective.ownerUserId) || 0) + 1,
+        );
+      }
+    }
+  }
+
+  // Lifecycle stats grouped by effective owner (using effective anchor)
   const ownerLifecycleStats = new Map<string, {
     orderedCustomerCount30d: number;
     repeatCustomerCount30d: number;
@@ -328,8 +375,12 @@ export async function GET(req: NextRequest) {
     dormantCustomerCount: number;
     dormantWarningCustomerCount: number;
   }>();
+
   for (const summary of lifecycleMap.values()) {
-    const current = ownerLifecycleStats.get(summary.ownerUserId) ?? {
+    const effective = effectiveMap.get(summary.customerId);
+    if (!effective || !effective.ownerUserId) continue;
+
+    const current = ownerLifecycleStats.get(effective.ownerUserId) ?? {
       orderedCustomerCount30d: 0,
       repeatCustomerCount30d: 0,
       orderedCustomerCount90d: 0,
@@ -343,16 +394,15 @@ export async function GET(req: NextRequest) {
       dormantWarningCustomerCount: 0,
     };
 
-    const anchorAt = summary.assignedAt ?? summary.createdAt;
+    const anchorAt = effective.anchorAt;
     const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
 
     if (lifecycleStage === "ACTIVE") {
       current.activeCustomerCount += 1;
     }
 
-    if (anchorAt >= d30) {
+    if (anchorAt && anchorAt >= d30) {
       current.newCustomerCount30d += 1;
-
       if (
         summary.firstOrderAt &&
         summary.firstOrderAt >= d30 &&
@@ -362,9 +412,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (anchorAt >= d90) {
+    if (anchorAt && anchorAt >= d90) {
       current.newCustomerCount90d += 1;
-
       if (
         summary.firstOrderAt &&
         summary.firstOrderAt >= d90 &&
@@ -390,13 +439,13 @@ export async function GET(req: NextRequest) {
 
     if (lifecycleStage === "DORMANT") current.dormantCustomerCount += 1;
     if (summary.dormantRisk && lifecycleStage !== "DORMANT") current.dormantWarningCustomerCount += 1;
-    ownerLifecycleStats.set(summary.ownerUserId, current);
+    ownerLifecycleStats.set(effective.ownerUserId, current);
   }
 
+  // ── Assemble results ─────────────────────────────────────────────
   let representatives = reps.map((rep) => {
     const linkedUser = emailToUser.get(rep.email);
     const userId = linkedUser?.id || null;
-    const communication = userId ? communicationByOwner.get(userId) : null;
     const lifecycleStats = userId
       ? ownerLifecycleStats.get(userId) ?? {
           orderedCustomerCount30d: 0,
@@ -428,6 +477,12 @@ export async function GET(req: NextRequest) {
       ? ownerPeriodOrderStatsMap.get(userId) ?? { count: 0, amount: 0 }
       : { count: 0, amount: 0 };
 
+    const effectiveCustomerCount = userId ? (ownerCustomerCountMap.get(userId) || 0) : 0;
+
+    // Communication coverage rate needs total effective customers as denominator
+    const commCount = userId ? (ownerCommunicatedCountMap.get(userId) || 0) : 0;
+    const commCoverageRate = effectiveCustomerCount > 0 ? commCount / effectiveCustomerCount : 0;
+
     return {
       representativeId: rep.id,
       name: rep.name,
@@ -435,7 +490,7 @@ export async function GET(req: NextRequest) {
       archived: rep.archived,
       userId,
       userName: linkedUser?.name || null,
-      customerCount: userId ? (ownerCustomerCountMap.get(userId) || 0) : 0,
+      customerCount: effectiveCustomerCount,
       visitCheckinCount: userId ? (checkin30dMap.get(userId) || 0) : 0,
       interactionCount30d: userId ? (ownerInteractionCount30dMap.get(userId) || 0) : 0,
       lastCheckinAt: userId ? (lastCheckinMap.get(userId)?.toISOString() ?? null) : null,
@@ -447,11 +502,11 @@ export async function GET(req: NextRequest) {
       periodNewCustomerCount: userId ? (ownerPeriodNewCustomerCountMap.get(userId) || 0) : 0,
       periodReservedOrderCount: periodOrderStats.count,
       periodReservedOrderAmount: periodOrderStats.amount,
-      dueCommunicationTaskCount: communication?.dueCommunicationTaskCount ?? 0,
-      doneCommunicationTaskCount: communication?.doneCommunicationTaskCount ?? 0,
-      overdueCommunicationTaskCount: communication?.overdueCommunicationTaskCount ?? 0,
-      communicatedCustomerCount30d: communication?.communicatedCustomerCount ?? 0,
-      communicationCoverageRate30d: communication?.communicationCoverageRate ?? 0,
+      dueCommunicationTaskCount: userId ? (ownerDueCommMap.get(userId) || 0) : 0,
+      doneCommunicationTaskCount: userId ? (ownerDoneCommMap.get(userId) || 0) : 0,
+      overdueCommunicationTaskCount: userId ? (ownerOverdueCommMap.get(userId) || 0) : 0,
+      communicatedCustomerCount30d: commCount,
+      communicationCoverageRate30d: commCoverageRate,
       activeCustomerCount: lifecycleStats.activeCustomerCount,
       newCustomerCount30d: lifecycleStats.newCustomerCount30d,
       convertedCustomerCount30d: lifecycleStats.convertedCustomerCount30d,

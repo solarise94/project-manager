@@ -21,6 +21,11 @@ export async function assertCustomerEditable(
   }
 
   if (role === "REPRESENTATIVE") {
+    // Note: Customer master data editing is intentionally restricted to
+    // explicitly-assigned customers only. Fallback-bound (SITE_BINDING /
+    // ORG_BINDING) customers are visible/operable in CRM but their master
+    // data cannot be edited by the representative. This prevents organization
+    // bindings from silently expanding write permissions beyond CRM scope.
     const profile = await prisma.crmCustomerProfile.findUnique({
       where: { sourceCustomerId: customerId },
       select: { ownerUserId: true, assignmentStatus: true },

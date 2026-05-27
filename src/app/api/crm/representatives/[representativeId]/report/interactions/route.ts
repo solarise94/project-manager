@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRegionalManagerRole } from "@/lib/crm/permissions";
+import { resolveEffectiveCustomerRepresentative } from "@/lib/crm/customer-effective-representative";
 
 /** Compute week boundaries: Monday 00:00:00 to next Monday 00:00:00 */
 function getWeekWindow() {
@@ -64,13 +65,10 @@ export async function GET(
     return NextResponse.json({ interactions: [] });
   }
 
-  // Ownership check: customer must belong to this rep
-  const profile = await prisma.crmCustomerProfile.findFirst({
-    where: { sourceCustomerId: customerId },
-    select: { ownerUserId: true },
-  });
+  // Ownership check: customer must belong to this rep via effective representative
+  const effective = await resolveEffectiveCustomerRepresentative(customerId);
 
-  if (!profile || profile.ownerUserId !== linkedUser.id) {
+  if (effective.ownerUserId !== linkedUser.id) {
     return NextResponse.json({ error: "Forbidden: customer does not belong to this representative" }, { status: 403 });
   }
 

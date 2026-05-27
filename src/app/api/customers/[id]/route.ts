@@ -6,6 +6,7 @@ import { assertCustomerEditable } from "@/lib/customers/permissions";
 import { isRepresentative } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { validateOrg } from "@/lib/crm/customer-application-review";
+import { syncEffectiveRepresentativeLinksForCustomer } from "@/lib/crm/customer-representative-sync";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -118,6 +119,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         where: { customerId: id },
         data: { client: name.trim() },
       });
+    }
+
+    // Sync effective representative when organization/site changes
+    if (touchedOrganization) {
+      syncEffectiveRepresentativeLinksForCustomer(id).catch(() => {});
     }
 
     return NextResponse.json({ customer: updated });

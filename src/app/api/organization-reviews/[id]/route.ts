@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { normalizeOrgName } from "@/lib/organization-normalize";
 import { autoAssignOrgCustomersToRep } from "@/lib/crm/customer-application-review";
 import {
+  syncEffectiveRepresentativeLinksForOrganization,
+  syncEffectiveRepresentativeLinksForCustomer,
+} from "@/lib/crm/customer-representative-sync";
+import {
   findRepresentativeBindingByScope,
   hasActiveBindingAtLevel,
   validateRepresentativeBindingScope,
@@ -170,6 +174,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           session.user.id,
           bindingAutoActivation.organizationSiteId,
         );
+        await syncEffectiveRepresentativeLinksForOrganization({
+          organizationId: bindingAutoActivation.organizationId,
+          organizationSiteId: bindingAutoActivation.organizationSiteId,
+        });
+      }
+
+      // Sync customer representative when org/site is updated
+      if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+        syncEffectiveRepresentativeLinksForCustomer(task.sourceId).catch(() => {});
       }
 
       return NextResponse.json({ status: "APPROVED" });
@@ -347,6 +360,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           session.user.id,
           bindingAutoActivation.organizationSiteId,
         );
+        await syncEffectiveRepresentativeLinksForOrganization({
+          organizationId: bindingAutoActivation.organizationId,
+          organizationSiteId: bindingAutoActivation.organizationSiteId,
+        });
+      }
+
+      // Sync customer representative when org/site is updated
+      if (task.sourceType === "CUSTOMER_CREATE" || task.sourceType === "CUSTOMER_EDIT") {
+        syncEffectiveRepresentativeLinksForCustomer(task.sourceId).catch(() => {});
       }
 
       return NextResponse.json({ status: "APPROVED", orgCode });

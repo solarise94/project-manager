@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCrmProfileScopeWhere, isRepresentativeRole, isRegionalManagerRole, extractScopedUserIds } from "@/lib/crm/permissions";
+import { isRepresentativeRole, isRegionalManagerRole, getEffectiveCrmVisibleProfileIds } from "@/lib/crm/permissions";
 import { syncCrmLifecycleAfterInteraction } from "@/lib/crm/lifecycle";
 
 export async function PATCH(
@@ -25,12 +25,8 @@ export async function PATCH(
     if (task.ownerUserId === session.user.id) {
       // pass
     } else {
-      const scope = await getCrmProfileScopeWhere(session.user.id, session.user.role);
-      const ids = extractScopedUserIds(scope);
-      if (!ids?.includes(task.profile.ownerUserId)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-      if (task.profile.assignmentStatus !== "ASSIGNED") {
+      const visibleProfileIds = await getEffectiveCrmVisibleProfileIds(session.user.id, session.user.role);
+      if (!visibleProfileIds || !visibleProfileIds.has(task.profileId)) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
     }
