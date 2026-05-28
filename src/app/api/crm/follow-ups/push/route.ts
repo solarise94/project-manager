@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative, canReadProject } from "@/lib/permissions";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 type SourceType = "PROJECT_TICKET" | "TICKET_REPLY" | "PROJECT_COMMENT";
 
@@ -199,7 +200,7 @@ export async function POST(req: NextRequest) {
             data: {
               sourceCustomerId: customerId,
               ownerUserId: salesUser.id,
-              stage: "NEW",
+              stage: "LEAD",
               importance: "NORMAL",
               lastFollowUpAt: new Date(),
             },
@@ -256,6 +257,17 @@ export async function POST(req: NextRequest) {
 
   if (!result) {
     return NextResponse.json({ error: "推送失败：并发冲突，请重试" }, { status: 409 });
+  }
+
+  // ── CRM 阶段流转（推送任务创建/更新后驱动 FOLLOWING）─────────────────
+  try {
+    await transitionCrmStage(result.profileId, {
+      type: "FOLLOW_UP_CREATED",
+      taskId: result.task.id,
+      dueAt: taskDueAt,
+    });
+  } catch (error) {
+    console.error(`[CRM][FOLLOW_UP_PUSH] stage transition failed for profile ${result.profileId}:`, error);
   }
 
   // ── Side effects (outside transaction) ──────────────────────────────

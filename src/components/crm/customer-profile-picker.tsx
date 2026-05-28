@@ -38,7 +38,7 @@ export function CustomerProfilePicker({ trigger, title, actionLabel, onPick }: C
       const createRes = await fetch("/api/crm/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceCustomerId: customerId, stage: "NEW", importance: "NORMAL" }),
+        body: JSON.stringify({ sourceCustomerId: customerId, stage: "LEAD", importance: "NORMAL" }),
       });
       if (!createRes.ok) {
         const data = await createRes.json();

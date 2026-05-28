@@ -178,7 +178,7 @@ export async function POST(req: NextRequest) {
           data: {
             sourceCustomerId: customer.id,
             ownerUserId: session.user.id,
-            stage: "NEW",
+            stage: "LEAD",
             importance: "NORMAL",
             lastFollowUpAt: new Date(),
           },

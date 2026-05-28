@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateCheckinVoiceUrl } from "@/lib/crm/media";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 export async function PATCH(
   req: NextRequest,
@@ -49,21 +50,28 @@ export async function PATCH(
     data.status = "COMPLETED";
     data.completedAt = new Date();
 
+    const now = new Date();
     const interaction = await prisma.crmInteraction.create({
       data: {
         profileId: checkin.profileId,
         type: "VISIT",
         summary: checkin.addressSnapshot ? `拜访签到: ${checkin.addressSnapshot}` : "拜访签到",
         createdByUserId: session.user.id,
-        happenedAt: new Date(),
+        happenedAt: now,
       },
     });
     data.interactionId = interaction.id;
 
-    await prisma.crmCustomerProfile.update({
-      where: { id: checkin.profileId },
-      data: { lastFollowUpAt: new Date() },
-    });
+    // 统一阶段流转（替代直接更新 lastFollowUpAt）
+    try {
+      await transitionCrmStage(checkin.profileId, {
+        type: "CHECKIN",
+        happenedAt: now,
+        checkinId: checkinId,
+      });
+    } catch (error) {
+      console.error(`[CRM][CHECKIN] stage transition failed for profile ${checkin.profileId}:`, error);
+    }
   }
 
   const updated = await prisma.crmVisitCheckin.update({

@@ -1,24 +1,28 @@
-export const CRM_STAGES = ["NEW", "CONTACTED", "FOLLOWING", "ACTIVE", "BLOCKED", "LOST", "DORMANT"] as const;
+export const CRM_STAGES = ["LEAD", "CONTACTED", "FOLLOWING", "ACTIVE", "BLOCKED", "LOST", "DORMANT"] as const;
 export type CrmStage = (typeof CRM_STAGES)[number];
 
 export const STAGE_LABELS: Record<string, string> = {
-  NEW: "新客户",
-  CONTACTED: "已联系",
+  LEAD: "线索",
+  CONTACTED: "已触达",
   FOLLOWING: "跟进中",
-  ACTIVE: "活跃",
+  ACTIVE: "业务进行中",
   BLOCKED: "受阻",
   LOST: "流失",
   DORMANT: "休眠",
+  // 兼容旧数据读取
+  NEW: "新客户",
 };
 
 export const STAGE_COLORS: Record<string, string> = {
-  NEW: "bg-blue-100 text-blue-800",
+  LEAD: "bg-blue-100 text-blue-800",
   CONTACTED: "bg-cyan-100 text-cyan-800",
   FOLLOWING: "bg-yellow-100 text-yellow-800",
   ACTIVE: "bg-green-100 text-green-800",
   BLOCKED: "bg-red-100 text-red-800",
   LOST: "bg-gray-100 text-gray-800",
   DORMANT: "bg-slate-100 text-slate-600",
+  // 兼容旧数据读取
+  NEW: "bg-blue-100 text-blue-800",
 };
 
 export const CRM_IMPORTANCE = ["LOW", "NORMAL", "HIGH", "KEY"] as const;
@@ -70,11 +74,14 @@ export const FOLLOW_UP_STATUS_COLORS: Record<string, string> = {
 
 export const CRM_DORMANT_THRESHOLD_DAYS = 90;
 export const CRM_DORMANT_WARNING_DAYS = 60;
+export const CRM_ACTIVE_COOLDOWN_DAYS = 30;
+export const CRM_ACTIVE_WARNING_TO_DORMANT_DAYS = 30;
 
 export const CRM_COMMUNICATION_TASK_SOURCE_TYPES = [
   "CRM_COMMUNICATION",
   "CRM_DORMANT_WARNING",
   "CRM_REACTIVATION",
+  "CRM_ACTIVE_DOWNGRADE_WARNING",
 ] as const;
 export type CrmCommunicationTaskSourceType = (typeof CRM_COMMUNICATION_TASK_SOURCE_TYPES)[number];
 
@@ -132,13 +139,15 @@ export const RELATION_STRENGTH_LABELS: Record<string, string> = {
 };
 
 export const STAGE_HEX_COLORS: Record<string, string> = {
-  NEW: "#3b82f6",
+  LEAD: "#3b82f6",
   CONTACTED: "#06b6d4",
   FOLLOWING: "#eab308",
   ACTIVE: "#22c55e",
   BLOCKED: "#ef4444",
   LOST: "#9ca3af",
   DORMANT: "#94a3b8",
+  // 兼容旧数据读取
+  NEW: "#3b82f6",
 };
 
 export const RELATION_TYPE_HEX_COLORS: Record<string, string> = {

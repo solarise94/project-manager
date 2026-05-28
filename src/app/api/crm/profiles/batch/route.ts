@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { stage = "NEW", importance = "NORMAL", ownerUserId } = body;
+  const { stage = "LEAD", importance = "NORMAL", ownerUserId } = body;
   const finalOwner = ownerUserId;
   if (!finalOwner) {
     return NextResponse.json({ error: "ownerUserId is required" }, { status: 400 });

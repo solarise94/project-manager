@@ -155,7 +155,7 @@ export async function resolveOrCreateCustomerForImport(
         data: {
           sourceCustomerId: customer.id,
           ownerUserId,
-          stage: "NEW",
+          stage: "LEAD",
           importance: "NORMAL",
           assignmentStatus: "ASSIGNED",
           lastFollowUpAt: new Date(),

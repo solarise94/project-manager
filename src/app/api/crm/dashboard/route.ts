@@ -132,7 +132,7 @@ export async function GET() {
       where: {
         id: { in: visibleProfileIdArray },
         assignmentStatus: "ASSIGNED",
-        stage: { in: ["NEW", "CONTACTED", "FOLLOWING"] },
+        stage: { in: ["LEAD", "CONTACTED", "FOLLOWING"] },
         sourceCustomer: { orders: { none: validOrderWhere } },
         OR: [
           { lastFollowUpAt: { lt: warningDate } },

@@ -62,6 +62,8 @@ export async function GET(
     profile,
     lifecycle: lifecycle ? {
       ...lifecycle,
+      lastActiveOrderAt: lifecycle.lastActiveOrderAt?.toISOString() ?? null,
+      lastHistoricalOrderAt: lifecycle.lastHistoricalOrderAt?.toISOString() ?? null,
       lastOrderAt: lifecycle.lastOrderAt?.toISOString() ?? null,
       lastEffectiveInteractionAt: lifecycle.lastEffectiveInteractionAt?.toISOString() ?? null,
       nextCommunicationTaskAt: lifecycle.nextCommunicationTaskAt?.toISOString() ?? null,

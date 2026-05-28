@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentativeRole, isRegionalManagerRole, getEffectiveCrmVisibleProfileIds, assertCrmProfileAccess } from "@/lib/crm/permissions";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -110,6 +111,17 @@ export async function POST(req: NextRequest) {
 
     return created;
   });
+
+  // 创建跟进任务后驱动阶段流转
+  try {
+    await transitionCrmStage(profileId, {
+      type: "FOLLOW_UP_CREATED",
+      taskId: task.id,
+      dueAt: new Date(dueAt),
+    });
+  } catch (error) {
+    console.error(`[CRM][FOLLOW_UP] stage transition failed for profile ${profileId}:`, error);
+  }
 
   // Notify the assignee (skip if assigning to self)
   if (finalOwner !== session.user.id) {

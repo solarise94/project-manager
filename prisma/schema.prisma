@@ -1057,13 +1057,16 @@ model CrmCustomerProfile {
   sourceCustomer       Customer                   @relation(fields: [sourceCustomerId], references: [id], onDelete: Cascade)
   ownerUserId          String
   ownerUser            User                       @relation("CrmOwnedProfiles", fields: [ownerUserId], references: [id], onDelete: Cascade)
-  stage                String                     @default("NEW") // NEW, CONTACTED, FOLLOWING, ACTIVE, BLOCKED, LOST, DORMANT
+  stage                String                     @default("LEAD") // LEAD, CONTACTED, FOLLOWING, ACTIVE, BLOCKED, LOST, DORMANT
   importance           String                     @default("NORMAL") // LOW, NORMAL, HIGH, KEY
   tagsJson             String?
   summary              String?
   lastFollowUpAt       DateTime?
   nextFollowUpAt       DateTime?
   lastOrderAt          DateTime?
+  lastActiveBehaviorEndedAt DateTime? // 最后一个 ACTIVE 行为（CONFIRMED 订单 / IN_PROGRESS 项目 / 履约任务）结束时间
+  activeCooldownEndsAt DateTime?   // ACTIVE 冷却期结束时间（lastActiveBehaviorEndedAt + 30 天）
+  activeWarningIssuedAt DateTime?  // ACTIVE 降级 warning 生成时间
   assignmentStatus     String                     @default("ASSIGNED") // UNASSIGNED | ASSIGNED | RECALL_CANDIDATE | RECALLED
   assignedAt           DateTime?
   assignedByUserId     String?
@@ -1435,6 +1438,28 @@ model CrmRepresentativeReportLine {
 
   @@index([reportDraftId, sortOrder])
   @@index([customerId])
+}
+
+model CrmCustomerStageHistory {
+  id               String   @id @default(cuid())
+  profileId        String
+  sourceCustomerId String
+  ownerUserId      String?
+  previousStage    String?
+  nextStage        String
+  changedAt        DateTime @default(now())
+  reason           String
+  actorUserId      String?
+  sourceType       String?
+  sourceId         String?
+  metadataJson     String?
+
+  @@index([profileId, changedAt])
+  @@index([sourceCustomerId, changedAt])
+  @@index([ownerUserId, changedAt])
+  @@index([nextStage, changedAt])
+  @@index([sourceType, sourceId])
+  @@map("crm_customer_stage_history")
 }
 
 model CrmCustomerAssignmentLog {

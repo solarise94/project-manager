@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { assertCrmProfileAccess } from "@/lib/crm/permissions";
 import { syncCustomerRepresentativeLinksByOwnerUser } from "@/lib/crm/customer-representative-sync";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
-import { getCrmLifecycleSummaryByCustomerId } from "@/lib/crm/lifecycle";
+import { getCrmLifecycleSummaryByCustomerId, transitionCrmStage } from "@/lib/crm/lifecycle";
 
 export async function GET(
   _req: NextRequest,
@@ -66,6 +66,8 @@ export async function GET(
     profile,
     lifecycle: lifecycle ? {
       ...lifecycle,
+      lastActiveOrderAt: lifecycle.lastActiveOrderAt?.toISOString() ?? null,
+      lastHistoricalOrderAt: lifecycle.lastHistoricalOrderAt?.toISOString() ?? null,
       lastOrderAt: lifecycle.lastOrderAt?.toISOString() ?? null,
       lastEffectiveInteractionAt: lifecycle.lastEffectiveInteractionAt?.toISOString() ?? null,
       nextCommunicationTaskAt: lifecycle.nextCommunicationTaskAt?.toISOString() ?? null,
@@ -108,7 +110,6 @@ export async function PATCH(
   if (body.graduationReminderAt !== undefined) data.graduationReminderAt = body.graduationReminderAt ? new Date(body.graduationReminderAt) : null;
 
   if (session.user.role !== "REPRESENTATIVE") {
-    if (body.stage !== undefined) data.stage = body.stage;
     if (body.importance !== undefined) data.importance = body.importance;
     if (body.ownerUserId !== undefined) {
       if (body.ownerUserId) {
@@ -123,6 +124,8 @@ export async function PATCH(
   }
 
   const ownerUserTouched = body.ownerUserId !== undefined && body.ownerUserId !== existing.ownerUserId;
+  const manualStageChange = body.stage !== undefined && body.stage !== "" && session.user.role !== "REPRESENTATIVE";
+
   const profile = await prisma.$transaction(async (tx) => {
     const updated = await tx.crmCustomerProfile.update({
       where: { id },
@@ -146,6 +149,20 @@ export async function PATCH(
 
     return updated;
   });
+
+  // 阶段人工变更通过统一入口记录历史（真正的强制改阶段，不走自动推导）
+  if (manualStageChange) {
+    try {
+      await transitionCrmStage(id, {
+        type: "MANUAL_UPDATE",
+        actorUserId: session.user.id,
+        targetStage: body.stage,
+        reason: body.stageChangeReason || "人工调整阶段",
+      });
+    } catch (error) {
+      console.error(`[CRM][PROFILE] manual stage transition failed for profile ${id}:`, error);
+    }
+  }
 
   return NextResponse.json({ profile });
 }

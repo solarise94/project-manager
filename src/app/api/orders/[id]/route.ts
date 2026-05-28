@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { isOrderAccessBlocked, getOrderScopeWhere } from "@/lib/orders/permissions";
 import { ORDER_STATUS_TRANSITIONS, ORDER_DELIVERY_TRANSITIONS } from "@/lib/orders/constants";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 import { getInvoicesForOrder } from "@/lib/finance/order-invoices";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -260,10 +260,46 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     });
   }
 
+  // ── CRM 阶段同步 ─────────────────────────────────────────────────────
   const syncCustomerIds = new Set<string>();
   if (existing.customerId) syncCustomerIds.add(existing.customerId);
   if (updated.customerId) syncCustomerIds.add(updated.customerId);
-  await syncCrmLifecycleForCustomersBestEffort(syncCustomerIds, "orders.update");
+
+  // 订单状态变更驱动特定 CRM 事件
+  if (status !== undefined && status !== existing.status) {
+    const effectiveCustomerId = updated.customerId || existing.customerId;
+    if (effectiveCustomerId) {
+      const profile = await prisma.crmCustomerProfile.findUnique({
+        where: { sourceCustomerId: effectiveCustomerId },
+        select: { id: true },
+      });
+      if (profile) {
+        if (status === "CONFIRMED") {
+          await transitionCrmStage(profile.id, { type: "ORDER_CONFIRMED", orderId: id }).catch((err) => {
+            console.error(`[CRM][ORDER] ORDER_CONFIRMED transition failed for ${profile.id}:`, err);
+          });
+        } else if (existing.status === "CONFIRMED") {
+          await transitionCrmStage(profile.id, { type: "ORDER_CLOSED", orderId: id }).catch((err) => {
+            console.error(`[CRM][ORDER] ORDER_CLOSED transition failed for ${profile.id}:`, err);
+          });
+        } else {
+          // 其他状态变更兜底
+          await transitionCrmStage(profile.id, { type: "DORMANT_SCAN" }).catch(() => {});
+        }
+      }
+    }
+  } else {
+    // 非状态变更，对受影响客户兜底同步
+    for (const customerId of syncCustomerIds) {
+      const profile = await prisma.crmCustomerProfile.findUnique({
+        where: { sourceCustomerId: customerId },
+        select: { id: true },
+      });
+      if (profile) {
+        await transitionCrmStage(profile.id, { type: "DORMANT_SCAN" }).catch(() => {});
+      }
+    }
+  }
 
   return NextResponse.json({ order: updated });
 }

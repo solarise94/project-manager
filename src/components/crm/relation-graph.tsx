@@ -85,7 +85,7 @@ export function RelationGraph({ relations, profileStages, profileSourceMap, onNo
             name: c.name,
             customerCode: c.customerCode,
             organization: c.organization || null,
-            stage: profileStages.get(c.id) || "NEW",
+            stage: profileStages.get(c.id) || "LEAD",
             sourceCustomerId: hasCrm ? profileSourceMap.get(c.id)! : c.id,
             hasCrmProfile: hasCrm,
           });

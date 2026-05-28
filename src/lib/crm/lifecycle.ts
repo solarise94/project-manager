@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import {
+  CRM_ACTIVE_COOLDOWN_DAYS,
+  CRM_ACTIVE_WARNING_TO_DORMANT_DAYS,
   CRM_COMMUNICATION_TASK_SOURCE_TYPES,
   CRM_DORMANT_THRESHOLD_DAYS,
   CRM_DORMANT_WARNING_DAYS,
@@ -10,10 +12,17 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 type OrderAggregate = {
-  validOrderCount: number;
-  validOrderAmount: number;
-  lastOrderAt: Date | null;
+  activeOrderCount: number;
+  historicalOrderCount: number;
+  activeOrderAmount: number;
+  lastActiveOrderAt: Date | null;
+  lastHistoricalOrderAt: Date | null;
   firstOrderAt: Date | null;
+};
+
+type ProjectAggregate = {
+  activeProjectCount: number;
+  lastActiveProjectAt: Date | null;
 };
 
 /**
@@ -23,9 +32,11 @@ type OrderAggregate = {
  */
 type OrderAggregateRow = {
   customerId: string | null;
-  validOrderCount: bigint;
-  validOrderAmount: bigint | null;
-  lastOrderAt: string | null;
+  activeOrderCount: bigint;
+  historicalOrderCount: bigint;
+  activeOrderAmount: bigint | null;
+  lastActiveOrderAt: string | null;
+  lastHistoricalOrderAt: string | null;
   firstOrderAt: string | null;
 };
 
@@ -43,18 +54,6 @@ function normalizeDate(value: Date | string | number | bigint | null | undefined
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-type InteractionAggregate = {
-  lastEffectiveInteractionAt: Date | null;
-};
-
-type CommunicationTaskAggregate = {
-  nextCommunicationTaskAt: Date | null;
-  openCommunicationTaskCount: number;
-  overdueCommunicationTaskCount: number;
-  dueCommunicationTaskCount30d: number;
-  doneCommunicationTaskCount30d: number;
-};
-
 export type CrmLifecycleSummary = {
   customerId: string;
   profileId: string;
@@ -63,8 +62,14 @@ export type CrmLifecycleSummary = {
   assignedAt: Date | null;
   createdAt: Date;
   lastFollowUpAt: Date | null;
+  activeOrderCount: number;
+  activeOrderAmount: number;
+  historicalOrderCount: number;
+  lastActiveOrderAt: Date | null;
+  lastHistoricalOrderAt: Date | null;
+  /** @deprecated 兼容旧接口，等于 historicalOrderCount */
   validOrderCount: number;
-  validOrderAmount: number;
+  /** @deprecated 兼容旧接口，等于 lastHistoricalOrderAt */
   lastOrderAt: Date | null;
   firstOrderAt: Date | null;
   isRepeatCustomer: boolean;
@@ -76,6 +81,11 @@ export type CrmLifecycleSummary = {
   doneCommunicationTaskCount30d: number;
   dormantRisk: boolean;
   dormantCandidate: boolean;
+  activeProjectCount: number;
+  lastActiveProjectAt: Date | null;
+  lastActiveBehaviorEndedAt: Date | null;
+  activeCooldownEndsAt: Date | null;
+  activeWarningIssuedAt: Date | null;
 };
 
 export type CrmLifecycleSyncResult = {
@@ -83,36 +93,50 @@ export type CrmLifecycleSyncResult = {
   customerId: string;
   previousStage: string;
   nextStage: string;
-  validOrderCount: number;
-  lastOrderAt: Date | null;
+  activeOrderCount: number;
+  lastActiveOrderAt: Date | null;
   changed: boolean;
 };
 
+export type StageTransitionEvent =
+  | { type: "INTERACTION"; happenedAt: Date; nextActionAt?: Date | null; interactionId?: string }
+  | { type: "CHECKIN"; happenedAt: Date; nextActionAt?: Date | null; checkinId?: string }
+  | { type: "FOLLOW_UP_CREATED"; taskId: string; dueAt: Date }
+  | { type: "FOLLOW_UP_COMPLETED"; taskId: string; completedInteractionId?: string | null; happenedAt?: Date }
+  | { type: "FOLLOW_UP_CANCELLED"; taskId: string }
+  | { type: "ORDER_CONFIRMED"; orderId: string }
+  | { type: "ORDER_CLOSED"; orderId: string }
+  | { type: "PROJECT_STARTED"; projectId: string }
+  | { type: "PROJECT_ENDED"; projectId: string }
+  | { type: "APPLICATION_APPROVED"; applicationId: string }
+  | { type: "ACTIVE_COOLDOWN_SCAN" }
+  | { type: "ACTIVE_WARNING_SCAN" }
+  | { type: "DORMANT_SCAN" }
+  | { type: "MANUAL_UPDATE"; actorUserId: string; targetStage: string; reason?: string };
+
 const EFFECTIVE_INTERACTION_TYPE_SET = new Set<string>(CRM_EFFECTIVE_INTERACTION_TYPES);
 const COMMUNICATION_TASK_SOURCE_TYPE_SET = new Set<string>(CRM_COMMUNICATION_TASK_SOURCE_TYPES);
-const DORMANCY_ELIGIBLE_STAGE_SET = new Set(["NEW", "CONTACTED", "FOLLOWING", "DORMANT"]);
+const DORMANCY_ELIGIBLE_STAGE_SET = new Set(["LEAD", "CONTACTED", "FOLLOWING", "DORMANT"]);
+const LOCKED_STAGES = new Set(["BLOCKED", "LOST"]);
 
 function subtractDays(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-function isSameDateTime(left: Date | null, right: Date | null) {
-  if (!left && !right) return true;
-  if (!left || !right) return false;
-  return left.getTime() === right.getTime();
+/**
+ * 阶段标准化：旧数据中的 NEW 按 CONTACTED 兼容处理
+ */
+export function normalizeStage(stage: string | null | undefined): string {
+  if (!stage) return "LEAD";
+  if (stage === "NEW") return "CONTACTED";
+  return stage;
 }
 
-export function getEffectiveCrmLifecycleStage(
-  summary: Pick<CrmLifecycleSummary, "stage" | "validOrderCount" | "dormantCandidate">,
-) {
-  if (summary.validOrderCount > 0) {
-    return "ACTIVE";
-  }
-  if (summary.dormantCandidate && DORMANCY_ELIGIBLE_STAGE_SET.has(summary.stage)) {
-    return "DORMANT";
-  }
-  return summary.stage;
+function isLockedStage(stage: string): boolean {
+  return LOCKED_STAGES.has(stage);
 }
+
+// ─── Order aggregates ────────────────────────────────────────
 
 async function getOrderAggregatesForCustomers(
   customerIds: string[],
@@ -124,15 +148,16 @@ async function getOrderAggregatesForCustomers(
   const rows = await db.$queryRaw<OrderAggregateRow[]>(Prisma.sql`
     SELECT
       "customerId" AS "customerId",
-      COUNT(*) AS "validOrderCount",
-      SUM(COALESCE("financeAmountOverride", "totalAmount", 0)) AS "validOrderAmount",
-      MAX(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "lastOrderAt",
+      COUNT(CASE WHEN "status" = 'CONFIRMED' THEN 1 END) AS "activeOrderCount",
+      COUNT(CASE WHEN "status" IN ('CONFIRMED', 'CLOSED') THEN 1 END) AS "historicalOrderCount",
+      SUM(CASE WHEN "status" = 'CONFIRMED' THEN COALESCE("financeAmountOverride", "totalAmount", 0) ELSE 0 END) AS "activeOrderAmount",
+      MAX(CASE WHEN "status" = 'CONFIRMED' THEN COALESCE("confirmedAt", "orderedAt", "createdAt") END) AS "lastActiveOrderAt",
+      MAX(CASE WHEN "status" IN ('CONFIRMED', 'CLOSED') THEN COALESCE("orderedAt", "confirmedAt", "createdAt") END) AS "lastHistoricalOrderAt",
       MIN(COALESCE("orderedAt", "confirmedAt", "createdAt")) AS "firstOrderAt"
     FROM "Order"
     WHERE "customerId" IN (${Prisma.join(uniqueIds)})
       AND "deleted" = ${false}
       AND "archived" = ${false}
-      AND "status" IN (${Prisma.join(["CONFIRMED", "CLOSED"])})
     GROUP BY "customerId"
   `);
 
@@ -142,14 +167,53 @@ async function getOrderAggregatesForCustomers(
       .map((row) => [
         row.customerId,
         {
-          validOrderCount: normalizeNumber(row.validOrderCount),
-          validOrderAmount: normalizeNumber(row.validOrderAmount),
-          lastOrderAt: normalizeDate(row.lastOrderAt),
+          activeOrderCount: normalizeNumber(row.activeOrderCount),
+          historicalOrderCount: normalizeNumber(row.historicalOrderCount),
+          activeOrderAmount: normalizeNumber(row.activeOrderAmount),
+          lastActiveOrderAt: normalizeDate(row.lastActiveOrderAt),
+          lastHistoricalOrderAt: normalizeDate(row.lastHistoricalOrderAt),
           firstOrderAt: normalizeDate(row.firstOrderAt),
         },
       ]),
   );
 }
+
+async function getProjectAggregatesForCustomers(
+  customerIds: string[],
+  db: DbClient = prisma,
+): Promise<Map<string, ProjectAggregate>> {
+  const uniqueIds = [...new Set(customerIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Map();
+
+  const projects = await db.project.findMany({
+    where: {
+      customerId: { in: uniqueIds },
+      deleted: false,
+      status: "IN_PROGRESS",
+    },
+    select: { customerId: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const result = new Map<string, ProjectAggregate>();
+  for (const project of projects) {
+    if (!project.customerId) continue;
+    if (!result.has(project.customerId)) {
+      result.set(project.customerId, {
+        activeProjectCount: 0,
+        lastActiveProjectAt: null,
+      });
+    }
+    const agg = result.get(project.customerId)!;
+    agg.activeProjectCount += 1;
+    if (!agg.lastActiveProjectAt || project.updatedAt > agg.lastActiveProjectAt) {
+      agg.lastActiveProjectAt = project.updatedAt;
+    }
+  }
+  return result;
+}
+
+// ─── Lifecycle summary (保留兼容) ────────────────────────────
 
 export async function getCrmLifecycleSummaryByCustomerId(
   customerId: string,
@@ -167,12 +231,18 @@ export async function getCrmLifecycleSummaryByCustomerId(
       lastFollowUpAt: true,
       archived: true,
       assignmentStatus: true,
+      lastActiveBehaviorEndedAt: true,
+      activeCooldownEndsAt: true,
+      activeWarningIssuedAt: true,
     },
   });
   if (!profile || profile.archived) return null;
 
-  const [orderAgg, interactionAgg, taskAgg] = await Promise.all([
+  const normalizedStage = normalizeStage(profile.stage);
+
+  const [orderAgg, projectAgg, interactionAgg, taskAgg] = await Promise.all([
     getOrderAggregate(customerId, db),
+    getProjectAggregate(customerId, db),
     getInteractionAggregate(profile.id, db),
     getCommunicationTaskAggregate(profile.id, db),
   ]);
@@ -180,28 +250,34 @@ export async function getCrmLifecycleSummaryByCustomerId(
   const dormantWarningDate = subtractDays(CRM_DORMANT_WARNING_DAYS);
   const dormantThresholdDate = subtractDays(CRM_DORMANT_THRESHOLD_DAYS);
   const dormantBaseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
-  const dormantRisk = orderAgg.validOrderCount === 0
+
+  const hasActiveSignal = orderAgg.activeOrderCount > 0 || projectAgg.activeProjectCount > 0;
+
+  const dormantRisk = !hasActiveSignal
     && profile.assignmentStatus === "ASSIGNED"
-    && ["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(profile.stage)
+    && DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedStage)
     && dormantBaseAt < dormantWarningDate;
-  const dormantCandidate = orderAgg.validOrderCount === 0
+
+  const dormantCandidate = !hasActiveSignal
     && profile.assignmentStatus === "ASSIGNED"
-    && ["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(profile.stage)
+    && DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedStage)
     && dormantBaseAt < dormantThresholdDate;
 
   return {
     customerId: profile.sourceCustomerId,
     profileId: profile.id,
-    stage: profile.stage,
+    stage: normalizedStage,
     ownerUserId: profile.ownerUserId,
     assignedAt: profile.assignedAt,
     createdAt: profile.createdAt,
     lastFollowUpAt: profile.lastFollowUpAt,
-    validOrderCount: orderAgg.validOrderCount,
-    validOrderAmount: orderAgg.validOrderAmount,
-    lastOrderAt: orderAgg.lastOrderAt,
+    activeOrderCount: orderAgg.activeOrderCount,
+    activeOrderAmount: orderAgg.activeOrderAmount,
+    historicalOrderCount: orderAgg.historicalOrderCount,
+    lastActiveOrderAt: orderAgg.lastActiveOrderAt,
+    lastHistoricalOrderAt: orderAgg.lastHistoricalOrderAt,
     firstOrderAt: orderAgg.firstOrderAt,
-    isRepeatCustomer: orderAgg.validOrderCount >= 2,
+    isRepeatCustomer: orderAgg.historicalOrderCount >= 2,
     lastEffectiveInteractionAt: interactionAgg.lastEffectiveInteractionAt,
     nextCommunicationTaskAt: taskAgg.nextCommunicationTaskAt,
     openCommunicationTaskCount: taskAgg.openCommunicationTaskCount,
@@ -210,6 +286,14 @@ export async function getCrmLifecycleSummaryByCustomerId(
     doneCommunicationTaskCount30d: taskAgg.doneCommunicationTaskCount30d,
     dormantRisk,
     dormantCandidate,
+    activeProjectCount: projectAgg.activeProjectCount,
+    lastActiveProjectAt: projectAgg.lastActiveProjectAt,
+    lastActiveBehaviorEndedAt: profile.lastActiveBehaviorEndedAt,
+    activeCooldownEndsAt: profile.activeCooldownEndsAt,
+    activeWarningIssuedAt: profile.activeWarningIssuedAt,
+    // 兼容字段
+    validOrderCount: orderAgg.historicalOrderCount,
+    lastOrderAt: orderAgg.lastHistoricalOrderAt,
   };
 }
 
@@ -234,6 +318,9 @@ export async function getCrmLifecycleSummariesForCustomers(
       createdAt: true,
       lastFollowUpAt: true,
       assignmentStatus: true,
+      lastActiveBehaviorEndedAt: true,
+      activeCooldownEndsAt: true,
+      activeWarningIssuedAt: true,
     },
   });
   if (profiles.length === 0) return new Map();
@@ -244,8 +331,9 @@ export async function getCrmLifecycleSummariesForCustomers(
   const dormantWarningDate = subtractDays(CRM_DORMANT_WARNING_DAYS);
   const dormantThresholdDate = subtractDays(CRM_DORMANT_THRESHOLD_DAYS);
 
-  const [orderAggMap, interactions, openTasks, doneTasks30d] = await Promise.all([
+  const [orderAggMap, projectAggMap, interactions, openTasks, doneTasks30d] = await Promise.all([
     getOrderAggregatesForCustomers(uniqueIds, db),
+    getProjectAggregatesForCustomers(uniqueIds, db),
     db.crmInteraction.findMany({
       where: {
         profileId: { in: profileIds },
@@ -320,11 +408,18 @@ export async function getCrmLifecycleSummariesForCustomers(
 
   const result = new Map<string, CrmLifecycleSummary>();
   for (const profile of profiles) {
+    const normalizedStage = normalizeStage(profile.stage);
     const orderAgg = orderAggMap.get(profile.sourceCustomerId) ?? {
-      validOrderCount: 0,
-      validOrderAmount: 0,
-      lastOrderAt: null,
+      activeOrderCount: 0,
+      activeOrderAmount: 0,
+      historicalOrderCount: 0,
+      lastActiveOrderAt: null,
+      lastHistoricalOrderAt: null,
       firstOrderAt: null,
+    };
+    const projectAgg = projectAggMap.get(profile.sourceCustomerId) ?? {
+      activeProjectCount: 0,
+      lastActiveProjectAt: null,
     };
     const taskAgg = taskAggMap.get(profile.id) ?? {
       nextCommunicationTaskAt: null,
@@ -334,87 +429,439 @@ export async function getCrmLifecycleSummariesForCustomers(
       doneCommunicationTaskCount30d: 0,
     };
     const dormantBaseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
+    const hasActiveSignal = orderAgg.activeOrderCount > 0 || projectAgg.activeProjectCount > 0;
+
     result.set(profile.sourceCustomerId, {
       customerId: profile.sourceCustomerId,
       profileId: profile.id,
-      stage: profile.stage,
+      stage: normalizedStage,
       ownerUserId: profile.ownerUserId,
       assignedAt: profile.assignedAt,
       createdAt: profile.createdAt,
       lastFollowUpAt: profile.lastFollowUpAt,
-      validOrderCount: orderAgg.validOrderCount,
-      validOrderAmount: orderAgg.validOrderAmount,
-      lastOrderAt: orderAgg.lastOrderAt,
+      activeOrderCount: orderAgg.activeOrderCount,
+      activeOrderAmount: orderAgg.activeOrderAmount,
+      historicalOrderCount: orderAgg.historicalOrderCount,
+      lastActiveOrderAt: orderAgg.lastActiveOrderAt,
+      lastHistoricalOrderAt: orderAgg.lastHistoricalOrderAt,
       firstOrderAt: orderAgg.firstOrderAt,
-      isRepeatCustomer: orderAgg.validOrderCount >= 2,
+      isRepeatCustomer: orderAgg.historicalOrderCount >= 2,
       lastEffectiveInteractionAt: interactionMap.get(profile.id) ?? null,
       nextCommunicationTaskAt: taskAgg.nextCommunicationTaskAt,
       openCommunicationTaskCount: taskAgg.openCommunicationTaskCount,
       overdueCommunicationTaskCount: taskAgg.overdueCommunicationTaskCount,
       dueCommunicationTaskCount30d: taskAgg.dueCommunicationTaskCount30d,
       doneCommunicationTaskCount30d: taskAgg.doneCommunicationTaskCount30d,
-      dormantRisk: orderAgg.validOrderCount === 0
+      dormantRisk: !hasActiveSignal
         && profile.assignmentStatus === "ASSIGNED"
-        && ["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(profile.stage)
+        && DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedStage)
         && dormantBaseAt < dormantWarningDate,
-      dormantCandidate: orderAgg.validOrderCount === 0
+      dormantCandidate: !hasActiveSignal
         && profile.assignmentStatus === "ASSIGNED"
-        && ["NEW", "CONTACTED", "FOLLOWING", "DORMANT"].includes(profile.stage)
+        && DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedStage)
         && dormantBaseAt < dormantThresholdDate,
+      activeProjectCount: projectAgg.activeProjectCount,
+      lastActiveProjectAt: projectAgg.lastActiveProjectAt,
+      lastActiveBehaviorEndedAt: profile.lastActiveBehaviorEndedAt,
+      activeCooldownEndsAt: profile.activeCooldownEndsAt,
+      activeWarningIssuedAt: profile.activeWarningIssuedAt,
+      // 兼容字段
+      validOrderCount: orderAgg.historicalOrderCount,
+      lastOrderAt: orderAgg.lastHistoricalOrderAt,
     });
   }
 
   return result;
 }
 
+// ─── 核心阶段计算 ────────────────────────────────────────────
+
+/**
+ * 按优先级计算目标阶段（纯函数，无数据库写入）
+ *
+ * 优先级（从高到低）：
+ * 1. BLOCKED / LOST：人工锁定，不被普通自动规则覆盖
+ * 2. 存在进行中业务信号：ACTIVE
+ * 3. 无进行中业务但仍在 ACTIVE 冷却期内：ACTIVE
+ * 4. ACTIVE warning 后 30 天仍无有效沟通或 ACTIVE 行为：DORMANT
+ * 5. 普通休眠扫描命中：DORMANT
+ * 6. ACTIVE 冷却期到期后发出 warning：FOLLOWING
+ * 7. 存在开放销售跟进任务：FOLLOWING
+ * 8. 存在有效沟通记录：CONTACTED
+ * 9. 未发生有效沟通：LEAD
+ */
+export function computeCrmStage(
+  profile: {
+    stage: string;
+    lastActiveBehaviorEndedAt: Date | null;
+    activeCooldownEndsAt: Date | null;
+    activeWarningIssuedAt: Date | null;
+    assignmentStatus: string;
+    lastFollowUpAt: Date | null;
+    assignedAt: Date | null;
+    createdAt: Date;
+  },
+  signals: {
+    hasActiveOrder: boolean;
+    hasActiveProject: boolean;
+    lastEffectiveInteractionAt: Date | null;
+    openCommunicationTaskCount: number;
+  },
+): { nextStage: string; reason: string } {
+  const now = new Date();
+  const normalizedCurrentStage = normalizeStage(profile.stage);
+
+  // 1. 锁定阶段不覆盖
+  if (isLockedStage(normalizedCurrentStage)) {
+    return { nextStage: normalizedCurrentStage, reason: "LOCKED_STAGE_PRESERVED" };
+  }
+
+  // 2. 存在进行中业务信号 → ACTIVE
+  if (signals.hasActiveOrder || signals.hasActiveProject) {
+    return { nextStage: "ACTIVE", reason: "ACTIVE_SIGNAL_PRESENT" };
+  }
+
+  // 3. 仍在 ACTIVE 冷却期内 → ACTIVE
+  if (profile.activeCooldownEndsAt && profile.activeCooldownEndsAt > now) {
+    return { nextStage: "ACTIVE", reason: "ACTIVE_COOLDOWN" };
+  }
+
+  // 4. ACTIVE warning 后 30 天仍无有效沟通或 ACTIVE 行为 → DORMANT
+  if (profile.activeWarningIssuedAt) {
+    const warningThreshold = new Date(
+      profile.activeWarningIssuedAt.getTime() + CRM_ACTIVE_WARNING_TO_DORMANT_DAYS * 24 * 60 * 60 * 1000,
+    );
+    const hasRecentActivity = signals.lastEffectiveInteractionAt
+      && signals.lastEffectiveInteractionAt > profile.activeWarningIssuedAt;
+    if (now >= warningThreshold && !hasRecentActivity) {
+      return { nextStage: "DORMANT", reason: "ACTIVE_WARNING_DORMANT" };
+    }
+  }
+
+  // 5. 普通休眠扫描
+  const dormantBaseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
+  const dormantThresholdDate = subtractDays(CRM_DORMANT_THRESHOLD_DAYS);
+  const isDormantEligible = DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedCurrentStage);
+  if (
+    isDormantEligible
+    && profile.assignmentStatus === "ASSIGNED"
+    && dormantBaseAt < dormantThresholdDate
+    && !signals.hasActiveOrder
+    && !signals.hasActiveProject
+  ) {
+    return { nextStage: "DORMANT", reason: "DORMANT_SCAN" };
+  }
+
+  // 6. ACTIVE 冷却期到期后发出 warning → FOLLOWING
+  if (profile.activeCooldownEndsAt && profile.activeCooldownEndsAt <= now && normalizedCurrentStage === "ACTIVE") {
+    return { nextStage: "FOLLOWING", reason: "ACTIVE_COOLDOWN_WARNING" };
+  }
+
+  // 7. 存在开放销售跟进任务 → FOLLOWING
+  if (signals.openCommunicationTaskCount > 0) {
+    return { nextStage: "FOLLOWING", reason: "OPEN_FOLLOW_UP_TASK" };
+  }
+
+  // 8. 存在有效沟通记录 → CONTACTED
+  if (signals.lastEffectiveInteractionAt) {
+    return { nextStage: "CONTACTED", reason: "EFFECTIVE_COMMUNICATION" };
+  }
+
+  // 9. 默认 → LEAD
+  return { nextStage: "LEAD", reason: "NO_EFFECTIVE_COMMUNICATION" };
+}
+
+// ─── 统一阶段转移入口 ────────────────────────────────────────
+
+export async function transitionCrmStage(
+  profileId: string,
+  event: StageTransitionEvent,
+  db: DbClient = prisma,
+): Promise<{
+  profileId: string;
+  customerId: string;
+  previousStage: string;
+  nextStage: string;
+  changed: boolean;
+  reason: string;
+} | null> {
+  const profile = await db.crmCustomerProfile.findUnique({
+    where: { id: profileId },
+    select: {
+      id: true,
+      sourceCustomerId: true,
+      ownerUserId: true,
+      stage: true,
+      lastFollowUpAt: true,
+      assignedAt: true,
+      createdAt: true,
+      assignmentStatus: true,
+      lastActiveBehaviorEndedAt: true,
+      activeCooldownEndsAt: true,
+      activeWarningIssuedAt: true,
+    },
+  });
+  if (!profile) return null;
+
+  const normalizedCurrentStage = normalizeStage(profile.stage);
+
+  // 收集信号
+  const [orderSignals, projectSignals, interactionAgg, taskAgg] = await Promise.all([
+    db.order.findFirst({
+      where: {
+        customerId: profile.sourceCustomerId,
+        deleted: false,
+        archived: false,
+        status: "CONFIRMED",
+      },
+      select: { id: true },
+    }),
+    db.project.findFirst({
+      where: {
+        customerId: profile.sourceCustomerId,
+        deleted: false,
+        status: "IN_PROGRESS",
+      },
+      select: { id: true },
+    }),
+    getInteractionAggregate(profileId, db),
+    getCommunicationTaskAggregate(profileId, db),
+  ]);
+
+  const signals = {
+    hasActiveOrder: !!orderSignals,
+    hasActiveProject: !!projectSignals,
+    lastEffectiveInteractionAt: interactionAgg.lastEffectiveInteractionAt,
+    openCommunicationTaskCount: taskAgg.openCommunicationTaskCount,
+  };
+
+  // 处理特定事件对冷却期字段的影响
+  let activeCooldownEndsAt = profile.activeCooldownEndsAt;
+  let lastActiveBehaviorEndedAt = profile.lastActiveBehaviorEndedAt;
+  let activeWarningIssuedAt = profile.activeWarningIssuedAt;
+  let nextStage: string = normalizedCurrentStage;
+  let reason: string = "NO_CHANGE";
+
+  // MANUAL_UPDATE：人工强制改阶段，不走自动推导
+  if (event.type === "MANUAL_UPDATE") {
+    const manualEvent = event as Extract<StageTransitionEvent, { type: "MANUAL_UPDATE" }>;
+    const allowedManualStages = new Set(["BLOCKED", "LOST", "CONTACTED", "FOLLOWING", "LEAD", "DORMANT"]);
+    if (!allowedManualStages.has(manualEvent.targetStage)) {
+      throw new Error(`MANUAL_UPDATE 不允许将阶段改为 ${manualEvent.targetStage}`);
+    }
+    nextStage = manualEvent.targetStage;
+    reason = manualEvent.reason || "MANUAL_UPDATE";
+  } else if (event.type === "APPLICATION_APPROVED") {
+    // 审批通过：业务语义即“已联系”，直接设为 CONTACTED
+    nextStage = "CONTACTED";
+    reason = "APPLICATION_APPROVED";
+  } else {
+    // 事件驱动冷却期更新（仅自动规则分支）
+    let skipCompute = false;
+
+    if (event.type === "ORDER_CONFIRMED" || event.type === "PROJECT_STARTED") {
+      // ACTIVE 信号出现，清除冷却期和 warning
+      activeCooldownEndsAt = null;
+      lastActiveBehaviorEndedAt = null;
+      activeWarningIssuedAt = null;
+    } else if (event.type === "ORDER_CLOSED" || event.type === "PROJECT_ENDED") {
+      // ACTIVE 信号结束，只在「最后一个 ACTIVE 信号」结束时启动冷却期
+      const stillHasActiveOrder = await db.order.findFirst({
+        where: {
+          customerId: profile.sourceCustomerId,
+          deleted: false,
+          archived: false,
+          status: "CONFIRMED",
+        },
+        select: { id: true },
+      });
+      const stillHasActiveProject = await db.project.findFirst({
+        where: {
+          customerId: profile.sourceCustomerId,
+          deleted: false,
+          status: "IN_PROGRESS",
+        },
+        select: { id: true },
+      });
+      if (!stillHasActiveOrder && !stillHasActiveProject) {
+        const now = new Date();
+        lastActiveBehaviorEndedAt = now;
+        activeCooldownEndsAt = new Date(now.getTime() + CRM_ACTIVE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+        activeWarningIssuedAt = null;
+      }
+      // 若仍有其它 ACTIVE 信号，不改冷却期字段
+    } else if (event.type === "ACTIVE_COOLDOWN_SCAN") {
+      // 冷却期到期，发出 warning
+      if (activeCooldownEndsAt && activeCooldownEndsAt <= new Date() && normalizedCurrentStage === "ACTIVE") {
+        activeWarningIssuedAt = new Date();
+      }
+    } else if (event.type === "ACTIVE_WARNING_SCAN") {
+      // warning 后扫描，不需要额外更新冷却期字段
+    } else if (event.type === "INTERACTION" || event.type === "CHECKIN" || event.type === "FOLLOW_UP_CREATED") {
+      // 有效沟通/跟进任务会重置 lastFollowUpAt，影响休眠判断
+      // 如果当前在 ACTIVE warning 后，有效沟通可清除 warning
+      if (activeWarningIssuedAt && signals.lastEffectiveInteractionAt && signals.lastEffectiveInteractionAt > activeWarningIssuedAt) {
+        activeWarningIssuedAt = null;
+      }
+    } else if (event.type === "FOLLOW_UP_COMPLETED") {
+      const fuEvent = event as Extract<StageTransitionEvent, { type: "FOLLOW_UP_COMPLETED" }>;
+      if (!fuEvent.completedInteractionId) {
+        // 未关联有效互动：不能制造 CONTACTED/LEAD，也不能压住 ACTIVE
+        if (signals.hasActiveOrder || signals.hasActiveProject) {
+          nextStage = "ACTIVE";
+          reason = "ACTIVE_SIGNAL_PRESENT";
+          skipCompute = true;
+        } else if (normalizedCurrentStage === "FOLLOWING" || signals.openCommunicationTaskCount > 0) {
+          nextStage = "FOLLOWING";
+          reason = "FOLLOW_UP_COMPLETED_WITHOUT_INTERACTION_KEEP_FOLLOWING";
+          skipCompute = true;
+        }
+      } else if (
+        activeWarningIssuedAt
+        && signals.lastEffectiveInteractionAt
+        && signals.lastEffectiveInteractionAt > activeWarningIssuedAt
+      ) {
+        // 有关联互动且发生在 warning 之后，清除 warning
+        activeWarningIssuedAt = null;
+      }
+    }
+
+    if (!skipCompute) {
+      ({ nextStage, reason } = computeCrmStage(
+        {
+          stage: normalizedCurrentStage,
+          lastActiveBehaviorEndedAt,
+          activeCooldownEndsAt,
+          activeWarningIssuedAt,
+          assignmentStatus: profile.assignmentStatus,
+          lastFollowUpAt: profile.lastFollowUpAt,
+          assignedAt: profile.assignedAt,
+          createdAt: profile.createdAt,
+        },
+        signals,
+      ));
+    }
+  }
+
+  const changed = normalizedCurrentStage !== nextStage;
+
+  // 强制记历史的关键业务事件（即使阶段未变化）
+  const forceHistoryEvents = new Set(["MANUAL_UPDATE", "APPLICATION_APPROVED"]);
+  const shouldLogHistory = changed || forceHistoryEvents.has(event.type);
+
+  if (shouldLogHistory) {
+    const manualEvent = event.type === "MANUAL_UPDATE"
+      ? (event as Extract<StageTransitionEvent, { type: "MANUAL_UPDATE" }>)
+      : null;
+    const appEvent = event.type === "APPLICATION_APPROVED"
+      ? (event as Extract<StageTransitionEvent, { type: "APPLICATION_APPROVED" }>)
+      : null;
+    await db.crmCustomerStageHistory.create({
+      data: {
+        profileId: profile.id,
+        sourceCustomerId: profile.sourceCustomerId,
+        ownerUserId: profile.ownerUserId,
+        previousStage: normalizedCurrentStage,
+        nextStage,
+        reason,
+        actorUserId: manualEvent?.actorUserId ?? null,
+        sourceType: event.type,
+        sourceId: extractSourceId(event),
+        metadataJson: manualEvent?.reason
+          ? JSON.stringify({ manualReason: manualEvent.reason, targetStage: manualEvent.targetStage })
+          : appEvent
+            ? JSON.stringify({ trigger: "approve_bind", stageChanged: changed })
+            : null,
+      },
+    });
+  }
+
+  // 轻量断言：ACTIVE 信号存在时，不应被非人工规则降级到 FOLLOWING/CONTACTED/LEAD/DORMANT
+  if ((signals.hasActiveOrder || signals.hasActiveProject)
+    && event.type !== "MANUAL_UPDATE"
+    && !["ACTIVE", "BLOCKED", "LOST"].includes(nextStage)
+  ) {
+    console.warn(
+      `[CRM][LIFECYCLE] ACTIVE signal present but nextStage=${nextStage} for profile ${profileId}. ` +
+      `Event=${event.type}, current=${normalizedCurrentStage}`
+    );
+  }
+
+  // 更新 profile
+  const updateData: Record<string, unknown> = {
+    stage: nextStage,
+    lastActiveBehaviorEndedAt,
+    activeCooldownEndsAt,
+    activeWarningIssuedAt,
+  };
+
+  // 跟进任务相关字段更新
+  if (event.type === "FOLLOW_UP_CREATED" || event.type === "FOLLOW_UP_COMPLETED" || event.type === "FOLLOW_UP_CANCELLED") {
+    updateData.nextFollowUpAt = taskAgg.nextCommunicationTaskAt;
+  }
+
+  if (event.type === "INTERACTION" || event.type === "CHECKIN") {
+    const e = event as Extract<StageTransitionEvent, { type: "INTERACTION" | "CHECKIN" }>;
+    updateData.lastFollowUpAt = e.happenedAt;
+    if (e.nextActionAt) {
+      updateData.nextFollowUpAt = e.nextActionAt;
+    }
+  }
+
+  await db.crmCustomerProfile.update({
+    where: { id: profileId },
+    data: updateData,
+  });
+
+  return {
+    profileId: profile.id,
+    customerId: profile.sourceCustomerId,
+    previousStage: normalizedCurrentStage,
+    nextStage,
+    changed,
+    reason,
+  };
+}
+
+function extractSourceId(event: StageTransitionEvent): string | null {
+  switch (event.type) {
+    case "INTERACTION": return event.interactionId ?? null;
+    case "CHECKIN": return event.checkinId ?? null;
+    case "FOLLOW_UP_CREATED":
+    case "FOLLOW_UP_COMPLETED":
+    case "FOLLOW_UP_CANCELLED": return event.taskId;
+    case "ORDER_CONFIRMED":
+    case "ORDER_CLOSED": return event.orderId;
+    case "PROJECT_STARTED":
+    case "PROJECT_ENDED": return event.projectId;
+    case "APPLICATION_APPROVED": return event.applicationId;
+    default: return null;
+  }
+}
+
+// ─── 兼容旧接口（薄包装）─────────────────────────────────────
+
 export async function syncCrmLifecycleForCustomer(
   customerId: string,
   db: DbClient = prisma,
 ): Promise<CrmLifecycleSyncResult | null> {
-  const summary = await getCrmLifecycleSummaryByCustomerId(customerId, db);
-  if (!summary) return null;
-
-  const previousStage = summary.stage;
-  const nextStage = getEffectiveCrmLifecycleStage(summary);
-
-  const nextFollowUpAt = summary.nextCommunicationTaskAt;
-  const currentProfile = await db.crmCustomerProfile.findUnique({
-    where: { id: summary.profileId },
-    select: { lastOrderAt: true, nextFollowUpAt: true },
+  const profile = await db.crmCustomerProfile.findUnique({
+    where: { sourceCustomerId: customerId },
+    select: { id: true },
   });
-  const changed = previousStage !== nextStage
-    || !isSameDateTime(currentProfile?.lastOrderAt ?? null, summary.lastOrderAt)
-    || !isSameDateTime(currentProfile?.nextFollowUpAt ?? null, nextFollowUpAt);
+  if (!profile) return null;
 
-  if (!changed) {
-    return {
-      profileId: summary.profileId,
-      customerId: summary.customerId,
-      previousStage,
-      nextStage,
-      validOrderCount: summary.validOrderCount,
-      lastOrderAt: summary.lastOrderAt,
-      changed: false,
-    };
-  }
-
-  await db.crmCustomerProfile.update({
-    where: { id: summary.profileId },
-    data: {
-      stage: nextStage,
-      lastOrderAt: summary.lastOrderAt,
-      nextFollowUpAt,
-    },
-  });
+  const result = await transitionCrmStage(profile.id, { type: "DORMANT_SCAN" }, db);
+  if (!result) return null;
 
   return {
-    profileId: summary.profileId,
-    customerId: summary.customerId,
-    previousStage,
-    nextStage,
-    validOrderCount: summary.validOrderCount,
-    lastOrderAt: summary.lastOrderAt,
-    changed,
+    profileId: result.profileId,
+    customerId: result.customerId,
+    previousStage: result.previousStage,
+    nextStage: result.nextStage,
+    activeOrderCount: 0,
+    lastActiveOrderAt: null,
+    changed: result.changed,
   };
 }
 
@@ -439,71 +886,44 @@ export async function syncCrmLifecycleAfterInteraction(
   params: { happenedAt: Date; nextActionAt?: Date | null; actorUserId?: string | null },
   db: DbClient = prisma,
 ): Promise<void> {
-  const profile = await db.crmCustomerProfile.findUnique({
-    where: { id: profileId },
-    select: {
-      id: true,
-      sourceCustomerId: true,
-      stage: true,
-      ownerUserId: true,
-      assignmentStatus: true,
-    },
-  });
-  if (!profile) return;
-
-  let nextStage = profile.stage;
-  if (profile.stage === "NEW" || profile.stage === "DORMANT") {
-    nextStage = params.nextActionAt ? "FOLLOWING" : "CONTACTED";
-  } else if (profile.stage === "CONTACTED" && params.nextActionAt) {
-    nextStage = "FOLLOWING";
-  }
-
-  const taskData = params.nextActionAt
-    ? {
-        profileId,
-        ownerUserId: profile.ownerUserId,
-        title: "沟通后续跟进",
-        dueAt: params.nextActionAt,
-        createdByUserId: params.actorUserId || profile.ownerUserId,
-        sourceType: "CRM_COMMUNICATION",
-        sourceId: `${profileId}:${params.happenedAt.toISOString()}`,
-        sourceOpenKey: `crm-communication:${profileId}:${params.happenedAt.toISOString()}`,
-      }
-    : null;
-
-  if (taskData) {
-    await db.crmFollowUpTask.upsert({
-      where: { sourceOpenKey: taskData.sourceOpenKey },
-      update: {
-        dueAt: taskData.dueAt,
-        title: taskData.title,
-        ownerUserId: taskData.ownerUserId,
-      },
-      create: taskData,
+  // 先处理跟进任务创建（如果 nextActionAt 存在）
+  if (params.nextActionAt) {
+    const profile = await db.crmCustomerProfile.findUnique({
+      where: { id: profileId },
+      select: { ownerUserId: true },
     });
+    if (profile) {
+      await db.crmFollowUpTask.upsert({
+        where: {
+          sourceOpenKey: `crm-communication:${profileId}:${params.happenedAt.toISOString()}`,
+        },
+        update: {
+          dueAt: params.nextActionAt,
+          title: "沟通后续跟进",
+          ownerUserId: profile.ownerUserId,
+        },
+        create: {
+          profileId,
+          ownerUserId: profile.ownerUserId,
+          title: "沟通后续跟进",
+          dueAt: params.nextActionAt,
+          createdByUserId: params.actorUserId || profile.ownerUserId,
+          sourceType: "CRM_COMMUNICATION",
+          sourceId: `${profileId}:${params.happenedAt.toISOString()}`,
+          sourceOpenKey: `crm-communication:${profileId}:${params.happenedAt.toISOString()}`,
+        },
+      });
+    }
   }
 
-  const nextCommunicationTask = await db.crmFollowUpTask.findFirst({
-    where: {
-      profileId,
-      status: "OPEN",
-      sourceType: { in: CRM_COMMUNICATION_TASK_SOURCE_TYPES as unknown as string[] },
-    },
-    orderBy: { dueAt: "asc" },
-    select: { dueAt: true },
-  });
-
-  await db.crmCustomerProfile.update({
-    where: { id: profileId },
-    data: {
-      stage: ["BLOCKED", "LOST", "ACTIVE"].includes(profile.stage) ? profile.stage : nextStage,
-      lastFollowUpAt: params.happenedAt,
-      nextFollowUpAt: nextCommunicationTask?.dueAt ?? params.nextActionAt ?? null,
-    },
-  });
-
-  await syncCrmLifecycleForCustomer(profile.sourceCustomerId, db);
+  await transitionCrmStage(profileId, {
+    type: "INTERACTION",
+    happenedAt: params.happenedAt,
+    nextActionAt: params.nextActionAt,
+  }, db);
 }
+
+// ─── 休眠扫描 ────────────────────────────────────────────────
 
 export async function scanDormantCrmProfiles(
   params?: { dormantDays?: number; warningDays?: number; dryRun?: boolean; actorUserId?: string | null },
@@ -531,68 +951,112 @@ export async function scanDormantCrmProfiles(
       lastFollowUpAt: true,
       lastOrderAt: true,
       nextFollowUpAt: true,
+      assignmentStatus: true,
+      lastActiveBehaviorEndedAt: true,
+      activeCooldownEndsAt: true,
+      activeWarningIssuedAt: true,
     },
   });
 
   let warnedCount = 0;
   let dormantCount = 0;
-  const lifecycleMap = await getCrmLifecycleSummariesForCustomers(
-    profiles.map((profile) => profile.sourceCustomerId),
-    db,
-  );
 
   for (const profile of profiles) {
-    const summary = lifecycleMap.get(profile.sourceCustomerId);
-    if (!summary) continue;
-    const lifecycleStage = getEffectiveCrmLifecycleStage(summary);
-    const baseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
+    const normalizedStage = normalizeStage(profile.stage);
 
-    if (!dryRun) {
-      const shouldUpdate = profile.stage !== lifecycleStage
-        || !isSameDateTime(profile.lastOrderAt ?? null, summary.lastOrderAt)
-        || !isSameDateTime(profile.nextFollowUpAt ?? null, summary.nextCommunicationTaskAt);
-      if (shouldUpdate) {
-        await db.crmCustomerProfile.update({
-          where: { id: profile.id },
-          data: {
-            stage: lifecycleStage,
-            lastOrderAt: summary.lastOrderAt,
-            nextFollowUpAt: summary.nextCommunicationTaskAt,
-          },
-        });
+    // 快速查询当前 ACTIVE 信号
+    const [orderSignals, projectSignals] = await Promise.all([
+      db.order.findFirst({
+        where: {
+          customerId: profile.sourceCustomerId,
+          deleted: false,
+          archived: false,
+          status: "CONFIRMED",
+        },
+        select: { id: true },
+      }),
+      db.project.findFirst({
+        where: {
+          customerId: profile.sourceCustomerId,
+          deleted: false,
+          status: "IN_PROGRESS",
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    const hasActiveSignal = !!orderSignals || !!projectSignals;
+    if (hasActiveSignal) continue;
+
+    // 判断应该触发哪种扫描事件
+    let eventType: "ACTIVE_COOLDOWN_SCAN" | "ACTIVE_WARNING_SCAN" | "DORMANT_SCAN" | null = null;
+
+    if (profile.activeCooldownEndsAt && profile.activeCooldownEndsAt <= now && normalizedStage === "ACTIVE") {
+      eventType = "ACTIVE_COOLDOWN_SCAN";
+    } else if (profile.activeWarningIssuedAt) {
+      const warningThreshold = new Date(
+        profile.activeWarningIssuedAt.getTime() + CRM_ACTIVE_WARNING_TO_DORMANT_DAYS * 24 * 60 * 60 * 1000,
+      );
+      if (now >= warningThreshold) {
+        eventType = "ACTIVE_WARNING_SCAN";
+      }
+    } else if (DORMANCY_ELIGIBLE_STAGE_SET.has(normalizedStage)) {
+      const baseAt = profile.lastFollowUpAt ?? profile.assignedAt ?? profile.createdAt;
+      if (baseAt < dormantThresholdDate) {
+        eventType = "DORMANT_SCAN";
+      } else if (baseAt < warningThresholdDate) {
+        warnedCount += 1;
+        if (!dryRun) {
+          await db.crmFollowUpTask.upsert({
+            where: { sourceOpenKey: `crm-dormant-warning:${profile.id}` },
+            update: {
+              dueAt: now,
+              title: "休眠预警跟进",
+              ownerUserId: profile.ownerUserId,
+              status: "OPEN",
+            },
+            create: {
+              profileId: profile.id,
+              ownerUserId: profile.ownerUserId,
+              title: "休眠预警跟进",
+              dueAt: now,
+              sourceType: "CRM_DORMANT_WARNING",
+              sourceId: profile.id,
+              sourceOpenKey: `crm-dormant-warning:${profile.id}`,
+              createdByUserId: params?.actorUserId || profile.ownerUserId,
+            },
+          });
+        }
       }
     }
 
-    if (summary.validOrderCount > 0) continue;
-    if (!DORMANCY_ELIGIBLE_STAGE_SET.has(lifecycleStage)) continue;
-
-    if (baseAt < dormantThresholdDate) {
-      dormantCount += 1;
-      continue;
-    }
-
-    if (baseAt < warningThresholdDate) {
-      warnedCount += 1;
-      if (!dryRun) {
-        await db.crmFollowUpTask.upsert({
-          where: { sourceOpenKey: `crm-dormant-warning:${profile.id}` },
-          update: {
-            dueAt: now,
-            title: "休眠预警跟进",
-            ownerUserId: profile.ownerUserId,
-            status: "OPEN",
-          },
-          create: {
-            profileId: profile.id,
-            ownerUserId: profile.ownerUserId,
-            title: "休眠预警跟进",
-            dueAt: now,
-            sourceType: "CRM_DORMANT_WARNING",
-            sourceId: profile.id,
-            sourceOpenKey: `crm-dormant-warning:${profile.id}`,
-            createdByUserId: params?.actorUserId || profile.ownerUserId,
-          },
-        });
+    if (eventType && !dryRun) {
+      const result = await transitionCrmStage(profile.id, { type: eventType }, db);
+      if (result?.changed) {
+        if (eventType === "ACTIVE_COOLDOWN_SCAN") {
+          warnedCount += 1;
+          // ACTIVE 降级 warning 任务
+          await db.crmFollowUpTask.upsert({
+            where: { sourceOpenKey: `crm-active-downgrade-warning:${profile.id}` },
+            update: {
+              dueAt: now,
+              title: "业务结束后续跟进",
+              ownerUserId: profile.ownerUserId,
+              status: "OPEN",
+            },
+            create: {
+              profileId: profile.id,
+              ownerUserId: profile.ownerUserId,
+              title: "业务结束后续跟进",
+              dueAt: now,
+              sourceType: "CRM_ACTIVE_DOWNGRADE_WARNING",
+              sourceId: profile.id,
+              sourceOpenKey: `crm-active-downgrade-warning:${profile.id}`,
+              createdByUserId: params?.actorUserId || profile.ownerUserId,
+            },
+          });
+        }
+        if (result.nextStage === "DORMANT") dormantCount += 1;
       }
     }
   }
@@ -604,19 +1068,39 @@ export async function scanDormantCrmProfiles(
   };
 }
 
+// ─── 辅助查询函数 ────────────────────────────────────────────
+
 export async function getOrderAggregate(
   customerId: string,
   db: DbClient = prisma,
 ): Promise<OrderAggregate> {
   return getOrderAggregatesForCustomers([customerId], db).then(
     (aggregates) => aggregates.get(customerId) ?? {
-      validOrderCount: 0,
-      validOrderAmount: 0,
-      lastOrderAt: null,
+      activeOrderCount: 0,
+      historicalOrderCount: 0,
+      activeOrderAmount: 0,
+      lastActiveOrderAt: null,
+      lastHistoricalOrderAt: null,
       firstOrderAt: null,
     },
   );
 }
+
+async function getProjectAggregate(
+  customerId: string,
+  db: DbClient = prisma,
+): Promise<ProjectAggregate> {
+  return getProjectAggregatesForCustomers([customerId], db).then(
+    (aggregates) => aggregates.get(customerId) ?? {
+      activeProjectCount: 0,
+      lastActiveProjectAt: null,
+    },
+  );
+}
+
+type InteractionAggregate = {
+  lastEffectiveInteractionAt: Date | null;
+};
 
 async function getInteractionAggregate(profileId: string, db: DbClient): Promise<InteractionAggregate> {
   const interaction = await db.crmInteraction.findFirst({
@@ -631,6 +1115,14 @@ async function getInteractionAggregate(profileId: string, db: DbClient): Promise
     lastEffectiveInteractionAt: interaction?.happenedAt ?? null,
   };
 }
+
+type CommunicationTaskAggregate = {
+  nextCommunicationTaskAt: Date | null;
+  openCommunicationTaskCount: number;
+  overdueCommunicationTaskCount: number;
+  dueCommunicationTaskCount30d: number;
+  doneCommunicationTaskCount30d: number;
+};
 
 async function getCommunicationTaskAggregate(profileId: string, db: DbClient): Promise<CommunicationTaskAggregate> {
   const now = new Date();
@@ -677,4 +1169,45 @@ export function isEffectiveInteractionType(type: string) {
 
 export function isCommunicationTaskSourceType(sourceType: string | null | undefined) {
   return !!sourceType && COMMUNICATION_TASK_SOURCE_TYPE_SET.has(sourceType);
+}
+
+/**
+ * @deprecated 使用 computeCrmStage + transitionCrmStage 替代
+ */
+export function getEffectiveCrmLifecycleStage(
+  summary: {
+    stage: string;
+    activeOrderCount?: number;
+    dormantCandidate?: boolean;
+    activeProjectCount?: number;
+    lastActiveBehaviorEndedAt?: Date | string | null;
+    activeCooldownEndsAt?: Date | string | null;
+    activeWarningIssuedAt?: Date | string | null;
+    lastFollowUpAt?: Date | string | null;
+    assignedAt?: Date | string | null;
+    createdAt: Date | string;
+    assignmentStatus?: string;
+    lastEffectiveInteractionAt?: Date | string | null;
+    openCommunicationTaskCount?: number;
+  },
+) {
+  const { nextStage } = computeCrmStage(
+    {
+      stage: summary.stage,
+      lastActiveBehaviorEndedAt: normalizeDate(summary.lastActiveBehaviorEndedAt) ?? null,
+      activeCooldownEndsAt: normalizeDate(summary.activeCooldownEndsAt) ?? null,
+      activeWarningIssuedAt: normalizeDate(summary.activeWarningIssuedAt) ?? null,
+      assignmentStatus: summary.assignmentStatus || "ASSIGNED",
+      lastFollowUpAt: normalizeDate(summary.lastFollowUpAt) ?? null,
+      assignedAt: normalizeDate(summary.assignedAt) ?? null,
+      createdAt: typeof summary.createdAt === "string" ? new Date(summary.createdAt) : summary.createdAt,
+    },
+    {
+      hasActiveOrder: (summary.activeOrderCount ?? 0) > 0,
+      hasActiveProject: (summary.activeProjectCount ?? 0) > 0,
+      lastEffectiveInteractionAt: normalizeDate(summary.lastEffectiveInteractionAt) ?? null,
+      openCommunicationTaskCount: summary.openCommunicationTaskCount ?? 0,
+    },
+  );
+  return nextStage;
 }

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { parseOrderText, decodeImportFile } from "@/lib/external-order";
 import { normalizeOrderSource, normalizeOrderCategory } from "@/lib/orders/constants";
 import { computeOrderAmount, findExistingImportOrder, generateImportOrderNo, upsertImportSourceRecord, withRetry } from "@/lib/orders/import-commit";
-import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 import { createMatchContext, resolveMatch } from "@/lib/finance/pingoodmice-match";
 
 async function extractInput(req: NextRequest): Promise<{ source: string; rawText: string; sourceRemark?: string; category?: string } | { error: string }> {
@@ -190,7 +190,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  await syncCrmLifecycleForCustomersBestEffort(touchedCustomerIds, "orders.import.pingoodmice");
+  // CRM 阶段同步：导入订单均为 CONFIRMED，触发 ORDER_CONFIRMED
+  for (const customerId of touchedCustomerIds) {
+    const profile = await prisma.crmCustomerProfile.findUnique({
+      where: { sourceCustomerId: customerId },
+      select: { id: true },
+    });
+    if (profile) {
+      await transitionCrmStage(profile.id, { type: "ORDER_CONFIRMED", orderId: "import-batch" }).catch((err) => {
+        console.error(`[CRM][ORDER_IMPORT] ORDER_CONFIRMED transition failed for ${profile.id}:`, err);
+      });
+    }
+  }
 
   return NextResponse.json({ created, updated, skipped, errors, format }, { status: 201 });
 }

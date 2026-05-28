@@ -358,7 +358,7 @@ export async function createCustomerWithRetry(
           data: {
             sourceCustomerId: customer.id,
             ownerUserId,
-            stage: "NEW",
+            stage: "LEAD",
             importance: "NORMAL",
             lastFollowUpAt: new Date(),
           },

@@ -338,13 +338,33 @@ export interface CrmRepresentativeReport {
 export interface CrmLifecycleSummary {
   customerId: string;
   profileId: string;
+  stage: string;
+  ownerUserId: string;
+  assignedAt: string | null;
+  createdAt: string;
+  lastFollowUpAt: string | null;
+  activeOrderCount: number;
+  activeOrderAmount: number;
+  historicalOrderCount: number;
+  lastActiveOrderAt: string | null;
+  lastHistoricalOrderAt: string | null;
+  /** @deprecated 兼容旧接口，等于 historicalOrderCount */
   validOrderCount: number;
-  validOrderAmount: number;
+  /** @deprecated 兼容旧接口，等于 lastHistoricalOrderAt */
   lastOrderAt: string | null;
+  firstOrderAt: string | null;
   isRepeatCustomer: boolean;
   lastEffectiveInteractionAt: string | null;
   nextCommunicationTaskAt: string | null;
   openCommunicationTaskCount: number;
   overdueCommunicationTaskCount: number;
+  dueCommunicationTaskCount30d: number;
+  doneCommunicationTaskCount30d: number;
   dormantRisk: boolean;
+  dormantCandidate: boolean;
+  activeProjectCount: number;
+  lastActiveProjectAt: string | null;
+  lastActiveBehaviorEndedAt: string | null;
+  activeCooldownEndsAt: string | null;
+  activeWarningIssuedAt: string | null;
 }

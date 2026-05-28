@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { sourceCustomerId, ownerUserId, stage, importance, summary, tagsJson } = body;
+  const { sourceCustomerId, ownerUserId, importance, summary, tagsJson } = body;
 
   if (!sourceCustomerId) {
     return NextResponse.json({ error: "sourceCustomerId is required" }, { status: 400 });
@@ -325,7 +325,7 @@ export async function POST(req: NextRequest) {
       data: {
         sourceCustomerId,
         ownerUserId: finalOwner,
-        stage: session.user.role === "REPRESENTATIVE" ? "NEW" : (stage || "NEW"),
+        stage: "LEAD",
         importance: session.user.role === "REPRESENTATIVE" ? "NORMAL" : (importance || "NORMAL"),
         summary: summary || null,
         tagsJson: tagsJson || null,

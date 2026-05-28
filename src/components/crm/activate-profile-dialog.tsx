@@ -30,7 +30,7 @@ export function ActivateProfileDialog() {
   const [open, setOpen] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
   const [ownerUserId, setOwnerUserId] = useState("");
-  const [stage, setStage] = useState("NEW");
+  const [stage, setStage] = useState("LEAD");
   const [importance, setImportance] = useState("NORMAL");
   const queryClient = useQueryClient();
   const canAssign = session?.user?.role !== "REPRESENTATIVE";
@@ -199,7 +199,7 @@ export function ActivateProfileDialog() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium">阶段</label>
-              <Select value={stage} onValueChange={(v) => setStage(v || "NEW")}>
+              <Select value={stage} onValueChange={(v) => setStage(v || "LEAD")}>
                 <SelectTrigger>
                   <SelectValue>{STAGE_LABELS[stage] || stage}</SelectValue>
                 </SelectTrigger>

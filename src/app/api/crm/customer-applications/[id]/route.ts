@@ -6,6 +6,7 @@ import { isRepresentative } from "@/lib/permissions";
 import { validateOrg, buildCustomerData, createCustomerWithRetry, findDuplicateCustomers } from "@/lib/crm/customer-application-review";
 import { getApplicationReviewerUserIds } from "@/lib/crm/supervisor";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 const applicationInclude = {
   submittedByUser: { select: { id: true, name: true, email: true } },
@@ -331,7 +332,7 @@ async function handleApproveBind(
         data: {
           sourceCustomerId: targetCustomerId,
           ownerUserId: finalOwnerUserId,
-          stage: "NEW",
+          stage: "CONTACTED",
           importance: "NORMAL",
           lastFollowUpAt: new Date(),
         },
@@ -352,6 +353,18 @@ async function handleApproveBind(
 
       return updated;
     });
+
+    // 审批通过后触发 CRM 阶段流转
+    if (result.createdCrmProfileId) {
+      try {
+        await transitionCrmStage(result.createdCrmProfileId, {
+          type: "APPLICATION_APPROVED",
+          applicationId: application.id,
+        });
+      } catch (err) {
+        console.error(`[CRM][APPLICATION] APPLICATION_APPROVED transition failed for ${result.createdCrmProfileId}:`, err);
+      }
+    }
 
     return NextResponse.json({ application: result });
   } catch (error) {

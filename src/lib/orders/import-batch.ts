@@ -5,7 +5,7 @@ import { resolveOrCreateOrganizationForImport, resolveOrCreateCustomerForImport 
 import type { CustomerMode, OrganizationMode } from "@/lib/orders/import-masterdata";
 import type { NormalizedOrderRow } from "@/lib/external-order";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
-import { syncCrmLifecycleForCustomersBestEffort } from "@/lib/crm/lifecycle";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 export interface ImportBatchInput {
   source: string;
@@ -273,7 +273,18 @@ export async function processImportRows(input: ImportBatchInput): Promise<Import
     }
   }
 
-  await syncCrmLifecycleForCustomersBestEffort(touchedCustomerIds, "orders.import.batch");
+  // CRM 阶段同步：导入订单均为 CONFIRMED，触发 ORDER_CONFIRMED
+  for (const customerId of touchedCustomerIds) {
+    const profile = await prisma.crmCustomerProfile.findUnique({
+      where: { sourceCustomerId: customerId },
+      select: { id: true },
+    });
+    if (profile) {
+      await transitionCrmStage(profile.id, { type: "ORDER_CONFIRMED", orderId: "import-batch" }).catch((err) => {
+        console.error(`[CRM][ORDER_IMPORT] ORDER_CONFIRMED transition failed for ${profile.id}:`, err);
+      });
+    }
+  }
 
   return { created, updated, skipped, errors };
 }

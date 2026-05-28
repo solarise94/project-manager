@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { canReadProject, canManageProject, buildProjectPermissions } from "@/lib/permissions";
 import { getCustomerOrganizationName } from "@/lib/customer-organization";
 import { resolveCustomerRepresentative } from "@/lib/crm/customer-owner-representative";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 import { normalizeProjectType } from "@/lib/project-type";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -293,6 +294,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 <hr />
 <p style="color:#999;font-size:12px;">SciManage</p>`,
         });
+      }
+
+      // CRM 阶段流转：项目状态变更驱动 ACTIVE 信号
+      if (existing.customerId) {
+        const profile = await prisma.crmCustomerProfile.findUnique({
+          where: { sourceCustomerId: existing.customerId },
+          select: { id: true },
+        });
+        if (profile) {
+          if (status === "IN_PROGRESS") {
+            await transitionCrmStage(profile.id, { type: "PROJECT_STARTED", projectId: id }).catch((err) => {
+              console.error(`[CRM][PROJECT] PROJECT_STARTED transition failed for ${profile.id}:`, err);
+            });
+          } else if (existing.status === "IN_PROGRESS") {
+            await transitionCrmStage(profile.id, { type: "PROJECT_ENDED", projectId: id }).catch((err) => {
+              console.error(`[CRM][PROJECT] PROJECT_ENDED transition failed for ${profile.id}:`, err);
+            });
+          }
+        }
       }
     }
 

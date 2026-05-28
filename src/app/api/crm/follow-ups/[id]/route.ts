@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentativeRole, isRegionalManagerRole, getEffectiveCrmVisibleProfileIds } from "@/lib/crm/permissions";
-import { syncCrmLifecycleAfterInteraction } from "@/lib/crm/lifecycle";
+import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
 export async function PATCH(
   req: NextRequest,
@@ -45,18 +45,30 @@ export async function PATCH(
     data.reminderError = null;
   }
 
+  // 校验 completedInteractionId 是否属于当前 profile，防止阶段流转被错误输入污染
+  let verifiedInteractionId: string | null = null;
+  if (body.status === "DONE" && body.completedInteractionId) {
+    const interaction = await prisma.crmInteraction.findUnique({
+      where: { id: body.completedInteractionId },
+      select: { profileId: true },
+    });
+    if (interaction && interaction.profileId === task.profileId) {
+      verifiedInteractionId = body.completedInteractionId;
+    }
+  }
+
   if (body.status === "DONE") {
     data.status = "DONE";
     data.completedAt = new Date();
     data.sourceOpenKey = null;
-    if (body.completedInteractionId) data.completedInteractionId = body.completedInteractionId;
+    if (verifiedInteractionId) data.completedInteractionId = verifiedInteractionId;
   } else if (body.status === "CANCELLED") {
     data.status = "CANCELLED";
     data.sourceOpenKey = null;
   }
 
   const needsRecalc = body.status === "DONE" || body.status === "CANCELLED" || body.dueAt !== undefined;
-  let lifecycleSyncInput: { happenedAt: Date; nextActionAt: Date | null } | null = null;
+  let completedInteractionId: string | null = null;
 
   const updated = await prisma.$transaction(async (tx) => {
     const result = await tx.crmFollowUpTask.update({
@@ -86,32 +98,32 @@ export async function PATCH(
       });
     }
 
-    if (body.status === "DONE" && body.completedInteractionId) {
-      const interaction = await tx.crmInteraction.findUnique({
-        where: { id: body.completedInteractionId },
-        select: { happenedAt: true, nextActionAt: true, profileId: true },
-      });
-      if (interaction && interaction.profileId === task.profileId) {
-        lifecycleSyncInput = {
-          happenedAt: interaction.happenedAt,
-          nextActionAt: interaction.nextActionAt,
-        };
-      }
+    if (body.status === "DONE" && verifiedInteractionId) {
+      completedInteractionId = verifiedInteractionId;
     }
 
     return result;
   });
 
-  const syncInput = lifecycleSyncInput as { happenedAt: Date; nextActionAt: Date | null } | null;
-  if (syncInput) {
+  // 统一阶段流转
+  if (body.status === "DONE") {
     try {
-      await syncCrmLifecycleAfterInteraction(task.profileId, {
-        happenedAt: syncInput.happenedAt,
-        nextActionAt: syncInput.nextActionAt,
-        actorUserId: session.user.id,
+      await transitionCrmStage(task.profileId, {
+        type: "FOLLOW_UP_COMPLETED",
+        taskId: id,
+        completedInteractionId,
       });
     } catch (error) {
-      console.error(`[CRM][FOLLOW_UP] lifecycle sync failed for profile ${task.profileId}:`, error);
+      console.error(`[CRM][FOLLOW_UP] stage transition failed for profile ${task.profileId}:`, error);
+    }
+  } else if (body.status === "CANCELLED") {
+    try {
+      await transitionCrmStage(task.profileId, {
+        type: "FOLLOW_UP_CANCELLED",
+        taskId: id,
+      });
+    } catch (error) {
+      console.error(`[CRM][FOLLOW_UP] stage transition failed for profile ${task.profileId}:`, error);
     }
   }
 
