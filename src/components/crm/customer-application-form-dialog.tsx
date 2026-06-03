@@ -40,7 +40,7 @@ const emptyForm = {
   locationAddress: "" as string,
 };
 
-export function CustomerApplicationFormDialog() {
+export function CustomerApplicationFormDialog({ trigger }: { trigger?: React.ReactElement }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ ...emptyForm });
@@ -327,9 +327,13 @@ export function CustomerApplicationFormDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setForm({ ...emptyForm }); setAiInput(""); setOrgResolveStatus(null); } }}>
-      <DialogTrigger render={<Button />}>
-        <UserPlus className="h-4 w-4 mr-1" />申请新增客户
-      </DialogTrigger>
+      {trigger ? (
+        <DialogTrigger render={trigger} />
+      ) : (
+        <DialogTrigger render={<Button />}>
+          <UserPlus className="h-4 w-4 mr-1" />申请新增客户
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>申请新增客户</DialogTitle>

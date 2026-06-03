@@ -400,7 +400,7 @@ export default function AdminRepresentativesPage() {
 
       {/* Add Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>添加代表</DialogTitle>
           </DialogHeader>
@@ -441,7 +441,7 @@ export default function AdminRepresentativesPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>编辑代表信息</DialogTitle>
           </DialogHeader>

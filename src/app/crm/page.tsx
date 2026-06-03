@@ -11,12 +11,14 @@ import { StageBadge } from "@/components/crm/badges";
 import { CustomerProfilePicker } from "@/components/crm/customer-profile-picker";
 import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog";
 import { CheckinFlow } from "@/components/crm/checkin-flow";
+import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 import type { CrmDashboardStats } from "@/lib/crm/types";
 import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
   MessageSquare, ClipboardCheck, Building2,
   Inbox, UserRound, FishSymbol, ShoppingCart,
+  UserPlus,
 } from "lucide-react";
 import Link from "next/link";
 import { CrmEmptyState } from "@/components/crm/empty-state";
@@ -102,6 +104,15 @@ function CrmDashboard() {
               setQuickAction("checkin");
             }}
           />
+          {(isAdmin || isRep || isRegionalManager) && (
+            <CustomerApplicationFormDialog
+              trigger={
+                <Button variant="outline" size="sm">
+                  <UserPlus className="h-3.5 w-3.5 mr-1" />申请新增客户
+                </Button>
+              }
+            />
+          )}
         </div>
       </div>
 
