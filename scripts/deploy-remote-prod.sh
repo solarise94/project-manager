@@ -29,6 +29,12 @@ REMOTE_DATA_DIR="${REMOTE_DATA_DIR:-/home/ubuntu/task-manager-data/prod}"
 REMOTE_SERVICE="${REMOTE_SERVICE:-task-manager.service}"
 REMOTE_PORT="${REMOTE_PORT:-31081}"
 REMOTE_HOSTNAME="${REMOTE_HOSTNAME:-127.0.0.1}"
+REMINDER_SERVICE="${REMINDER_SERVICE:-task-manager-reminder.service}"
+REMINDER_TIMER="${REMINDER_TIMER:-task-manager-reminder.timer}"
+CRM_REVIEW_SERVICE="${CRM_REVIEW_SERVICE:-task-manager-crm-review.service}"
+CRM_REVIEW_TIMER="${CRM_REVIEW_TIMER:-task-manager-crm-review.timer}"
+CRM_LIFECYCLE_SERVICE="${CRM_LIFECYCLE_SERVICE:-task-manager-crm-lifecycle.service}"
+CRM_LIFECYCLE_TIMER="${CRM_LIFECYCLE_TIMER:-task-manager-crm-lifecycle.timer}"
 
 # ── Unified SSH helpers ────────────────────────────────────────────────
 # All remote access goes through these to ensure consistent identity/config.
@@ -125,15 +131,15 @@ on_exit() {
   # start it here — that would fire a reminder scan immediately after deploy.
   if [[ "${REMINDER_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
     echo "  Restoring reminder timer (deploy failed, exit=${exit_code})..."
-    remote_ssh "sudo systemctl start ${REMINDER_TIMER:-task-manager-reminder.timer}" 2>/dev/null || true
+    remote_ssh "sudo systemctl start ${REMINDER_TIMER}" 2>/dev/null || true
   fi
   if [[ "${CRM_REVIEW_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
     echo "  Restoring CRM review timer (deploy failed, exit=${exit_code})..."
-    remote_ssh "sudo systemctl start ${CRM_REVIEW_TIMER:-task-manager-crm-review.timer}" 2>/dev/null || true
+    remote_ssh "sudo systemctl start ${CRM_REVIEW_TIMER}" 2>/dev/null || true
   fi
   if [[ "${CRM_LIFECYCLE_WAS_ACTIVE:-false}" == "true" && ${exit_code} -ne 0 ]]; then
     echo "  Restoring CRM lifecycle timer (deploy failed, exit=${exit_code})..."
-    remote_ssh "sudo systemctl start ${CRM_LIFECYCLE_TIMER:-task-manager-crm-lifecycle.timer}" 2>/dev/null || true
+    remote_ssh "sudo systemctl start ${CRM_LIFECYCLE_TIMER}" 2>/dev/null || true
   fi
 
   rm -rf "${TMP_DIR}"
@@ -258,8 +264,6 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
   fi
 
   # Also stop timers+services during DB migration to prevent background writes
-  REMINDER_SERVICE="task-manager-reminder.service"
-  REMINDER_TIMER="task-manager-reminder.timer"
   REMINDER_WAS_ACTIVE=false
   if remote_ssh "sudo systemctl is-active --quiet ${REMINDER_TIMER}" 2>/dev/null; then
     REMINDER_WAS_ACTIVE=true
@@ -272,8 +276,6 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     remote_ssh "sudo systemctl stop ${REMINDER_SERVICE}" 2>/dev/null || true
   fi
 
-  CRM_REVIEW_TIMER="task-manager-crm-review.timer"
-  CRM_REVIEW_SERVICE="task-manager-crm-review.service"
   CRM_REVIEW_WAS_ACTIVE=false
   if remote_ssh "sudo systemctl is-active --quiet ${CRM_REVIEW_TIMER}" 2>/dev/null; then
     CRM_REVIEW_WAS_ACTIVE=true
@@ -286,8 +288,6 @@ if [[ "${REMOTE_DB_EXISTS}" == "true" ]]; then
     remote_ssh "sudo systemctl stop ${CRM_REVIEW_SERVICE}" 2>/dev/null || true
   fi
 
-  CRM_LIFECYCLE_TIMER="task-manager-crm-lifecycle.timer"
-  CRM_LIFECYCLE_SERVICE="task-manager-crm-lifecycle.service"
   CRM_LIFECYCLE_WAS_ACTIVE=false
   if remote_ssh "sudo systemctl is-active --quiet ${CRM_LIFECYCLE_TIMER}" 2>/dev/null; then
     CRM_LIFECYCLE_WAS_ACTIVE=true
@@ -643,6 +643,83 @@ if [[ "${SMOKE_OK}" == "true" ]]; then
   echo "=== Deploy successful! ==="
   echo "  ${NEXTAUTH_URL_VALUE}"
 
+  # ── [9.5/11] Deploy notification ──────────────────────────────────────────
+  echo ""
+  echo "[9.5/11] Sending deploy notification to admins..."
+
+  DEPLOY_NEW_SHA="$(git rev-parse HEAD)"
+  DEPLOY_NEW_SHORT_SHA="$(git rev-parse --short HEAD)"
+  DEPLOY_HEAD_SUBJECT="$(git log -1 --pretty=%s)"
+  DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  DEPLOYED_BY="$(whoami)@$(hostname)"
+  DEPLOY_PUBLIC_URL="${DEPLOY_PUBLIC_URL:-${NEXTAUTH_URL_VALUE}}"
+  TARGET="${DEPLOY_TARGET:-prod-${NEXTAUTH_URL_VALUE##*:}}"
+  LAST_DEPLOY_FILE="${REMOTE_DATA_DIR}/last_deploy_commit.txt"
+
+  # Read old SHA from remote
+  OLD_SHA="$(remote_ssh "cat ${LAST_DEPLOY_FILE} 2>/dev/null || true")"
+
+  # Generate changeLog
+  if [[ -n "${OLD_SHA}" ]] && git cat-file -e "${OLD_SHA}^{commit}" 2>/dev/null; then
+    CHANGE_LOG="$(git log --no-merges --pretty=format:'- %s (%h)' "${OLD_SHA}..${DEPLOY_NEW_SHA}" 2>/dev/null || true)"
+  else
+    CHANGE_LOG="$(git log --no-merges -n 8 --pretty=format:'- %s (%h)' "${DEPLOY_NEW_SHA}" 2>/dev/null || true)"
+  fi
+
+  # Build JSON payload safely via node (guaranteed available in repo)
+  DEPLOY_PAYLOAD_FILE="${TMP_DIR}/deploy-notify-payload.json"
+  {
+    printf '%s\n' "${TARGET}"
+    printf '%s\n' "${REMOTE_SERVICE}"
+    printf '%s\n' "${DEPLOY_PUBLIC_URL}"
+    printf '%s\n' "${OLD_SHA}"
+    printf '%s\n' "${DEPLOY_NEW_SHA}"
+    printf '%s\n' "${DEPLOY_NEW_SHORT_SHA}"
+    printf '%s\n' "${DEPLOYED_AT}"
+    printf '%s\n' "${DEPLOYED_BY}"
+    printf '%s\n' "${DEPLOY_HEAD_SUBJECT}"
+    printf '%s\n' "${CHANGE_LOG}"
+  } | OUT_FILE="${DEPLOY_PAYLOAD_FILE}" node -e "
+const fs = require('fs');
+const lines = fs.readFileSync(0, 'utf8').split('\n');
+const target = lines[0];
+const service = lines[1];
+const publicUrl = lines[2];
+const oldShaRaw = lines[3];
+const newSha = lines[4];
+const newShortSha = lines[5];
+const deployedAt = lines[6];
+const deployedBy = lines[7];
+const commitMessage = lines[8];
+const changeLog = lines.slice(9, -1).join('\n');
+const payload = {
+  target, service, publicUrl,
+  oldSha: oldShaRaw || null,
+  newSha, newShortSha, deployedAt, deployedBy,
+  commitMessage, changeLog
+};
+fs.writeFileSync(process.env.OUT_FILE, JSON.stringify(payload, null, 2));
+"
+
+  # Persist deployed commit BEFORE sending notification
+  echo "  Recording deployed commit: ${DEPLOY_NEW_SHORT_SHA}"
+  printf '%s\n' "${DEPLOY_NEW_SHA}" | remote_ssh "cat > ${LAST_DEPLOY_FILE}"
+
+  # Send notification (best-effort, must not fail deploy)
+  DEPLOY_NOTIFY_TOKEN_VALUE="${DEPLOY_NOTIFY_TOKEN:-${REMINDER_CRON_TOKEN_VALUE}}"
+  if [[ -n "${DEPLOY_NOTIFY_TOKEN_VALUE}" ]]; then
+    REMOTE_PAYLOAD_FILE="/tmp/deploy-notify-payload-${DEPLOY_NEW_SHORT_SHA}.json"
+    remote_scp "${DEPLOY_PAYLOAD_FILE}" "${SSH_TARGET}:${REMOTE_PAYLOAD_FILE}"
+    if ! remote_ssh "curl -fsS -X POST -H \"Authorization: Bearer ${DEPLOY_NOTIFY_TOKEN_VALUE}\" -H \"Content-Type: application/json\" --data-binary @${REMOTE_PAYLOAD_FILE} http://127.0.0.1:${REMOTE_PORT}/api/internal/deploy-notify/run" >/dev/null 2>&1; then
+      echo "  WARNING: deploy notification email failed"
+    else
+      echo "  Deploy notification sent."
+    fi
+    remote_ssh "rm -f ${REMOTE_PAYLOAD_FILE}" 2>/dev/null || true
+  else
+    echo "  WARNING: DEPLOY_NOTIFY_TOKEN / REMINDER_CRON_TOKEN not set, skipping deploy notification."
+  fi
+
   # ── [10/11] Set up reminder timer ──────────────────────────────────────────
   echo ""
   echo "[10/11] Setting up reminder timer..."
@@ -650,9 +727,6 @@ if [[ "${SMOKE_OK}" == "true" ]]; then
   if [[ -z "${REMINDER_CRON_TOKEN_VALUE}" ]]; then
     echo "  Skipping reminder timer (ALLOW_MISSING_REMINDER_TOKEN is set)."
   else
-    REMINDER_SERVICE="task-manager-reminder.service"
-    REMINDER_TIMER="task-manager-reminder.timer"
-
     echo "  Writing ${REMINDER_SERVICE}..."
     remote_ssh "sudo tee /etc/systemd/system/${REMINDER_SERVICE} > /dev/null <<'UNITEOF'
 [Unit]
@@ -694,9 +768,6 @@ UNITEOF"
   # ── [11/11] Set up CRM review timer ──────────────────────────────────────
   echo ""
   echo "[11/11] Setting up CRM review timer..."
-
-  CRM_REVIEW_SERVICE="task-manager-crm-review.service"
-  CRM_REVIEW_TIMER="task-manager-crm-review.timer"
 
   if [[ -z "${CRM_REVIEW_CRON_TOKEN_VALUE}" ]]; then
     echo "  Skipping CRM review timer (CRM_REVIEW_CRON_TOKEN not set, will use reminder token fallback at runtime)."
@@ -740,8 +811,6 @@ UNITEOF"
   echo ""
   echo "[11.5/11] Setting up CRM lifecycle timer..."
 
-  CRM_LIFECYCLE_SERVICE="task-manager-crm-lifecycle.service"
-  CRM_LIFECYCLE_TIMER="task-manager-crm-lifecycle.timer"
   CRM_LIFECYCLE_TOKEN_VALUE="${CRM_LIFECYCLE_CRON_TOKEN:-${CRM_REVIEW_CRON_TOKEN_VALUE:-${REMINDER_CRON_TOKEN_VALUE}}}"
 
   if [[ -n "${CRM_LIFECYCLE_TOKEN_VALUE}" ]]; then
