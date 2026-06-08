@@ -476,7 +476,7 @@ function InvoiceFormContent({
 
   return (
     <>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle>{reissueFromInvoiceId ? "重开发票" : inv ? "编辑开票申请" : "新建开票申请"}</DialogTitle>
@@ -488,33 +488,40 @@ function InvoiceFormContent({
             )}
           </div>
         </DialogHeader>
-        <FormBody
-          showProjectCode={showProjectCode}
-          contactName={contactName} setContactName={setContactName}
-          formProjectCode={formProjectCode} setFormProjectCode={setFormProjectCode}
-          sellerProfileId={sellerProfileId} setSellerProfileId={setSellerProfileId}
-          sellerName={sellerName} setSellerName={setSellerName}
-          sellerTaxId={sellerTaxId} setSellerTaxId={setSellerTaxId}
-          sellerBankName={sellerBankName} setSellerBankName={setSellerBankName}
-          sellerBankAccount={sellerBankAccount} setSellerBankAccount={setSellerBankAccount}
-          sellerOptions={sellerOptions} selectedSellerProfile={selectedSellerProfile}
-          applySellerProfile={applySellerProfile}
-          buyerOrgId={buyerOrgId} buyerOrgName={buyerOrgName}
-          buyerTaxId={buyerTaxId} setBuyerTaxId={setBuyerTaxId}
-          handleOrgChange={handleOrgChange}
-          taxIdMissing={taxIdMissing} setTaxIdFromLookup={setTaxIdFromLookup}
-          invoiceType={invoiceType} setInvoiceType={setInvoiceType}
-          contentSummary={contentSummary} setContentSummary={setContentSummary}
-          contentMode={contentMode} setContentMode={setContentMode}
-          projectName={projectName} projectContent={projectContent}
-          remark={remark} setRemark={setRemark}
-          items={items} updateItem={updateItem} addItem={addItem} removeItem={removeItem}
-          totalAmount={totalAmount}
-          previewText={previewText} formSheetData={formSheetData}
-          copyText={copyText} exportPdf={exportPdf}
-          canSubmit={canSubmit} saveMutation={saveMutation}
-          onClose={onClose} isEdit={!!inv && !reissueFromInvoiceId}
-        />
+        <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+          <FormBody
+            showProjectCode={showProjectCode}
+            contactName={contactName} setContactName={setContactName}
+            formProjectCode={formProjectCode} setFormProjectCode={setFormProjectCode}
+            sellerProfileId={sellerProfileId} setSellerProfileId={setSellerProfileId}
+            sellerName={sellerName} setSellerName={setSellerName}
+            sellerTaxId={sellerTaxId} setSellerTaxId={setSellerTaxId}
+            sellerBankName={sellerBankName} setSellerBankName={setSellerBankName}
+            sellerBankAccount={sellerBankAccount} setSellerBankAccount={setSellerBankAccount}
+            sellerOptions={sellerOptions} selectedSellerProfile={selectedSellerProfile}
+            applySellerProfile={applySellerProfile}
+            buyerOrgId={buyerOrgId} buyerOrgName={buyerOrgName}
+            buyerTaxId={buyerTaxId} setBuyerTaxId={setBuyerTaxId}
+            handleOrgChange={handleOrgChange}
+            taxIdMissing={taxIdMissing} setTaxIdFromLookup={setTaxIdFromLookup}
+            invoiceType={invoiceType} setInvoiceType={setInvoiceType}
+            contentSummary={contentSummary} setContentSummary={setContentSummary}
+            contentMode={contentMode} setContentMode={setContentMode}
+            projectName={projectName} projectContent={projectContent}
+            remark={remark} setRemark={setRemark}
+            items={items} updateItem={updateItem} addItem={addItem} removeItem={removeItem}
+            totalAmount={totalAmount}
+            previewText={previewText} formSheetData={formSheetData}
+            copyText={copyText} exportPdf={exportPdf}
+          />
+        </div>
+        <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3 flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
+          <Button size="sm" disabled={!canSubmit} onClick={() => saveMutation.mutate()}>
+            {saveMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+            {!!inv && !reissueFromInvoiceId ? "保存" : "创建"}
+          </Button>
+        </div>
       </DialogContent>
 
       {!!aiDraftResult && (
@@ -555,7 +562,6 @@ function FormBody({
   remark, setRemark,
   items, updateItem, addItem, removeItem, totalAmount,
   previewText, formSheetData, copyText, exportPdf,
-  canSubmit, saveMutation, onClose, isEdit,
 }: any) {
   return (
     <div className="space-y-4">
@@ -715,13 +721,6 @@ function FormBody({
         </div>
       )}
 
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onClose}>取消</Button>
-        <Button size="sm" disabled={!canSubmit} onClick={() => saveMutation.mutate()}>
-          {saveMutation.isPending ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
-          {isEdit ? "保存" : "创建"}
-        </Button>
-      </div>
     </div>
   );
 }

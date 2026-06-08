@@ -98,7 +98,7 @@ function RelationsList() {
           {isMobile && (
             <Sheet>
               <SheetTrigger render={<Button variant="outline" size="sm"><Filter className="h-4 w-4 mr-1" />筛选</Button>} />
-              <SheetContent side="top" className="h-auto max-h-[50vh]">
+              <SheetContent side="top" className="h-auto max-h-[50dvh]">
                 <SheetHeader><SheetTitle>筛选条件</SheetTitle></SheetHeader>
                 <div className="mt-4">{FilterPanel}</div>
               </SheetContent>

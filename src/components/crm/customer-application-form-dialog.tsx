@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogHeader, DialogTitle, DialogTrigger, DialogScrollableContent, DialogScrollableBody } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -334,11 +334,13 @@ export function CustomerApplicationFormDialog({ trigger }: { trigger?: React.Rea
           <UserPlus className="h-4 w-4 mr-1" />申请新增客户
         </DialogTrigger>
       )}
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogScrollableContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>申请新增客户</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; mutation.mutate(undefined); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); if (!form.name.trim()) return; mutation.mutate(undefined); }} className="contents">
+          <DialogScrollableBody>
+            <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>客户姓名 *</Label>
@@ -521,13 +523,17 @@ export function CustomerApplicationFormDialog({ trigger }: { trigger?: React.Rea
             </div>
           )}
 
+            </div>
+          </DialogScrollableBody>
           {!dupCandidates && (
-            <Button type="submit" className="w-full" disabled={mutation.isPending || !form.name.trim()}>
-              {mutation.isPending ? "提交中..." : "提交申请"}
-            </Button>
+            <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+              <Button type="submit" className="w-full" disabled={mutation.isPending || !form.name.trim()}>
+                {mutation.isPending ? "提交中..." : "提交申请"}
+              </Button>
+            </div>
           )}
         </form>
-      </DialogContent>
+      </DialogScrollableContent>
     </Dialog>
   );
 }

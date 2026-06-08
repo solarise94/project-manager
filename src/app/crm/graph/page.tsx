@@ -386,7 +386,7 @@ function GraphView() {
       <Dialog open={nodeDialogOpen} onOpenChange={setNodeDialogOpen}>
         <DialogContent className="sm:max-w-md max-w-[calc(100vw-2rem)]">
           <DialogHeader><DialogTitle>{clickedNode?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+          <div className="space-y-3 max-h-[60dvh] overflow-y-auto overscroll-contain">
             <div className="flex gap-2">
               <Button
                 variant="outline"

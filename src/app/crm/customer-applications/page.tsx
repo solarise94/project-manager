@@ -665,14 +665,16 @@ function ApplicationList() {
       )}
 
       <Dialog open={reviewOpen} onOpenChange={(v) => { if (!v) resetReview(); }}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
             <DialogTitle>
               {actionType === "reject" && reviewing?.autoApproved ? "拒绝并删除客户" : actionType === "reject" ? "驳回客户申请" : "审核客户申请"}
             </DialogTitle>
           </DialogHeader>
           {reviewing && (
-            <div className="space-y-4">
+            <>
+              <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+                <div className="space-y-4">
               <div className="text-sm space-y-1">
                 <p><span className="font-medium">客户:</span> {reviewing.name}</p>
                 {reviewing.organization && <p><span className="font-medium">单位:</span> {reviewing.organization}</p>}
@@ -773,23 +775,27 @@ function ApplicationList() {
                 />
               </div>
 
+                </div>
+              </div>
               {actionType === "reject" ? (
-                <Button
-                  variant="destructive"
-                  className="w-full"
-                  disabled={rejectMutation.isPending || rejectReviewMutation.isPending}
-                  onClick={() => {
-                    if (reviewing?.autoApproved) {
-                      rejectReviewMutation.mutate({ id: reviewing.id });
-                    } else {
-                      rejectMutation.mutate({ id: reviewing.id });
-                    }
-                  }}
-                >
-                  {rejectMutation.isPending || rejectReviewMutation.isPending ? "处理中..." : reviewing?.autoApproved ? "确认拒绝并删除" : "确认驳回"}
-                </Button>
+                <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+                  <Button
+                    variant="destructive"
+                    className="w-full"
+                    disabled={rejectMutation.isPending || rejectReviewMutation.isPending}
+                    onClick={() => {
+                      if (reviewing?.autoApproved) {
+                        rejectReviewMutation.mutate({ id: reviewing.id });
+                      } else {
+                        rejectMutation.mutate({ id: reviewing.id });
+                      }
+                    }}
+                  >
+                    {rejectMutation.isPending || rejectReviewMutation.isPending ? "处理中..." : reviewing?.autoApproved ? "确认拒绝并删除" : "确认驳回"}
+                  </Button>
+                </div>
               ) : (
-                <div className="flex gap-2">
+                <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3 flex gap-2">
                   <Button
                     className="flex-1"
                     disabled={approveMutation.isPending || bindMutation.isPending}
@@ -813,7 +819,7 @@ function ApplicationList() {
                   </Button>
                 </div>
               )}
-            </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

@@ -123,7 +123,7 @@ export function OrderRevisionDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>修订订单金额</DialogTitle>
           <DialogDescription>
@@ -131,6 +131,7 @@ export function OrderRevisionDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
         <div className="space-y-4 py-2">
           {/* Current amount */}
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -262,7 +263,7 @@ export function OrderRevisionDialog({
             />
           </div>
         </div>
-
+        </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             取消

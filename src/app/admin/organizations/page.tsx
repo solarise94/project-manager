@@ -764,9 +764,10 @@ export default function OrganizationsPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={(open) => { setEditOpen(open); if (!open) { setEditing(null); setEditForm({ canonicalName: "", address: "", taxId: "" }); setNewAliases([""]); setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]); } }}>
-        <DialogContent className="sm:max-w-lg max-h-[85dvh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader><DialogTitle>编辑机构</DialogTitle></DialogHeader>
-          <div className="space-y-4">
+          <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+            <div className="space-y-4">
             {editing && (
               <OrganizationAiFillPlugin
                 query={editForm.canonicalName || editing.canonicalName}
@@ -909,37 +910,38 @@ export default function OrganizationsPage() {
                 </Button>
               </div>
             </div>
-            <div className="border-t pt-4 mt-2">
-              <Button
-                className="w-full"
-                disabled={updateMutation.isPending || !editing || (editForm.canonicalName === editing.canonicalName && editForm.address === (editing.address || "") && editForm.taxId === (editing.taxId || "") && !newAliases.some((a) => a.trim()) && !newSites.some((s) => s.siteName.trim()))}
-                onClick={() => {
-                  if (!editing) return;
-                  const updates: Record<string, unknown> & { id: string } = { id: editing.id };
-                  if (editForm.canonicalName !== editing.canonicalName) updates.canonicalName = editForm.canonicalName;
-                  if (editForm.address !== (editing.address || "")) updates.address = editForm.address || null;
-                  if (editForm.taxId !== (editing.taxId || "")) updates.taxId = editForm.taxId || null;
-                  const aliasesToAdd = newAliases.map((a) => a.trim()).filter(Boolean);
-                  if (aliasesToAdd.length > 0) updates.addAliases = aliasesToAdd;
-                  const sitesToAdd = newSites
-                    .map((s) => ({ siteName: s.siteName.trim(), address: s.address.trim(), siteType: s.siteType || "CAMPUS" }))
-                    .filter((s) => s.siteName);
-                  if (sitesToAdd.length > 0) updates.addSites = sitesToAdd;
-                  if (Object.keys(updates).length === 1) {
-                    toast.info("没有需要保存的修改");
-                    return;
-                  }
-                  updateMutation.mutate(updates, {
-                    onSuccess: () => {
-                      setNewAliases([""]);
-                      setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
-                    },
-                  });
-                }}
-              >
-                {updateMutation.isPending ? "保存中..." : "保存修改"}
-              </Button>
             </div>
+          </div>
+          <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+            <Button
+              className="w-full"
+              disabled={updateMutation.isPending || !editing || (editForm.canonicalName === editing.canonicalName && editForm.address === (editing.address || "") && editForm.taxId === (editing.taxId || "") && !newAliases.some((a) => a.trim()) && !newSites.some((s) => s.siteName.trim()))}
+              onClick={() => {
+                if (!editing) return;
+                const updates: Record<string, unknown> & { id: string } = { id: editing.id };
+                if (editForm.canonicalName !== editing.canonicalName) updates.canonicalName = editForm.canonicalName;
+                if (editForm.address !== (editing.address || "")) updates.address = editForm.address || null;
+                if (editForm.taxId !== (editing.taxId || "")) updates.taxId = editForm.taxId || null;
+                const aliasesToAdd = newAliases.map((a) => a.trim()).filter(Boolean);
+                if (aliasesToAdd.length > 0) updates.addAliases = aliasesToAdd;
+                const sitesToAdd = newSites
+                  .map((s) => ({ siteName: s.siteName.trim(), address: s.address.trim(), siteType: s.siteType || "CAMPUS" }))
+                  .filter((s) => s.siteName);
+                if (sitesToAdd.length > 0) updates.addSites = sitesToAdd;
+                if (Object.keys(updates).length === 1) {
+                  toast.info("没有需要保存的修改");
+                  return;
+                }
+                updateMutation.mutate(updates, {
+                  onSuccess: () => {
+                    setNewAliases([""]);
+                    setNewSites([{ siteName: "", address: "", siteType: "CAMPUS" }]);
+                  },
+                });
+              }}
+            >
+              {updateMutation.isPending ? "保存中..." : "保存修改"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

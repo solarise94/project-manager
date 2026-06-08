@@ -400,7 +400,7 @@ export default function AdminRepresentativesPage() {
 
       {/* Add Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-md max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
             <DialogTitle>添加代表</DialogTitle>
           </DialogHeader>
@@ -410,38 +410,44 @@ export default function AdminRepresentativesPage() {
               if (!form.name.trim() || !form.email.trim()) return;
               createMutation.mutate({ name: form.name.trim(), email: form.email.trim() });
             }}
-            className="space-y-4"
+            className="contents"
           >
-            <div className="space-y-2">
-              <Label>代表姓名</Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="请输入代表姓名"
-                required
-              />
+            <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>代表姓名</Label>
+                  <Input
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="请输入代表姓名"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>通知邮箱</Label>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    placeholder="代表用于接收通知和登录的邮箱"
+                    required
+                  />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>通知邮箱</Label>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                placeholder="代表用于接收通知和登录的邮箱"
-                required
-              />
+            <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+                <Mail className="mr-2 h-4 w-4" />
+                {createMutation.isPending ? "发送中..." : "添加并发送 Magic Link"}
+              </Button>
             </div>
-            <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-              <Mail className="mr-2 h-4 w-4" />
-              {createMutation.isPending ? "发送中..." : "添加并发送 Magic Link"}
-            </Button>
           </form>
         </DialogContent>
       </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-md max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
             <DialogTitle>编辑代表信息</DialogTitle>
           </DialogHeader>
@@ -457,39 +463,45 @@ export default function AdminRepresentativesPage() {
               updates.regionIds = editRegionIds;
               updateMutation.mutate({ id: editing.id, ...updates });
             }}
-            className="space-y-4"
+            className="contents"
           >
-            <div className="space-y-2">
-              <Label>代表姓名</Label>
-              <Input
-                value={editForm.name}
-                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                placeholder="请输入代表姓名"
-                required
-              />
+            <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>代表姓名</Label>
+                  <Input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    placeholder="请输入代表姓名"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>通知邮箱</Label>
+                  <Input
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    placeholder="代表用于接收通知和登录的邮箱"
+                    required
+                  />
+                </div>
+                {editing && (
+                  <RepresentativeRegionEditor
+                    representativeId={editing.id}
+                    embedded
+                    selectedIds={editRegionIds}
+                    onSelectionChange={setEditRegionIds}
+                  />
+                )}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>通知邮箱</Label>
-              <Input
-                type="email"
-                value={editForm.email}
-                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                placeholder="代表用于接收通知和登录的邮箱"
-                required
-              />
+            <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+              <Button type="submit" className="w-full" disabled={updateMutation.isPending || loadingRegions}>
+                <Pencil className="mr-2 h-4 w-4" />
+                {updateMutation.isPending ? "保存中..." : "保存修改"}
+              </Button>
             </div>
-            {editing && (
-              <RepresentativeRegionEditor
-                representativeId={editing.id}
-                embedded
-                selectedIds={editRegionIds}
-                onSelectionChange={setEditRegionIds}
-              />
-            )}
-            <Button type="submit" className="w-full" disabled={updateMutation.isPending || loadingRegions}>
-              <Pencil className="mr-2 h-4 w-4" />
-              {updateMutation.isPending ? "保存中..." : "保存修改"}
-            </Button>
           </form>
         </DialogContent>
       </Dialog>

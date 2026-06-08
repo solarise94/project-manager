@@ -146,6 +146,83 @@ function DialogDescription({
   )
 }
 
+/**
+ * DialogScrollableContent — 长内容弹层的安全结构容器。
+ *
+ * 与 DialogContent 的区别：
+ * 1. 使用 max-h-[85dvh] 替代 vh，适配移动端动态地址栏
+ * 2. 使用 overflow-hidden + grid 固定头部/滚动区/底部
+ * 3. 禁止自身直接滚动（滚动由内部 DialogScrollableBody 承担）
+ *
+ * 典型用法：
+ *   <DialogScrollableContent className="sm:max-w-lg">
+ *     <DialogHeader>...<DialogHeader>
+ *     <DialogScrollableBody>
+ *       长表单内容
+ *     </DialogScrollableBody>
+ *     <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+ *       <Button className="w-full">提交</Button>
+ *     </div>
+ *   </DialogScrollableContent>
+ */
+function DialogScrollableContent({
+  className,
+  children,
+  showCloseButton = true,
+  ...props
+}: DialogPrimitive.Popup.Props & {
+  showCloseButton?: boolean
+}) {
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Popup
+        data-slot="dialog-scrollable-content"
+        className={cn(
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-hidden rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          className
+        )}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            data-slot="dialog-close"
+            render={
+              <Button
+                variant="ghost"
+                className="absolute top-2 right-2"
+                size="icon-sm"
+              />
+            }
+          >
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
+    </DialogPortal>
+  )
+}
+
+/** 内部滚动容器，配合 DialogScrollableContent 使用。 */
+function DialogScrollableBody({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="dialog-scrollable-body"
+      className={cn(
+        "-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1",
+        className
+      )}
+      style={{ WebkitOverflowScrolling: "touch", ...props.style }}
+      {...props}
+    />
+  )
+}
+
 export {
   Dialog,
   DialogClose,
@@ -155,6 +232,8 @@ export {
   DialogHeader,
   DialogOverlay,
   DialogPortal,
+  DialogScrollableBody,
+  DialogScrollableContent,
   DialogTitle,
   DialogTrigger,
 }
