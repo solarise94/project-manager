@@ -48,6 +48,9 @@ export async function POST(req: NextRequest) {
 
   // ── Review actions ──
   if (VALID_REVIEW_ACTIONS.has(action)) {
+    if (action === "reject-review" && !trimmedNote) {
+      return NextResponse.json({ error: "拒绝复核必须填写备注" }, { status: 400 });
+    }
     const result = await runBatchCustomerApplicationReview(
       session.user.id,
       session.user.role,

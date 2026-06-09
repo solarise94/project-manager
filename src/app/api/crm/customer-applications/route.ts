@@ -49,7 +49,8 @@ export async function GET(req: NextRequest) {
     if (repUserIds.length > 0) {
       where.submittedByUserId = { in: repUserIds };
     } else {
-      where.submittedByUserId = session.user.id;
+      // No managed reps — nothing to review
+      return NextResponse.json({ applications: [] });
     }
   } else {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
