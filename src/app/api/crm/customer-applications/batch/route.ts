@@ -3,15 +3,16 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateOrg, buildCustomerData, createCustomerWithRetry } from "@/lib/crm/customer-application-review";
+import { runBatchCustomerApplicationReview } from "@/lib/crm/customer-application-review-actions";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
+
+const VALID_CREATE_ACTIONS = new Set(["approve", "reject"]);
+const VALID_REVIEW_ACTIONS = new Set(["confirm-review", "reject-review"]);
+const VALID_ACTIONS = new Set([...VALID_CREATE_ACTIONS, ...VALID_REVIEW_ACTIONS]);
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // Only ADMIN can batch; REPRESENTATIVE and REGIONAL_MANAGER cannot
-  if (session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const body = await req.json();
   const { action, ids, ownerUserId, reviewNote } = body as {
@@ -24,9 +25,49 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(ids) || ids.length === 0) {
     return NextResponse.json({ error: "ids must be a non-empty array" }, { status: 400 });
   }
-  if (action !== "approve" && action !== "reject") {
-    return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
+  if (!VALID_ACTIONS.has(action)) {
+    return NextResponse.json({ error: "action must be one of: approve, reject, confirm-review, reject-review" }, { status: 400 });
   }
+
+  // ── Role-gate by action ──
+  const isAdmin = session.user.role === "ADMIN";
+  const isRegionalManager = session.user.role === "REGIONAL_MANAGER";
+
+  if (VALID_CREATE_ACTIONS.has(action)) {
+    if (!isAdmin) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } else {
+    // confirm-review / reject-review
+    if (!isAdmin && !isRegionalManager) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  const trimmedNote = reviewNote?.trim() || null;
+
+  // ── Review actions ──
+  if (VALID_REVIEW_ACTIONS.has(action)) {
+    const result = await runBatchCustomerApplicationReview(
+      session.user.id,
+      session.user.role,
+      action as "confirm-review" | "reject-review",
+      ids,
+      trimmedNote,
+    );
+
+    return NextResponse.json({
+      ok: true,
+      action,
+      confirmed: result.confirmed,
+      reviewRejected: result.reviewRejected,
+      skipped: result.skipped,
+      errors: result.errors,
+    });
+  }
+
+  // ── Create actions (approve / reject) ──
+  // ADMIN-only; kept for backward compatibility with the existing pending queue
 
   if (ownerUserId) {
     try {
@@ -36,10 +77,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const trimmedNote = reviewNote?.trim() || null;
-
   let approved = 0;
-  let rejected = 0;
+  let createRejected = 0;
   const skipped: Array<{ id: string; reason: string }> = [];
   const errors: Array<{ id: string; error: string }> = [];
 
@@ -92,7 +131,7 @@ export async function POST(req: NextRequest) {
             reviewNote: trimmedNote,
           },
         });
-        rejected++;
+        createRejected++;
         continue;
       }
 
@@ -127,5 +166,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, approved, rejected, skipped, errors });
+  return NextResponse.json({
+    ok: true,
+    action,
+    approved,
+    createRejected,
+    // Backward-compat: frontend pending-queue mutations still read `rejected`
+    rejected: createRejected,
+    skipped,
+    errors,
+  });
 }
