@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
+import { OrganizationAdminSelect } from "@/components/organization-admin-select";
 import { TaxIdLookupInput } from "@/components/tax-id-lookup-input";
 import { CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
 import Link from "next/link";
@@ -956,18 +957,34 @@ export default function OrganizationsPage() {
             </p>
             <div className="space-y-2">
               <Label>目标机构</Label>
-              <Select value={mergeTargetId} onValueChange={(v) => setMergeTargetId(v || "")}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择目标机构...">
-                    {mergeTargetId ? orgs.find((o) => o.id === mergeTargetId)?.canonicalName || mergeTargetId : "选择目标机构..."}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {orgs.filter((o) => o.id !== mergeSource?.id && !o.archived).map((o) => (
-                    <SelectItem key={o.id} value={o.id}>{o.canonicalName} ({o.orgCode})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <OrganizationAdminSelect
+                value={mergeTargetId}
+                onChange={(org) => setMergeTargetId(org?.id || "")}
+                excludeIds={mergeSource ? [mergeSource.id] : undefined}
+                placeholder="搜索并选择目标机构..."
+              />
+              {mergeTargetId && (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                  {(() => {
+                    const target = orgs.find((o) => o.id === mergeTargetId);
+                    if (!target) return <p className="text-xs text-muted-foreground">加载目标机构信息...</p>;
+                    return (
+                      <>
+                        <p className="text-xs text-muted-foreground">目标机构摘要</p>
+                        <p className="text-sm font-medium">{target.canonicalName} <span className="text-xs text-muted-foreground font-normal">({target.orgCode})</span></p>
+                        {target.address && <p className="text-xs text-muted-foreground">{target.address}</p>}
+                        <p className="text-xs text-muted-foreground">
+                          {target.sites.length > 0 ? `${target.sites.length} 个院区 · ` : ""}
+                          {target._count.customers} 位客户
+                        </p>
+                        <p className="text-xs text-amber-700 mt-1">
+                          确认后将迁移源机构的客户、别名和院区到此目标机构，源机构将被标记为已删除。
+                        </p>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
             <Button className="w-full" disabled={!mergeTargetId || mergeMutation.isPending}
               onClick={() => {

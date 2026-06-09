@@ -22,7 +22,16 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.trim() || "";
+  const isAdmin = searchParams.get("admin") === "1";
+  const excludeIdsRaw = searchParams.get("excludeIds")?.trim() || "";
   const userIsRep = isRepresentative(session.user.role);
+
+  if (isAdmin) {
+    const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { role: true } });
+    if (!user || user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   if (userIsRep && search.length < 2) {
     return NextResponse.json({ organizations: [] });
@@ -41,20 +50,45 @@ export async function GET(req: NextRequest) {
     ];
   }
 
-  const organizations = await prisma.organization.findMany({
-    where,
-    select: {
-      id: true,
-      orgCode: true,
-      canonicalName: true,
-      address: true,
-      taxId: true,
-    },
-    orderBy: { canonicalName: "asc" },
-    take: userIsRep ? 20 : 50,
-  });
+  if (isAdmin && excludeIdsRaw) {
+    const excludeIds = excludeIdsRaw.split(",").filter(Boolean);
+    if (excludeIds.length) {
+      where.id = { notIn: excludeIds };
+    }
+  }
+
+  const take = isAdmin ? 100 : (userIsRep ? 20 : 50);
+
+  const [organizations, total] = await Promise.all([
+    prisma.organization.findMany({
+      where,
+      select: {
+        id: true,
+        orgCode: true,
+        canonicalName: true,
+        address: true,
+        taxId: true,
+        ...(isAdmin ? {
+          _count: { select: { sites: true } },
+        } : {}),
+      },
+      orderBy: { canonicalName: "asc" },
+      take,
+    }),
+    isAdmin ? prisma.organization.count({ where }) : Promise.resolve(0),
+  ]);
 
   if (!userIsRep) {
+    if (isAdmin) {
+      return NextResponse.json({
+        organizations: organizations.map((o) => ({
+          ...o,
+          siteCount: (o as unknown as { _count?: { sites: number } })._count?.sites ?? 0,
+        })),
+        total,
+        limited: total > take,
+      });
+    }
     return NextResponse.json({ organizations });
   }
 
