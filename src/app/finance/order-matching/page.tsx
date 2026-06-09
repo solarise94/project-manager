@@ -674,12 +674,13 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
 
       {/* Order Detail Dialog with Invoice Management */}
       <Dialog open={!!detailOrderId} onOpenChange={(o) => { if (!o) setDetailOrderId(null); }}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           {detailOrderId && detailData?.order && (
             <>
               <DialogHeader>
                 <DialogTitle>订单详情</DialogTitle>
               </DialogHeader>
+              <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
 
               {/* Order info */}
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
@@ -721,6 +722,7 @@ function OrderMatchingContent({ isAdmin, userId, initialSearch }: { isAdmin: boo
                     ))}
                   </div>
                 )}
+              </div>
               </div>
 
               {/* Invoice Form Dialog */}

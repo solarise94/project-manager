@@ -233,7 +233,13 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
                   </div>
                   {b.status === "PENDING" && (
                     <div className="flex items-center gap-1 shrink-0">
-                      <Button size="sm" variant="outline" onClick={() => { setReviewTarget(b); setReviewAction("approve"); setReviewNote(""); }}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!b.organizationId && session?.user?.role === "REGIONAL_MANAGER"}
+                        title={!b.organizationId && session?.user?.role === "REGIONAL_MANAGER" ? "新机构绑定需管理员先完成主数据审核" : undefined}
+                        onClick={() => { setReviewTarget(b); setReviewAction("approve"); setReviewNote(""); }}
+                      >
                         <Check className="h-4 w-4" />
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => { setReviewTarget(b); setReviewAction("reject"); setReviewNote(""); }}>
@@ -260,9 +266,13 @@ export function RepresentativeOrganizationsTab({ representativeId }: { represent
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
               <div>
                 <p>该绑定关联的单位尚未通过主数据审核。</p>
-                <Link href="/admin/organization-reviews" className="text-amber-900 underline">
-                  前往单位审核
-                </Link>
+                {session?.user?.role === "ADMIN" ? (
+                  <Link href="/admin/organization-reviews" className="text-amber-900 underline">
+                    前往单位审核
+                  </Link>
+                ) : (
+                  <p className="text-amber-700 mt-1">该申请需管理员完成机构主数据审核，您暂时无法直接通过。</p>
+                )}
               </div>
             </div>
           )}

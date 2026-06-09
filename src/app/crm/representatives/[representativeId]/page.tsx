@@ -1,9 +1,9 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
 import { crmKeys } from "@/lib/crm/query-keys";
 import type { CrmRepresentativeDetail } from "@/lib/crm/types";
@@ -24,13 +24,18 @@ export default function RepDetailPage() {
   if (status === "unauthenticated") { router.push("/login"); return null; }
   if (status === "loading") return <div className="p-6">加载中...</div>;
 
-  return <RepDetail />;
+  return (
+    <Suspense fallback={<div className="p-6">加载中...</div>}>
+      <RepDetail />
+    </Suspense>
+  );
 }
 
 function RepDetail() {
   const params = useParams<{ representativeId: string }>();
   const repId = params.representativeId;
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const [regionEditorOpen, setRegionEditorOpen] = useState(false);
@@ -44,7 +49,19 @@ function RepDetail() {
     }),
   });
 
-  const [tab, setTab] = useState("overview");
+  const tabFromUrl = searchParams.get("tab") || "overview";
+  const validTabs = ["overview", "customers", "checkins", "followUps", "communication", "organizations", "report"];
+  const tab = validTabs.includes(tabFromUrl) && (tabFromUrl !== "organizations" || canManageBindings) ? tabFromUrl : "overview";
+
+  const handleTabChange = (newTab: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (newTab === "overview") {
+      params.delete("tab");
+    } else {
+      params.set("tab", newTab);
+    }
+    router.replace(`?${params.toString()}`, { scroll: false });
+  };
 
   if (isLoading) return <div className="p-6">加载中...</div>;
   if (!data) return <div className="p-6">未找到代表</div>;
@@ -112,7 +129,7 @@ function RepDetail() {
         <p className="text-xs text-muted-foreground">最近签到: {new Date(lastCheckinAt).toLocaleString("zh-CN")}</p>
       )}
 
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
+      <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="overview">概览</TabsTrigger>
           <TabsTrigger value="customers">名下客户</TabsTrigger>

@@ -213,11 +213,12 @@ export function OrderEditDialog({ orderId, open, onOpenChange, onUpdated }: Orde
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>编辑订单</DialogTitle>
         </DialogHeader>
 
+        <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
         {loading ? (
           <div className="py-8 text-center text-muted-foreground">加载中...</div>
         ) : (
@@ -484,8 +485,9 @@ export function OrderEditDialog({ orderId, open, onOpenChange, onUpdated }: Orde
           </Tabs>
           </>
         )}
+        </div>
 
-        <div className="flex justify-end gap-3 mt-4">
+        <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3 flex justify-end gap-3">
           <Button variant="outline" onClick={() => { reset(); onOpenChange(false); }}>取消</Button>
           <Button disabled={loading || saveMutation.isPending} onClick={() => saveMutation.mutate()}>
             {saveMutation.isPending ? "保存中..." : "保存"}

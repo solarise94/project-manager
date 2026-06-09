@@ -269,7 +269,7 @@ export async function notifyBindingReviewers(
   const warningText = getBindingWarningText(warningCodes);
   const contentBase = `代表申请负责单位「${orgName}」，请审核`;
   const content = warningText ? `${contentBase}。${warningText}` : contentBase;
-  const reviewLink = `/crm/representatives/${representativeId}`;
+  const reviewLink = `/crm/representatives/${representativeId}?tab=organizations`;
 
   for (const reviewer of admins) {
     try {

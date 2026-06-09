@@ -75,6 +75,8 @@ export default function OrganizationReviewsPage() {
   const [reviewNote, setReviewNote] = useState("");
   const [bindSiteTempId, setBindSiteTempId] = useState("");
   const [newOrg, setNewOrg] = useState({ canonicalName: "", address: "", aliases: "", sites: [{ siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }] as Array<{ siteName: string; address: string; siteType: string; tempId: string }> });
+  const [approveMode, setApproveMode] = useState<"bind" | "merge">("bind");
+  const [createMode, setCreateMode] = useState<"normal" | "force">("normal");
 
   const { data, isLoading, error } = useQuery<{ tasks: ReviewTask[] }>({
     queryKey: ["org-reviews", statusFilter, search],
@@ -231,15 +233,26 @@ export default function OrganizationReviewsPage() {
                   {t.reviewNote && <div className="text-xs text-muted-foreground">备注: {t.reviewNote}</div>}
                 </div>
                 {t.status === "PENDING" && (
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
                     <Button size="sm" variant="outline" onClick={() => {
                       setActiveTask(t);
                       setSelectedOrgId(t.suggestedOrg?.id || "");
                       setSelectedSiteId(t.suggestedSite?.id || "");
                       setReviewNote("");
+                      setApproveMode("bind");
                       setApproveOpen(true);
                     }}>
                       <CheckCircle className="h-3 w-3 mr-1" />绑定已有
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      setActiveTask(t);
+                      setSelectedOrgId("");
+                      setSelectedSiteId("");
+                      setReviewNote("");
+                      setApproveMode("merge");
+                      setApproveOpen(true);
+                    }}>
+                      <Building2 className="h-3 w-3 mr-1" />合并到已有
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => {
                       setActiveTask(t);
@@ -261,9 +274,35 @@ export default function OrganizationReviewsPage() {
                       setNewOrg({ canonicalName: t.suggestedCanonicalName || t.rawInput, address: t.suggestedAddress || "", aliases, sites });
                       setReviewNote("");
                       setBindSiteTempId("");
+                      setCreateMode("normal");
                       setCreateOpen(true);
                     }}>
                       <Plus className="h-3 w-3 mr-1" />新建机构
+                    </Button>
+                    <Button size="sm" variant="outline" className="text-amber-600 border-amber-200 hover:bg-amber-50" onClick={() => {
+                      setActiveTask(t);
+                      let aliases = "";
+                      let sites: Array<{ siteName: string; address: string; siteType: string; tempId: string }> = [];
+                      try {
+                        if (t.suggestedAliasesJson) {
+                          const a = JSON.parse(t.suggestedAliasesJson) as string[];
+                          aliases = a.join(", ");
+                        }
+                      } catch { /* ignore */ }
+                      try {
+                        if (t.suggestedSitesJson) {
+                          const s = JSON.parse(t.suggestedSitesJson) as Array<{ siteName: string; address?: string }>;
+                          sites = s.filter((x) => x.siteName).map((x) => ({ siteName: x.siteName, address: x.address || "", siteType: "CAMPUS", tempId: crypto.randomUUID() }));
+                        }
+                      } catch { /* ignore */ }
+                      if (sites.length === 0) sites = [{ siteName: "", address: "", siteType: "CAMPUS", tempId: crypto.randomUUID() }];
+                      setNewOrg({ canonicalName: t.suggestedCanonicalName || t.rawInput, address: t.suggestedAddress || "", aliases, sites });
+                      setReviewNote("");
+                      setBindSiteTempId("");
+                      setCreateMode("force");
+                      setCreateOpen(true);
+                    }}>
+                      <Plus className="h-3 w-3 mr-1" />强制新建
                     </Button>
                     <Button size="sm" variant="ghost" className="text-red-600" onClick={() => {
                       setActiveTask(t);
@@ -280,12 +319,17 @@ export default function OrganizationReviewsPage() {
         </div>
       )}
 
-      {/* Approve: bind to existing org */}
+      {/* Approve: bind to existing org / merge to existing */}
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>绑定已有机构</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{approveMode === "merge" ? "合并到现有机构" : "绑定已有机构"}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">原始输入: <span className="font-medium text-foreground">{activeTask?.rawInput}</span></p>
+            {approveMode === "merge" && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                合并操作将把当前申请直接关联到所选机构，并将原始输入记录为机构别名。
+              </div>
+            )}
             <div className="space-y-2">
               <Label>选择机构</Label>
               <Select value={selectedOrgId} onValueChange={(v) => { setSelectedOrgId(v || ""); setSelectedSiteId(""); }}>
@@ -321,14 +365,14 @@ export default function OrganizationReviewsPage() {
             </div>
             <Button className="w-full" disabled={!selectedOrgId || approveMutation.isPending}
               onClick={() => activeTask && approveMutation.mutate({
-                id: activeTask.id, action: "approve",
+                id: activeTask.id, action: approveMode === "merge" ? "mergeToExisting" : "approve",
                 organizationId: selectedOrgId,
                 organizationSiteId: selectedSiteId || undefined,
                 reviewNote: reviewNote || undefined,
               })}
             >
               <CheckCircle className="mr-2 h-4 w-4" />
-              {approveMutation.isPending ? "处理中..." : "确认绑定"}
+              {approveMutation.isPending ? "处理中..." : approveMode === "merge" ? "确认合并" : "确认绑定"}
             </Button>
           </div>
         </DialogContent>
@@ -337,10 +381,15 @@ export default function OrganizationReviewsPage() {
       {/* Approve and create new org */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-lg">
-          <DialogHeader><DialogTitle>新建机构并绑定</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{createMode === "force" ? "强制新建机构（越过查重）" : "新建机构并绑定"}</DialogTitle></DialogHeader>
           <div className="-mx-4 min-h-0 overflow-y-auto px-4 pb-1">
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">原始输入: <span className="font-medium text-foreground break-words">{activeTask?.rawInput}</span></p>
+            {createMode === "force" && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                ⚠️ 强制新建将越过名称查重保护直接创建机构，请确保已充分了解重复风险并填写备注。
+              </div>
+            )}
             <OrganizationAiFillPlugin
               query={newOrg.canonicalName || activeTask?.rawInput || ""}
               onApply={applyDraftToNewOrg}
@@ -424,9 +473,9 @@ export default function OrganizationReviewsPage() {
           </div>
           </div>
           <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
-            <Button className="w-full" disabled={!newOrg.canonicalName.trim() || approveMutation.isPending}
+            <Button className="w-full" disabled={!newOrg.canonicalName.trim() || approveMutation.isPending || (createMode === "force" && !reviewNote.trim())}
               onClick={() => activeTask && approveMutation.mutate({
-                id: activeTask.id, action: "approveAndCreate",
+                id: activeTask.id, action: createMode === "force" ? "approveForceNew" : "approveAndCreate",
                 canonicalName: newOrg.canonicalName,
                 address: newOrg.address || undefined,
                 aliases: newOrg.aliases ? newOrg.aliases.split(",").map((a) => a.trim()).filter(Boolean) : undefined,
@@ -438,7 +487,7 @@ export default function OrganizationReviewsPage() {
               })}
             >
               <Plus className="mr-2 h-4 w-4" />
-              {approveMutation.isPending ? "处理中..." : "新建并绑定"}
+              {approveMutation.isPending ? "处理中..." : createMode === "force" ? "强制新建并绑定" : "新建并绑定"}
             </Button>
           </div>
         </DialogContent>

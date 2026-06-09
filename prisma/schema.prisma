@@ -216,7 +216,7 @@ model OrganizationReviewTask {
   reviewedById            String?
   reviewedByUser          User?             @relation("ReviewReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewNote              String?
-  resolutionSource        String? // DB_EXACT, DB_CANDIDATE, LLM_DB_CANDIDATE, MANUAL_NEW, TAVILY_MINIMAX_DRAFT
+  resolutionSource        String? // DB_EXACT, DB_CANDIDATE, LLM_DB_CANDIDATE, MANUAL_NEW, MANUAL_FORCE_NEW, MANUAL_MERGED_TO_EXISTING, TAVILY_MINIMAX_DRAFT
   suggestedAliasesJson    String?
   suggestedSitesJson      String?
   evidenceJson            String?

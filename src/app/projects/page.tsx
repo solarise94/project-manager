@@ -235,11 +235,13 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
               <Plus className="mr-2 h-4 w-4" />
               新建项目
             </DialogTrigger>
-          <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
             <DialogHeader>
               <DialogTitle>新建项目</DialogTitle>
             </DialogHeader>
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form onSubmit={onSubmit} className="contents">
+              <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+                <div className="space-y-4">
               <DraftInputPanel
                 formKey="project.create"
                 fieldLabels={{
@@ -516,9 +518,13 @@ function ProjectsPageInner({ defaultOpen }: { defaultOpen: boolean }) {
                   onChange={(e) => setForm({ ...form, progress: Number(e.target.value) })}
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "创建中..." : "创建项目"}
-              </Button>
+                </div>
+              </div>
+              <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+                <Button type="submit" className="w-full" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? "创建中..." : "创建项目"}
+                </Button>
+              </div>
             </form>
           </DialogContent>
           </Dialog>

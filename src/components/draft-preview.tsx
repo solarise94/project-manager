@@ -140,11 +140,13 @@ export function DraftPreview({ open, onOpenChange, draft, summary, warnings, fie
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!applying) onOpenChange(v); }}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
           <DialogTitle>AI 草稿预览</DialogTitle>
         </DialogHeader>
 
+        <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+        <div className="space-y-2">
         {summary && <p className="text-sm text-muted-foreground">{summary}</p>}
 
         {warnings && warnings.length > 0 && (
@@ -306,6 +308,8 @@ export function DraftPreview({ open, onOpenChange, draft, summary, warnings, fie
             )}
           </div>
         )}
+        </div>
+        </div>
 
         <DialogFooter className="gap-2">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={applying}>

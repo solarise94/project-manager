@@ -4,6 +4,18 @@
 
 中文界面的 Next.js 全栈应用，服务于单细胞测序与空间转录组领域的科研项目管理。核心能力包括：项目与工单管理、客户与组织管理、CRM（客户关系管理）、发票与外部订单、AI 辅助草稿填写、以及多角色权限体系。
 
+当前迭代重心已经明显转向 CRM 运营、统一订单/财务闭环，以及远程生产部署自动化。近期新增工作主要集中在：CRM 生命周期与代表运营指标、CRM 工作台快捷入口优化、远程多实例部署脚本、以及部署成功后的管理员邮件通知。
+
+---
+
+## 当前项目状态
+
+- **CRM 是当前最活跃子系统**：客户阶段、代表归属、生命周期扫描、客户申请审批、代表运营指标都在持续迭代。
+- **统一订单模型已经是主路径**：`Order` 家族模型承接新订单读写，Legacy `ExternalOrder` 主要保留历史追溯和兼容接口。
+- **Agent 工作台已经上线**：`/agent` 是独立入口，后端围绕 action registry、proposal、审计链路持续扩展。
+- **远程正式环境已是双实例**：`31080` 是主正式线上，`32080` 是第二个远程正式实例，二者共享同一套远程部署主脚本但有独立目录、数据库与 systemd 服务名。
+- **部署自动化正在增强**：远程部署除构建、迁移、重启、smoke 外，现已补充部署后管理员更新邮件通知能力，更新摘要来自 git commit 区间日志。
+
 ---
 
 ## 技术栈
@@ -111,6 +123,7 @@ scripts/
   deploy-demo.sh          # Demo 环境部署
   deploy-prod.sh          # 本机生产镜像/预演部署（非正式线上）
   deploy-remote-prod.sh   # 正式线上部署（远程 101 服务器）
+  deploy-remote-32080.sh  # 第二个远程正式实例部署（32080/32081）
   mobile-screenshot.py    # 移动端截图工具（Python + Playwright）
 public/
   uploads/                # 用户上传文件（照片、附件）
@@ -258,14 +271,19 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 | `deploy-demo.sh` | `/home/solarise/task-manager-demo` | `/home/solarise/task-manager-data/demo/dev.db` | `task-manager-demo.service` | `127.0.0.1:31081` |
 | `deploy-prod.sh` | `/home/solarise/task-manager` | `/home/solarise/task-manager-data/prod/dev.db` | `task-manager.service` | `0.0.0.0:31080` |
 | `deploy-remote-prod.sh` | 远程 `101.34.158.217:/home/ubuntu/task-manager` | 远程 `/home/ubuntu/task-manager-data/prod/dev.db` | `task-manager.service` | `127.0.0.1:31081` |
+| `deploy-remote-32080.sh` | 远程 `101.34.158.217:/home/ubuntu/task-manager-32080` | 远程 `/home/ubuntu/task-manager-data/32080/dev.db` | `task-manager-32080.service` | `127.0.0.1:32081` |
 
 **正式线上生产只使用 `scripts/deploy-remote-prod.sh`。** 用户说“线上”“生产”“prod”时，默认指远程 `101.34.158.217` 服务器，而不是本机 `/home/solarise/task-manager`。`scripts/deploy-prod.sh` 仅用于本机生产镜像/预演，除非用户明确要求部署到本机 prod。
 
 远程正式生产的公网 HTTPS 由远程 nginx 监听 `0.0.0.0:31080` 提供，反代到 Next.js standalone 的 `127.0.0.1:31081`；外网地址为 `https://task.solarise94.fun:31080`。
 
+第二个远程正式实例由远程 nginx 监听 `0.0.0.0:32080`，反代到 standalone 的 `127.0.0.1:32081`；外网地址为 `https://task.solarise94.fun:32080`。当用户明确提到 `32080`、第二个正式实例、第二套线上服务时，使用 `scripts/deploy-remote-32080.sh`。
+
 本机 demo / 本机生产镜像脚本调用 `deploy-standalone.sh`，流程为：完整构建 → rsync standalone 输出 → Prisma client shim 生成 → `prisma db push` → 重写运行时 `.env` → systemd 服务重启 → 健康检查（`/api/auth/session` 200）。
 
 远程正式生产脚本 `deploy-remote-prod.sh` 会本地构建 → SSH/rsync 到 `101.34.158.217` → 拉取远程 SQLite 到本地临时目录执行 `prisma db push` → 上传更新后的远程库 → 写远程 `.env` 和 systemd unit → 重启远程服务 → 在远程服务器本机 smoke test `127.0.0.1:31081/api/auth/session`。
+
+远程部署成功后，主脚本还会执行一个 post-smoke 的管理员通知步骤：读取远程 `last_deploy_commit.txt`，在本地生成本次部署区间的 `git log` 摘要，写回新的 deployed commit，然后调用内部接口给所有 `ADMIN` 发送更新邮件。通知失败只打印 warning，不影响部署退出码。
 
 ### 关键部署注意事项
 
@@ -274,6 +292,7 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 - **Prisma client shims**：standalone 构建可能引用哈希化的 Prisma client 包名（如 `@prisma/client-2c3a283f134fdcb6`），部署脚本会自动创建 re-export shim。
 - **数据库策略**：默认 `fail`——若运行时数据库缺失则直接拒绝部署，不会静默回填。首次部署可使用 `bootstrap` 策略。
 - **持久化配置**：数据库目录旁的配置文件（`smtp.conf`、`minimax.conf`、`tavily.conf`、`tencent-asr.conf`、`tencent-map.conf`、`app.conf`）在重新部署后仍然保留。
+- **部署通知状态文件**：远程正式实例各自维护 `last_deploy_commit.txt`，用于按环境生成增量部署邮件摘要；不要把主正式环境与 `32080` 实例的该文件混用。
 - **Demo 部署后 smoke**：部署 demo 后至少验证 `task-manager-demo.service` 为 `active (running)`、`/api/auth/session` 返回 `200`、`/agent` 返回 `200`，以及未登录访问 `/api/agent/runs` 返回 `401`。
 - **部署输出判读**：`deploy-demo.sh` / `deploy-standalone.sh` 过程中若出现 `cannot delete non-empty directory` 一类 rsync 输出，不要单独据此判失败；以脚本退出码、systemd 状态和健康检查结果为准。
 
@@ -289,13 +308,15 @@ CRM 常量、颜色映射（Tailwind class + Hex 双版本）、Query Key Factor
 ### CRM 模块
 
 客户管理叠加在 Customer 模型之上：
-- **客户资料**（`/crm/customers`）：按负责人隔离的销售阶段跟踪。阶段：`NEW` → `CONTACTED` → `FOLLOWING` → `ACTIVE` / `BLOCKED` / `LOST` / `DORMANT`；重要性：`LOW` / `NORMAL` / `HIGH` / `KEY`。
+- **客户资料**（`/crm/customers`）：按负责人隔离的销售阶段跟踪。当前阶段体系已重构为以 `LEAD` 为入口，后续进入 `CONTACTED` / `FOLLOWING` / `ACTIVE` / `BLOCKED` / `LOST` / `DORMANT` 等运营状态；重要性：`LOW` / `NORMAL` / `HIGH` / `KEY`。
 - **互动记录**：每资料下的电话、微信、邮件、会议、拜访、转介绍、备注。
 - **跟进任务**（`/crm/follow-ups`）：带到期日、负责人、状态的任务列表。
 - **拜访签到**：GPS 坐标打卡 + 照片上传，使用腾讯地图 API 进行逆地理编码（`src/lib/crm/geocode.ts`）。
 - **关系网络**（`/crm/relations`）：有向/无向客户关系边。
 - **客户地址**：支持手动录入、项目导入、外部订单导入、拜访签到四种来源。
 - **客户申请**（`/crm/customer-applications`）：新客户 intake 流程。
+- **CRM 工作台快捷操作**（`/crm`）：顶部快捷栏当前包含“添加沟通”“现场签到”“申请新增客户”；其中“申请新增客户”只对 `ADMIN`、`REPRESENTATIVE`、`REGIONAL_MANAGER` 展示，必须与后端 allow-list 保持一致。
+- **代表运营与生命周期**：近期新增 30/90 天运营指标、生命周期扫描与首单/转化统计，相关设计稿与说明集中在 `docs/crm-*` 文档。
 - **关系图谱**（`/crm/graph`）：D3 force-directed 图可视化。
 - **地图**（`/crm/maps`）：客户地址地图可视化。
 - API 位于 `src/app/api/crm/`；Query Key Factory 在 `src/lib/crm/query-keys.ts`。
@@ -401,6 +422,7 @@ PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
 `src/lib/mail.ts` — nodemailer SMTP：
 - 未配置真实 SMTP 时自动回退到 Ethereal 测试账号（控制台输出预览 URL）。
 - `sendMailInBackground()` 用于非阻塞邮件发送，自动更新 `Notification` 记录的 `emailStatus`。
+- 内部定时/触发接口除 reminder 外，现还包括 CRM 审批提醒、CRM lifecycle 扫描、以及部署成功后的管理员更新邮件通知。
 
 `src/lib/reminder.ts` — 工单到期提醒：
 - 扫描 `reminderDate <= now` 且未关闭的工单。
@@ -446,6 +468,7 @@ PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
 | 邮件 | `src/lib/mail.ts` |
 | 提醒调度 | `src/lib/reminder.ts` |
 | 运行时信息 | `src/lib/runtime-info.ts` |
+| 部署通知接口 | `src/app/api/internal/deploy-notify/run/route.ts` |
 | 外部订单导入 (Legacy) | `src/lib/external-order.ts` |
 | 财务计算/汇总 | `src/lib/finance/calculations.ts` |
 | 财务进度/口径 | `src/lib/finance/progress.ts` |
@@ -466,6 +489,7 @@ PR 1-10 引入的统一订单中枢，替代 ExternalOrder 作为订单主表。
 | 草稿编排器 | `src/lib/draft/orchestrator.ts` |
 | 部署脚本 | `scripts/deploy-standalone.sh` |
 | 远程部署 | `scripts/deploy-remote-prod.sh` |
+| 第二远程正式部署 | `scripts/deploy-remote-32080.sh` |
 | 移动端截图 | `scripts/mobile-screenshot.py` |
 | Schema | `prisma/schema.prisma` |
 | 种子数据 | `prisma/seed.ts` |

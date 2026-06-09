@@ -542,7 +542,7 @@ export default function ProjectDetailPage() {
                     <DialogTrigger render={<Button variant="outline" size="sm" onClick={() => { setEditForm({ ...project, projectType: normalizeProjectType(project.projectType) || project.projectType }); setEditOrgId(""); setEditCustomerOrgId(project.cust?.organizationId || null); setRepTouched(false); const ms = (project.members || []).map((m: Record<string, unknown>) => ({ userId: (m.userId || (m.user as Record<string, unknown>)?.id) as string, role: m.role as string, user: m.user as { id: string; name: string; email: string } })); setEditMembers(ms); }} />}>
                       编辑项目
                     </DialogTrigger>
-              <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+              <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
               <DialogHeader>
                 <DialogTitle>编辑项目</DialogTitle>
               </DialogHeader>
@@ -641,8 +641,10 @@ export default function ProjectDetailPage() {
                     }
                   }
                 }}
-                className="space-y-4"
+                className="contents"
               >
+                <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+                <div className="space-y-4">
                 <DraftInputPanel
                   formKey="project.edit"
                   projectId={projectId}
@@ -878,9 +880,13 @@ export default function ProjectDetailPage() {
                     </div>
                   </div>
                 </details>
-                <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? "保存中..." : "保存更改"}
-                </Button>
+                </div>
+                </div>
+                <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+                  <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
+                    {updateMutation.isPending ? "保存中..." : "保存更改"}
+                  </Button>
+                </div>
               </form>
             </DialogContent>
           </Dialog>
@@ -1253,58 +1259,66 @@ export default function ProjectDetailPage() {
                   <Plus className="mr-1 h-3 w-3" />
                   新建工单
                 </DialogTrigger>
-              <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+              <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
                 <DialogHeader><DialogTitle>新建工单</DialogTitle></DialogHeader>
-                <DraftInputPanel
-                  formKey="ticket.create"
-                  projectId={projectId}
-                  fieldLabels={{
-                    title: "标题",
-                    description: "描述",
-                    priority: "优先级",
-                  }}
-                  onApply={(fields) => {
-                    setTicketForm((prev) => ({
-                      ...prev,
-                      ...(typeof fields.title === "string" && fields.title.trim() ? { title: fields.title.trim() } : {}),
-                      ...(typeof fields.description === "string" ? { description: fields.description.trim() } : {}),
-                      ...(typeof fields.priority === "string" && ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(fields.priority) ? { priority: fields.priority } : {}),
-                    }));
-                  }}
-                />
-                <form onSubmit={(e) => { e.preventDefault(); ticketMutation.mutate(ticketForm); }} className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">标题</label>
-                    <Input value={ticketForm.title} onChange={(e) => setTicketForm({ ...ticketForm, title: e.target.value })} required />
+                <form onSubmit={(e) => { e.preventDefault(); ticketMutation.mutate(ticketForm); }} className="contents">
+                  <div className="-mx-4 min-h-0 overflow-y-auto overscroll-contain px-4 pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+                    <div className="space-y-4">
+                      <DraftInputPanel
+                        formKey="ticket.create"
+                        projectId={projectId}
+                        fieldLabels={{
+                          title: "标题",
+                          description: "描述",
+                          priority: "优先级",
+                        }}
+                        onApply={(fields) => {
+                          setTicketForm((prev) => ({
+                            ...prev,
+                            ...(typeof fields.title === "string" && fields.title.trim() ? { title: fields.title.trim() } : {}),
+                            ...(typeof fields.description === "string" ? { description: fields.description.trim() } : {}),
+                            ...(typeof fields.priority === "string" && ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(fields.priority) ? { priority: fields.priority } : {}),
+                          }));
+                        }}
+                      />
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">标题</label>
+                          <Input value={ticketForm.title} onChange={(e) => setTicketForm({ ...ticketForm, title: e.target.value })} required />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">描述</label>
+                          <Textarea value={ticketForm.description} onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })} rows={3} />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">优先级</label>
+                          <Select value={ticketForm.priority} onValueChange={(v) => setTicketForm({ ...ticketForm, priority: v || "MEDIUM" })}>
+                            <SelectTrigger><span>{ticketForm.priority === "LOW" ? "低" : ticketForm.priority === "MEDIUM" ? "中" : ticketForm.priority === "HIGH" ? "高" : ticketForm.priority === "URGENT" ? "紧急" : "中"}</span></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="LOW">低</SelectItem>
+                              <SelectItem value="MEDIUM">中</SelectItem>
+                              <SelectItem value="HIGH">高</SelectItem>
+                              <SelectItem value="URGENT">紧急</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">提醒时间（可选）</label>
+                          <Input
+                            type="datetime-local"
+                            value={ticketForm.reminderDate}
+                            onChange={(e) => setTicketForm({ ...ticketForm, reminderDate: e.target.value })}
+                          />
+                          <p className="text-xs text-muted-foreground">到达提醒时间后会同时发送邮件和站内通知给工单创建者</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">描述</label>
-                    <Textarea value={ticketForm.description} onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })} rows={3} />
+                  <div className="-mx-4 -mb-4 border-t bg-popover/95 px-4 py-3">
+                    <Button type="submit" className="w-full" disabled={ticketMutation.isPending}>
+                      {ticketMutation.isPending ? "创建中..." : "创建工单"}
+                    </Button>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">优先级</label>
-                    <Select value={ticketForm.priority} onValueChange={(v) => setTicketForm({ ...ticketForm, priority: v || "MEDIUM" })}>
-                      <SelectTrigger><span>{ticketForm.priority === "LOW" ? "低" : ticketForm.priority === "MEDIUM" ? "中" : ticketForm.priority === "HIGH" ? "高" : ticketForm.priority === "URGENT" ? "紧急" : "中"}</span></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="LOW">低</SelectItem>
-                        <SelectItem value="MEDIUM">中</SelectItem>
-                        <SelectItem value="HIGH">高</SelectItem>
-                        <SelectItem value="URGENT">紧急</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">提醒时间（可选）</label>
-                    <Input
-                      type="datetime-local"
-                      value={ticketForm.reminderDate}
-                      onChange={(e) => setTicketForm({ ...ticketForm, reminderDate: e.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">到达提醒时间后会同时发送邮件和站内通知给工单创建者</p>
-                  </div>
-                  <Button type="submit" className="w-full" disabled={ticketMutation.isPending}>
-                    {ticketMutation.isPending ? "创建中..." : "创建工单"}
-                  </Button>
                 </form>
               </DialogContent>
             </Dialog>
