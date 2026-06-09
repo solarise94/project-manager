@@ -29,7 +29,7 @@ const tabsListVariants = cva(
     variants: {
       variant: {
         default: "bg-muted",
-        line: "gap-1 bg-transparent",
+        line: "gap-1 bg-transparent overflow-x-auto [-webkit-overflow-scrolling:touch] [&::-webkit-scrollbar]:hidden",
       },
     },
     defaultVariants: {

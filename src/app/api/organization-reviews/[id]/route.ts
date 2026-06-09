@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ status: "REJECTED" });
     }
 
-    if (action === "approve") {
+    if (action === "approve" || action === "mergeToExisting") {
       const { organizationId, organizationSiteId, reviewNote } = body;
       if (!organizationId) {
         return NextResponse.json({ error: "审批通过需要指定机构" }, { status: 400 });
@@ -73,7 +73,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             reviewedById: session.user.id,
             reviewedAt: new Date(),
             reviewNote: reviewNote || null,
-            resolutionSource: "DB_CANDIDATE",
+            resolutionSource: action === "mergeToExisting" ? "MANUAL_MERGED_TO_EXISTING" : "DB_CANDIDATE",
           },
         });
 
@@ -188,18 +188,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ status: "APPROVED" });
     }
 
-    if (action === "approveAndCreate") {
+    if (action === "approveAndCreate" || action === "approveForceNew") {
+      const isForce = action === "approveForceNew";
       const { canonicalName, address, aliases, sites, siteName, siteAddress, reviewNote, bindSiteName } = body;
       if (!canonicalName?.trim()) {
         return NextResponse.json({ error: "标准名称为必填项" }, { status: 400 });
       }
+      if (isForce && !reviewNote?.trim()) {
+        return NextResponse.json({ error: "强制新建需要填写备注" }, { status: 400 });
+      }
 
       const normalizedName = normalizeOrgName(canonicalName.trim());
-      const existing = await prisma.organization.findFirst({
-        where: { normalizedName, deleted: false },
-      });
-      if (existing) {
-        return NextResponse.json({ error: `已存在同名机构: ${existing.canonicalName}` }, { status: 409 });
+      if (!isForce) {
+        const existing = await prisma.organization.findFirst({
+          where: { normalizedName, deleted: false },
+        });
+        if (existing) {
+          return NextResponse.json({ error: `已存在同名机构: ${existing.canonicalName}` }, { status: 409 });
+        }
       }
 
       // Generate org code
@@ -290,7 +296,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             reviewedById: session.user.id,
             reviewedAt: new Date(),
             reviewNote: reviewNote || null,
-            resolutionSource: "MANUAL_NEW",
+            resolutionSource: isForce ? "MANUAL_FORCE_NEW" : "MANUAL_NEW",
           },
         });
 
