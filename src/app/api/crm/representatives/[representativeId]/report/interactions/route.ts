@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { resolveEffectiveCustomerRepresentative } from "@/lib/crm/customer-effective-representative";
+import { canReadRepresentativeReport } from "@/lib/crm/representative-report-access";
 
 /** Compute week boundaries: Monday 00:00:00 to next Monday 00:00:00 */
 function getWeekWindow() {
@@ -29,23 +29,12 @@ export async function GET(
   const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
   if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
 
-  // Permission check
-  if (session.user.role === "REPRESENTATIVE") {
-    const linkedUser = await prisma.user.findFirst({
-      where: { email: rep.email, id: session.user.id },
-    });
-    if (!linkedUser) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (isRegionalManagerRole(session.user.role)) {
-    const manager = await prisma.crmRegionManager.findUnique({
-      where: { userId: session.user.id, archived: false },
-      include: { reps: { where: { representativeId }, select: { id: true } } },
-    });
-    if (!manager || manager.reps.length === 0) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  } else if (session.user.role !== "ADMIN") {
+  const readable = await canReadRepresentativeReport(
+    session.user.id,
+    session.user.role,
+    representativeId,
+  );
+  if (!readable) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

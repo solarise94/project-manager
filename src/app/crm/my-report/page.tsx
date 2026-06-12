@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { RepresentativeReportPanel } from "@/components/crm/representative-report-panel";
 import { Loader2 } from "lucide-react";
+import { isSalesRole } from "@/lib/role-guards";
 
 export default function MyReportPage() {
   const { data: session, status } = useSession();
@@ -12,12 +13,15 @@ export default function MyReportPage() {
 
   if (status === "loading") return <div className="p-6"><Loader2 className="h-4 w-4 animate-spin" /></div>;
   if (status === "unauthenticated") { router.push("/login"); return null; }
-  if (session?.user?.role !== "REPRESENTATIVE") { router.push("/crm"); return null; }
+  if (!isSalesRole(session?.user?.role)) { router.push("/crm"); return null; }
 
   return <MyReport />;
 }
 
 function MyReport() {
+  const { data: session } = useSession();
+  const router = useRouter();
+  const role = session?.user?.role;
   const { data, isLoading } = useQuery<{ representativeId: string }>({
     queryKey: ["crm-my-rep-id"],
     queryFn: async () => {
@@ -40,6 +44,11 @@ function MyReport() {
   }
 
   if (!data) {
+    if (role === "REGIONAL_MANAGER") {
+      router.push("/crm/representatives");
+      return null;
+    }
+
     return (
       <div className="p-6 space-y-4">
         <h1 className="text-2xl font-bold">我的汇报</h1>

@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { isRegionalManagerRole } from "@/lib/crm/permissions";
 import { deriveGraduationStatus } from "@/lib/crm/profile-filters";
 import { resolveEffectiveCustomerRepresentatives } from "@/lib/crm/customer-effective-representative";
+import {
+  canAccessOwnRepresentativeReport,
+  canReadRepresentativeReport,
+} from "@/lib/crm/representative-report-access";
 
 /** Compute week boundaries: Monday 00:00:00 to next Monday 00:00:00 */
 function getWeekWindow() {
@@ -29,20 +32,12 @@ async function assertReportReadable(session: { user: { id: string; role: string 
   const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
   if (!rep) return { ok: false, status: 404, error: "Representative not found" } as const;
 
-  if (session.user.role === "REPRESENTATIVE") {
-    const linkedUser = await prisma.user.findFirst({
-      where: { email: rep.email, id: session.user.id },
-    });
-    if (!linkedUser) return { ok: false, status: 403, error: "Forbidden" } as const;
-  } else if (isRegionalManagerRole(session.user.role)) {
-    const manager = await prisma.crmRegionManager.findUnique({
-      where: { userId: session.user.id, archived: false },
-      include: { reps: { where: { representativeId }, select: { id: true } } },
-    });
-    if (!manager || manager.reps.length === 0) {
-      return { ok: false, status: 403, error: "Forbidden" } as const;
-    }
-  } else if (session.user.role !== "ADMIN") {
+  const readable = await canReadRepresentativeReport(
+    session.user.id,
+    session.user.role,
+    representativeId,
+  );
+  if (!readable) {
     return { ok: false, status: 403, error: "Forbidden" } as const;
   }
   return { ok: true, rep } as const;
@@ -397,16 +392,19 @@ export async function PATCH(
   const rep = await prisma.representative.findUnique({ where: { id: representativeId } });
   if (!rep) return NextResponse.json({ error: "Representative not found" }, { status: 404 });
 
-  // Write permission: only the rep themselves
-  if (session.user.role !== "REPRESENTATIVE") {
-    return NextResponse.json({ error: "Forbidden: only representative can edit their own report" }, { status: 403 });
+  const canWrite = await canAccessOwnRepresentativeReport(
+    session.user.id,
+    session.user.role,
+    representativeId,
+  );
+  if (!canWrite) {
+    return NextResponse.json({ error: "Forbidden: only the linked sales user can edit their own report" }, { status: 403 });
   }
+
   const linkedUser = await prisma.user.findFirst({
     where: { email: rep.email, id: session.user.id },
   });
-  if (!linkedUser) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  if (!linkedUser) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const body = await req.json();
   const { periodType, periodKey, note, lines: rawLines } = body;

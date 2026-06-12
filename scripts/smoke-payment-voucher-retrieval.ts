@@ -56,7 +56,7 @@ async function login(email: string, password: string): Promise<string> {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: typeof csrfCookie === "string" ? csrfCookie : csrfCookie.join("; "),
+      Cookie: csrfCookie,
     },
     body: params.toString(),
     redirect: "manual",

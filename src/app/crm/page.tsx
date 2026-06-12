@@ -13,6 +13,7 @@ import { InteractionFormDialog } from "@/components/crm/interaction-form-dialog"
 import { CheckinFlow } from "@/components/crm/checkin-flow";
 import { CustomerApplicationFormDialog } from "@/components/crm/customer-application-form-dialog";
 import type { CrmDashboardStats } from "@/lib/crm/types";
+import { isSalesRole } from "@/lib/role-guards";
 import {
   Users, ClipboardList, AlertTriangle, MapPin,
   CalendarClock, Network, BarChart3, UserCog,
@@ -40,6 +41,7 @@ function CrmDashboard() {
   const { data: session } = useSession();
   const role = session?.user?.role;
   const isRep = role === "REPRESENTATIVE";
+  const isSales = isSalesRole(role);
   const isAdmin = role === "ADMIN";
   const isRegionalManager = role === "REGIONAL_MANAGER";
   const [quickAction, setQuickAction] = useState<"interaction" | "checkin" | null>(null);
@@ -284,7 +286,7 @@ function CrmDashboard() {
             label="客户申请"
             description={isRep ? "提交新客户申请" : "客户申请与主管复核"}
           />
-          {isRep && (
+          {isSales && (
             <QuickNavCard
               href="/crm/my-report"
               icon={<ClipboardList className="h-8 w-8" />}
