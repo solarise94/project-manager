@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { getTodayLocalDateInput, isDateInputString } from "@/lib/finance/date-input";
 
 interface ReceiptFormDialogProps {
   open: boolean;
@@ -25,7 +26,13 @@ interface ReceiptFormDialogProps {
     source: string;
     remark: string | null;
     orderId: string | null;
-    allocations?: Array<{ id: string; invoiceId: string; amount: number }>;
+    allocations?: Array<{
+      id: string;
+      invoiceId: string;
+      amount: number;
+      invoice?: { actualInvoiceNo: string | null } | null;
+      order?: { orderNo: string | null } | null;
+    }>;
   } | null;
   onSuccess: () => void;
 }
@@ -50,7 +57,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
 
   const initialReceivedAt = useMemo(() => {
     if (receipt) return receipt.receivedAt.slice(0, 10);
-    return new Date().toISOString().slice(0, 10);
+    return getTodayLocalDateInput();
   }, [receipt]);
 
   const initialSource = useMemo(() => {
@@ -84,12 +91,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
   async function handleSubmit() {
     // For allocation-based receipts, only allow editing remark/receivedAt
     if (hasAllocations) {
-      if (!receivedAt) {
-        toast.error("请选择到款日期");
-        return;
-      }
-      const receivedDate = new Date(receivedAt);
-      if (Number.isNaN(receivedDate.getTime())) {
+      if (!receivedAt || !isDateInputString(receivedAt)) {
         toast.error("请选择有效的到款日期");
         return;
       }
@@ -99,7 +101,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            receivedAt: receivedDate.toISOString(),
+            receivedAt,
             remark: remark || null,
           }),
         });
@@ -127,12 +129,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
       toast.error("请输入有效的金额");
       return;
     }
-    if (!receivedAt) {
-      toast.error("请选择到款日期");
-      return;
-    }
-    const receivedDate = new Date(receivedAt);
-    if (Number.isNaN(receivedDate.getTime())) {
+    if (!receivedAt || !isDateInputString(receivedAt)) {
       toast.error("请选择有效的到款日期");
       return;
     }
@@ -141,7 +138,7 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
       let res: Response;
       const payload = {
         amount: amt,
-        receivedAt: receivedDate.toISOString(),
+        receivedAt,
         source,
         remark: remark || null,
       };
@@ -185,7 +182,12 @@ export function ReceiptFormDialog({ open, onOpenChange, defaultOrderId, defaultA
               <div className="space-y-1">
                 {receipt!.allocations!.map((a) => (
                   <div key={a.id} className="flex justify-between text-xs">
-                    <span className="text-muted-foreground font-mono">{a.invoiceId.slice(0, 16)}...</span>
+                    <span className="text-muted-foreground">
+                      {a.invoice?.actualInvoiceNo || `${a.invoiceId.slice(0, 16)}...`}
+                      {a.order?.orderNo && (
+                        <span className="ml-1 text-muted-foreground/60">({a.order.orderNo})</span>
+                      )}
+                    </span>
                     <span>{a.amount.toFixed(2)}</span>
                   </div>
                 ))}

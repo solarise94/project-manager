@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Search, Eye, Pencil, Trash2 } from "lucide-react";
+import { Loader2, Search, Eye, Pencil, Trash2, Download, FileCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FinancePageHeader } from "@/components/finance/finance-page-header";
@@ -42,7 +42,13 @@ interface ReceiptItem {
   deletedByName: string | null;
   deleteReason: string | null;
   allocationCount: number;
-  allocations?: Array<{ id: string; invoiceId: string; amount: number }>;
+  allocations?: Array<{
+    id: string;
+    invoiceId: string;
+    amount: number;
+    invoice?: { actualInvoiceNo: string | null } | null;
+    order?: { orderNo: string | null } | null;
+  }>;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -86,6 +92,8 @@ function InvoiceReceiptDetailContent() {
   const [deleteTarget, setDeleteTarget] = useState<ReceiptItem | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
   const [editingReceipt, setEditingReceipt] = useState<ReceiptItem | null>(null);
+  const [viewingAllocations, setViewingAllocations] = useState<ReceiptItem | null>(null);
+  const [voucherFilter, setVoucherFilter] = useState<"all" | "voucher">("all");
   const pageSize = 20;
   const isMobile = useMediaQuery("(max-width: 767px)");
 
@@ -93,7 +101,7 @@ function InvoiceReceiptDetailContent() {
     receipts: ReceiptItem[];
     total: number;
   }>({
-    queryKey: ["finance", "receipts", search, page, deletedFilter],
+    queryKey: ["finance", "receipts", search, page, deletedFilter, voucherFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
@@ -101,6 +109,7 @@ function InvoiceReceiptDetailContent() {
       params.set("pageSize", String(pageSize));
       if (deletedFilter === "all" && isAdmin) params.set("includeDeleted", "1");
       if (deletedFilter === "deleted" && isAdmin) params.set("deletedOnly", "1");
+      if (voucherFilter === "voucher") params.set("hasAllocations", "1");
       const res = await fetch(`/api/finance/receipts?${params}`);
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
@@ -151,6 +160,24 @@ function InvoiceReceiptDetailContent() {
             }}
           />
         </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant={voucherFilter === "all" ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setVoucherFilter("all"); setPage(1); }}
+          >
+            全部回款
+          </Button>
+          <Button
+            variant={voucherFilter === "voucher" ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setVoucherFilter("voucher"); setPage(1); }}
+          >
+            <FileCheck className="h-3.5 w-3.5 mr-1" />
+            凭证匹配
+          </Button>
+        </div>
+
         {isAdmin && (
           <div className="flex items-center gap-1">
             <Button
@@ -176,6 +203,20 @@ function InvoiceReceiptDetailContent() {
             </Button>
           </div>
         )}
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            const params = new URLSearchParams();
+            if (search) params.set("search", search);
+            if (voucherFilter === "voucher") params.set("hasAllocations", "1");
+            window.open(`/api/finance/receipts/export?${params.toString()}`, "_blank");
+          }}
+        >
+          <Download className="h-3.5 w-3.5 mr-1" />
+          导出
+        </Button>
       </div>
 
       {isLoading ? (
@@ -302,7 +343,15 @@ function InvoiceReceiptDetailContent() {
               align: "center",
               render: (r) =>
                 r.allocationCount > 0 ? (
-                  <Badge variant="secondary">{r.allocationCount} 张</Badge>
+                  <button
+                    className="text-primary hover:underline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewingAllocations(r);
+                    }}
+                  >
+                    <Badge variant="secondary">{r.allocationCount} 张</Badge>
+                  </button>
                 ) : (
                   "-"
                 ),
@@ -477,6 +526,7 @@ function InvoiceReceiptDetailContent() {
           source: editingReceipt.source,
           remark: editingReceipt.remark,
           orderId: editingReceipt.order?.id || null,
+          allocations: editingReceipt.allocations,
         } : null}
         onSuccess={() => {
           setEditingReceipt(null);
@@ -484,6 +534,34 @@ function InvoiceReceiptDetailContent() {
           queryClient.invalidateQueries({ queryKey: ["finance", "summary"] });
         }}
       />
+
+      {/* View allocations dialog */}
+      <Dialog open={!!viewingAllocations} onOpenChange={(open) => { if (!open) setViewingAllocations(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>回款核销明细</DialogTitle>
+            <DialogDescription>
+              回款编号 {viewingAllocations?.id}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {(viewingAllocations?.allocations || []).map((a) => (
+              <div key={a.id} className="flex items-center justify-between py-2 border-b text-sm">
+                <div>
+                  <p className="font-medium">{a.invoice?.actualInvoiceNo || a.invoiceId}</p>
+                  {a.order?.orderNo && (
+                    <p className="text-xs text-muted-foreground">订单: {a.order.orderNo}</p>
+                  )}
+                </div>
+                <MoneyText value={a.amount} tone="income" />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingAllocations(null)}>关闭</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

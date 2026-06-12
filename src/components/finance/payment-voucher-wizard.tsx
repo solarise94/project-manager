@@ -19,6 +19,7 @@ import { MoneyText } from "@/components/finance/money-text";
 import { PaymentStatusBadge } from "@/components/finance/finance-status-badge";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { getTodayLocalDateInput } from "@/lib/finance/date-input";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ interface MatchResponse {
   candidateInvoices: CandidateInvoice[];
   orphanInvoiceCount: number;
   excludedCoveredInvoiceCount: number;
+  excludedNonIssuedInvoiceCount: number;
+  excludedFullyAllocatedInvoiceCount: number;
   candidateTotal: number;
   combinations?: Combination[];
   nearestBelow?: { sum: number; delta: number; count: number };
@@ -82,7 +85,7 @@ export function PaymentVoucherWizard({ open, onOpenChange, onSuccess }: PaymentV
   const [orgResults, setOrgResults] = useState<Array<{ id: string; canonicalName: string }>>([]);
   const [orgSearching, setOrgSearching] = useState(false);
   const [amount, setAmount] = useState("");
-  const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
+  const [receivedAt, setReceivedAt] = useState(getTodayLocalDateInput());
   const [remark, setRemark] = useState("");
 
   // Matching state
@@ -106,7 +109,7 @@ export function PaymentVoucherWizard({ open, onOpenChange, onSuccess }: PaymentV
     setOrgSearch("");
     setOrgResults([]);
     setAmount("");
-    setReceivedAt(new Date().toISOString().slice(0, 10));
+    setReceivedAt(getTodayLocalDateInput());
     setRemark("");
     setMatchResult(null);
     setSelectedCombination(null);
@@ -326,7 +329,7 @@ export function PaymentVoucherWizard({ open, onOpenChange, onSuccess }: PaymentV
                 <span className="font-medium"><MoneyText value={parseFloat(amount)} /></span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">候���发票 / 合计:</span>
+                <span className="text-muted-foreground">候选发票 / 合计:</span>
                 <span>{matchResult.candidateInvoices.length} 张 / <MoneyText value={matchResult.candidateTotal} /></span>
               </div>
               {matchResult.orphanInvoiceCount > 0 && (
@@ -336,7 +339,22 @@ export function PaymentVoucherWizard({ open, onOpenChange, onSuccess }: PaymentV
               )}
               {matchResult.excludedCoveredInvoiceCount > 0 && (
                 <div className="text-amber-600 text-xs">
-                  另有 {matchResult.excludedCoveredInvoiceCount} 张多订单覆盖发票需人工处理
+                  该机构有 {matchResult.excludedCoveredInvoiceCount} 张多订单覆盖发票，Phase 1 暂不支持自动匹配
+                </div>
+              )}
+              {matchResult.excludedNonIssuedInvoiceCount > 0 && (
+                <div className="text-muted-foreground text-xs">
+                  该机构有 {matchResult.excludedNonIssuedInvoiceCount} 张发票未达已开票状态，未纳入匹配
+                </div>
+              )}
+              {matchResult.excludedFullyAllocatedInvoiceCount > 0 && (
+                <div className="text-muted-foreground text-xs">
+                  该机构有 {matchResult.excludedFullyAllocatedInvoiceCount} 张发票 outstanding 为 0（已核销完毕），已排除
+                </div>
+              )}
+              {matchResult.candidateInvoices.length === 0 && (
+                <div className="text-xs text-muted-foreground mt-1">
+                  空候选不代表机构解析失败，而是该机构下无可参与自动匹配的发票。
                 </div>
               )}
               {matchResult.degraded && (

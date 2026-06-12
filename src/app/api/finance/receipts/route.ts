@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { isFinanceBlocked } from "@/lib/finance/permissions";
 import { getOrderScopeWhere } from "@/lib/orders/permissions";
+import { buildReceivedAtDayRange, parseReceivedAtInput } from "@/lib/finance/receipt-date";
 import { prisma } from "@/lib/prisma";
 
 async function resolveOrderAndCheckScope(
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
   const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("pageSize") || "20", 10)));
   const includeDeleted = url.searchParams.get("includeDeleted") === "1" && session.user.role === "ADMIN";
   const deletedOnly = url.searchParams.get("deletedOnly") === "1" && session.user.role === "ADMIN";
+  const hasAllocations = url.searchParams.get("hasAllocations") === "1";
 
   // If projectId is passed, resolve to order IDs via OrderProjectLink
   let resolvedOrderIds: string[] | null = null;
@@ -105,10 +107,13 @@ export async function GET(req: NextRequest) {
     });
   }
   if (dateFrom || dateTo) {
-    const receivedAtFilter: Record<string, Date> = {};
-    if (dateFrom) receivedAtFilter.gte = new Date(dateFrom);
-    if (dateTo) receivedAtFilter.lte = new Date(dateTo + "T23:59:59.999Z");
-    andConditions.push({ receivedAt: receivedAtFilter });
+    try {
+      const receivedAtFilter = buildReceivedAtDayRange(dateFrom, dateTo);
+      andConditions.push({ receivedAt: receivedAtFilter });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Invalid date";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
   }
 
   // Non-ADMIN: scope by order visibility
@@ -143,6 +148,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Voucher filter: only receipts with allocations
+  if (hasAllocations) {
+    andConditions.push({ allocations: { some: {} } });
+  }
+
   // Deletion filter: non-ADMIN always sees only non-deleted; ADMIN can toggle
   if (deletedOnly) {
     andConditions.push({ deleted: true });
@@ -173,7 +183,15 @@ export async function GET(req: NextRequest) {
         customer: { select: { id: true, name: true } },
         order: { select: { id: true, orderNo: true, externalOrderNo: true } },
         createdBy: { select: { id: true, name: true } },
-        allocations: { select: { id: true, invoiceId: true, amount: true } },
+        allocations: {
+          select: {
+            id: true,
+            invoiceId: true,
+            amount: true,
+            invoice: { select: { actualInvoiceNo: true } },
+            order: { select: { orderNo: true } },
+          },
+        },
       },
     }),
     prisma.financeReceipt.count({ where }),
@@ -233,7 +251,6 @@ export async function POST(req: NextRequest) {
       remark,
       organizationId,
       allocations,
-      orderId,
     });
   }
 
@@ -253,7 +270,7 @@ export async function POST(req: NextRequest) {
       orderId,
       customerId,
       amount,
-      receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
+      receivedAt: parseReceivedAtInput(receivedAt),
       source: source || "MANUAL",
       remark: remark?.trim() || null,
       createdById: session.user.id,
@@ -279,10 +296,9 @@ async function handleAllocationReceipt(
     remark?: string;
     organizationId?: string;
     allocations: Array<{ invoiceId: string; amount: number }>;
-    orderId?: string;
   },
 ) {
-  const { amount, receivedAt, source, remark, organizationId, allocations, orderId: bodyOrderId } = body;
+  const { amount, receivedAt, source, remark, organizationId, allocations } = body;
 
   // Validate amount
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -404,7 +420,6 @@ async function handleAllocationReceipt(
     where: { id: { in: orderIds } },
     select: { id: true, customerId: true },
   });
-  const orderMap = new Map(orders.map((o) => [o.id, o]));
 
   // Resolve customer for receipt-level reference.
   // Cross-customer receipts are rejected: all invoices must belong to the same customer.
@@ -465,13 +480,20 @@ async function handleAllocationReceipt(
             { status: 409, body: { error: "CONCURRENT_OVERPAYMENT", invoiceId: alloc.invoiceId, outstanding, requested: alloc.amount } },
           );
         }
+        // Phase 1: exact-match combination means allocation must consume the whole outstanding
+        if (Math.abs(alloc.amount - outstanding) > 0.001) {
+          throw Object.assign(
+            new Error(`发票 ${inv.id} 分摊金额 (${alloc.amount}) 必须等于其剩余金额 (${outstanding.toFixed(2)})，Phase 1 禁止部分核销`),
+            { status: 400, body: { error: "PARTIAL_ALLOCATION_NOT_ALLOWED", invoiceId: alloc.invoiceId, outstanding, requested: alloc.amount } },
+          );
+        }
       }
 
       // Create receipt (1-to-1 fields NULL per §6.2)
       const receipt = await tx.financeReceipt.create({
         data: {
           amount,
-          receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
+          receivedAt: parseReceivedAtInput(receivedAt),
           source: source || "BANK",
           remark: remark?.trim() || null,
           createdById: userId,
@@ -554,8 +576,8 @@ async function handleAllocationReceipt(
     }, { status: 201 });
   } catch (err: unknown) {
     const e = err as { status?: number; body?: unknown; message?: string };
-    if (e.status === 409) {
-      return NextResponse.json(e.body || { error: e.message }, { status: 409 });
+    if (e.status === 400 || e.status === 409) {
+      return NextResponse.json(e.body || { error: e.message }, { status: e.status });
     }
     throw err;
   }

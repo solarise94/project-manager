@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { isFinanceBlocked, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
 import { getOrderScopeWhere } from "@/lib/orders/permissions";
+import { parseReceivedAtInput } from "@/lib/finance/receipt-date";
 import { prisma } from "@/lib/prisma";
 
 async function resolveReceiptCustomerId(receipt: {
@@ -170,7 +171,7 @@ export async function PATCH(
   if (!existing) return NextResponse.json({ error: "Not Found" }, { status: 404 });
   if (existing.deleted) return NextResponse.json({ error: "已删除的到款记录不能编辑" }, { status: 409 });
 
-  // §9.3: Block amount/orderId changes if receipt has allocations
+  // §9.3: Block amount/orderId/source changes if receipt has allocations
   const hasAllocations = existing.allocations.length > 0;
   if (hasAllocations) {
     if (amount !== undefined && amount !== existing.amount) {
@@ -183,6 +184,11 @@ export async function PATCH(
         error: "该回款包含发票核销分摊，不能修改关联订单",
       }, { status: 409 });
     }
+    if (source !== undefined && source !== existing.source) {
+      return NextResponse.json({
+        error: "该回款包含发票核销分摊，不能修改来源",
+      }, { status: 409 });
+    }
   }
 
   // Validation
@@ -191,9 +197,11 @@ export async function PATCH(
       return NextResponse.json({ error: "金额必须大于 0" }, { status: 400 });
     }
   }
+  let parsedReceivedAt: Date | undefined;
   if (receivedAt !== undefined) {
-    const d = new Date(receivedAt);
-    if (isNaN(d.getTime())) {
+    try {
+      parsedReceivedAt = parseReceivedAtInput(receivedAt);
+    } catch {
       return NextResponse.json({ error: "到款日期无效" }, { status: 400 });
     }
   }
@@ -234,7 +242,7 @@ export async function PATCH(
       where: { id },
       data: {
         ...(amount !== undefined ? { amount } : {}),
-        ...(receivedAt !== undefined ? { receivedAt: new Date(receivedAt) } : {}),
+        ...(parsedReceivedAt !== undefined ? { receivedAt: parsedReceivedAt } : {}),
         ...(source !== undefined ? { source } : {}),
         ...(remark !== undefined ? { remark } : {}),
         customerId: derivedCustomerId,
@@ -249,7 +257,7 @@ export async function PATCH(
   const receipt = await prisma.financeReceipt.update({
     where: { id },
     data: {
-      ...(receivedAt !== undefined ? { receivedAt: new Date(receivedAt) } : {}),
+      ...(parsedReceivedAt !== undefined ? { receivedAt: parsedReceivedAt } : {}),
       ...(source !== undefined ? { source } : {}),
       ...(remark !== undefined ? { remark } : {}),
     },

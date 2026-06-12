@@ -35,6 +35,8 @@ interface MatchResult {
   candidateInvoices: CandidateInvoice[];
   orphanInvoiceCount: number;
   excludedCoveredInvoiceCount: number;
+  excludedNonIssuedInvoiceCount: number;
+  excludedFullyAllocatedInvoiceCount: number;
   candidateTotal: number;
   combinations?: Combination[];
   nearestBelow?: { sum: number; delta: number; count: number };
@@ -262,7 +264,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { organizationId, amount, receivedAt } = body;
+  const { organizationId, amount } = body;
 
   if (!organizationId || typeof organizationId !== "string") {
     return NextResponse.json({ error: "organizationId 必填" }, { status: 400 });
@@ -307,7 +309,8 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // 3. Count excluded covered invoices for this org (within user's customer scope)
+  // 3. Count excluded covered invoices (any orderCoverage means multi-order
+  //    coverage, which Phase 1 explicitly excludes per §1.1 S5 / §3.1).
   const excludedCoveredInvoiceCount = await prisma.externalOrderInvoiceRequest.count({
     where: {
       AND: [
@@ -328,7 +331,27 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // 4. Query candidate invoices
+  // 3b. Count non-ISSUED invoices for this org (DRAFT, REQUESTED, CANCELLED)
+  const excludedNonIssuedInvoiceCount = await prisma.externalOrderInvoiceRequest.count({
+    where: {
+      AND: [
+        { buyerOrganizationId: organizationId },
+        { status: { not: "ISSUED" } },
+        { totalAmount: { gt: 0 } },
+        scopedCustomerIds
+          ? {
+              OR: [
+                { order: { customerId: { in: scopedCustomerIds } } },
+                { externalOrder: { customerId: { in: scopedCustomerIds } } },
+              ],
+            }
+          : {},
+      ],
+    },
+  });
+
+  // 4. Query candidate invoices.
+  //    Phase 1 only supports direct-order invoices with no orderCoverage.
   const candidateInvoicesRaw = await prisma.externalOrderInvoiceRequest.findMany({
     where: {
       AND: [
@@ -403,6 +426,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  let excludedFullyAllocatedInvoiceCount = 0;
   const candidateInvoices: CandidateInvoice[] = [];
   for (const inv of candidateInvoicesRaw) {
     const allocated = allocatedMap.get(inv.id) || 0;
@@ -417,6 +441,8 @@ export async function POST(req: NextRequest) {
         orderId: inv.orderId,
         buyerOrganizationName: inv.buyerOrganizationName,
       });
+    } else {
+      excludedFullyAllocatedInvoiceCount++;
     }
   }
 
@@ -432,6 +458,8 @@ export async function POST(req: NextRequest) {
       candidateInvoices,
       orphanInvoiceCount,
       excludedCoveredInvoiceCount,
+      excludedNonIssuedInvoiceCount,
+      excludedFullyAllocatedInvoiceCount,
       candidateTotal: Math.round(candidateTotal * 100) / 100,
       nearestBelow: {
         sum: Math.round(candidateTotal * 100) / 100,
@@ -472,10 +500,16 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // Sort: fewer invoices first, then earlier invoice dates first
+    // Sort: fewer invoices first, then prefer older invoices (FIFO)
     combinations.sort((a, b) => {
       if (a.count !== b.count) return a.count - b.count;
-      return 0; // preserve order (already sorted by amount)
+      const minA = Math.min(
+        ...a.invoiceIds.map((id) => invoiceMap.get(id)!.issuedAt ? new Date(invoiceMap.get(id)!.issuedAt!).getTime() : Infinity),
+      );
+      const minB = Math.min(
+        ...b.invoiceIds.map((id) => invoiceMap.get(id)!.issuedAt ? new Date(invoiceMap.get(id)!.issuedAt!).getTime() : Infinity),
+      );
+      return minA - minB;
     });
 
     return NextResponse.json({
@@ -484,6 +518,8 @@ export async function POST(req: NextRequest) {
       candidateInvoices,
       orphanInvoiceCount,
       excludedCoveredInvoiceCount,
+      excludedNonIssuedInvoiceCount,
+      excludedFullyAllocatedInvoiceCount,
       candidateTotal: Math.round(candidateTotal * 100) / 100,
       combinations,
       degraded: exactResult.degraded,
@@ -492,9 +528,7 @@ export async function POST(req: NextRequest) {
     } as MatchResult);
   }
 
-  // 8. No exact match — compute nearest neighbors
-  const nearest = findNearestCombinations(items, targetCents);
-
+  // 8. No exact match — compute nearest neighbors (only when DP is feasible)
   const result: MatchResult = {
     status: "NO_EXACT_MATCH",
     reason: "NO_SUBSET_EQUALS",
@@ -502,23 +536,35 @@ export async function POST(req: NextRequest) {
     candidateInvoices,
     orphanInvoiceCount,
     excludedCoveredInvoiceCount,
+    excludedNonIssuedInvoiceCount,
+    excludedFullyAllocatedInvoiceCount,
     candidateTotal: Math.round(candidateTotal * 100) / 100,
     degraded: exactResult.degraded,
   };
 
-  if (nearest.below) {
-    result.nearestBelow = {
-      sum: Math.round(nearest.below.sum) / 100,
-      delta: Math.round((nearest.below.sum - targetCents)) / 100,
-      count: nearest.below.ids.length,
-    };
-  }
-  if (nearest.above) {
-    result.nearestAbove = {
-      sum: Math.round(nearest.above.sum) / 100,
-      delta: Math.round((nearest.above.sum - targetCents)) / 100,
-      count: nearest.above.ids.length,
-    };
+  const canComputeNearest =
+    targetCents <= MAX_T_FOR_DP &&
+    items.length <= MAX_N_FOR_EXACT &&
+    (items.length + 1) * (targetCents + 1) <= 200_000_000;
+
+  if (canComputeNearest) {
+    const nearest = findNearestCombinations(items, targetCents);
+    if (nearest.below) {
+      result.nearestBelow = {
+        sum: nearest.below.sum / 100,
+        delta: (nearest.below.sum - targetCents) / 100,
+        count: nearest.below.ids.length,
+      };
+    }
+    if (nearest.above) {
+      result.nearestAbove = {
+        sum: nearest.above.sum / 100,
+        delta: (nearest.above.sum - targetCents) / 100,
+        count: nearest.above.ids.length,
+      };
+    }
+  } else {
+    result.degraded = true;
   }
 
   return NextResponse.json(result);

@@ -3,11 +3,11 @@
 > **文档编号**：`DOC-001`
 > **模块**：Finance / 财务
 > **版本**：v2（评审修订版）
-> **状态**：Design Draft（待第二轮评审）
+> **状态**：Implemented（Phase 1/2/3 已落地）
 > **创建日期**：2026-06-12
 > **最近更新**：2026-06-12
 > **作者**：SciManage Dev
-> **相关文件**：`src/lib/finance/*`、`src/app/finance/order-receivables/page.tsx`、`prisma/schema.prisma`
+> **相关文件**：`src/lib/finance/*`、`src/app/finance/order-receivables/page.tsx`、`src/app/finance/invoice-receipt-detail/page.tsx`、`src/app/finance/bank-flow-import/page.tsx`、`prisma/schema.prisma`
 
 ### 版本历史
 
@@ -17,6 +17,10 @@
 | v2 | 2026-06-12 | 按 7 条评审 finding 全面修订：① 引入 `FinanceReceiptAllocation` 作为唯一回款分摊真源，重写 order-receivable / payment-status / receipt CRUD 聚合口径；② 候选筛选改为"机构解析 + 可见 scope 双过滤"，buyerOrganizationId=NULL 历史发票排除；③ 组合算法改为带索引的 meet-in-the-middle / 回溯，保留发票 identity；④ 明确"Phase 1 禁止差额"，confirm API 强校验 `Σ allocation == receipt.amount`；⑤ 新增 `canWriteFinance` helper；⑥ RED 冲红前置校验同时查新表 + 历史单字段 |
 | v2.1 | 2026-06-12 | 第二轮评审修补：① 明确 Phase 1 仅支持 `orderId != NULL` 且 `orderCoverage` 为空的单经济订单发票，排除 `OrderInvoiceCoverage` 场景；② 修正候选 scope 伪代码，改为先求 customer scope 再 AND 到 invoice relation where；③ 明确 `FinanceReceipt` 为软删除，allocation 聚合必须统一过滤 `receipt.deleted = false` |
 | v2.2 | 2026-06-12 | 按代码库盘点收敛方案：① 不新增 `BANK_VOUCHER`，复用 `FinanceReceipt.source="BANK"`，以 `allocations.length > 0` 识别凭证匹配回款；② 删除独立 confirm API，改为扩展现有 `POST /api/finance/receipts` 支持 `allocations[]` 分支；③ match API 只接受 `organizationId`，机构解析改由前端复用现有 `/api/organizations/resolve` + `OrganizationSelect`；④ UI 不拆 `combination-card.tsx` / `invoice-picker-table.tsx`，统一内联到 wizard 并复用现有 `FinanceDataTable` / `MoneyText`；⑤ 聚合改造直接落在现有 `getOrderReceiptTotals` / `getInvoicesForOrder` / `payment-status`，不再新增同义 wrapper/helper 名称 |
+| v2.3 | 2026-06-12 | Phase 1/2/3 落地实现：① 修正组合排序为“张数升序 + 开票日期升序（FIFO）”并严格按 `orderCoverage: { none: {} }` 排除覆盖发票；② receipts POST 在事务内强制 `allocation.amount == outstanding`；③ PATCH 禁止修改含 allocation 回款的来源；④ 回款流水页新增“凭证匹配”筛选、导出 CSV、核销明细弹窗；⑤ 新增 `/finance/bank-flow-import` 银行流水批量导入与复核队列；⑥ 通过 `npm run lint` 与 `npm run build` |
+| v2.4 | 2026-06-12 | 复核修复：① 银行流水导入使用 `cellDates: true` + `XLSX.SSF.parse_date_code` 正确解析 Excel serial date，同时支持 `yyyy/mm/dd`、`yyyy-mm-dd` 等字符串；② “第一行是表头”开关改为事件驱动并重新切分数据行，无表头文件不再漏首行；③ 回款 CSV 导出增加“发票号”“核销明细”列，allocation receipt 的订单号从 `FinanceReceiptAllocation.order` 聚合；④ 批量确认设置 `processing`、完成后进入 done 视图并禁用重复提交 |
+| v2.5 | 2026-06-12 | 二次复核修复：① 日期统一用 `getFullYear/getMonth/getDate` 格式化为本地日期，避免 `toISOString().slice(0,10)` 在东八区早一天；② `confirmAllMatched()` 改为返回失败计数，存在失败行时停留在复核页并 toast 提示，不再无条件进入 done；③ CSV 导出的空 scope 早期返回也使用 9 列表头，与正常路径格式一致 |
+| v2.6 | 2026-06-12 | 统一财务回款日期约定：① 新增 `src/lib/finance/date-input.ts` 提供 `formatLocalDateInput / getTodayLocalDateInput / isDateInputString / parseDateInputToLocalDate`；② 新增 `src/lib/finance/receipt-date.ts` 提供 `parseReceivedAtInput / buildReceivedAtDayRange`；③ `PaymentVoucherWizard`、`BankFlowImport`、`ReceiptFormDialog` 默认日期统一走 helper；④ `POST /api/finance/receipts`、`PATCH /api/finance/receipts/[id]`、`GET /api/finance/receipts` 的 dateFrom/dateTo 统一走后端 helper；⑤ 文档新增 S7 日期语义承诺 |
 
 ---
 
@@ -52,8 +56,9 @@
 | S4 | **候选 = 机构解析命中 ∩ 用户可见 scope** | `buyerOrganizationId IS NULL` 的历史发票不进候选；向导明确提示"未绑机构的发票需先在发票工作台补绑" |
 | S5 | **Phase 1 只支持单经济订单锚点发票** | 候选发票必须满足 `orderId != NULL` 且 `orderCoverage` 为空；使用 `OrderInvoiceCoverage` 覆盖多个订单的发票本期不参与自动凭证匹配 |
 | S6 | **allocation 聚合只统计未软删除 receipt** | `FinanceReceipt` DELETE 只是 `deleted=true`；所有 outstanding / payment-status / order totals / RED occupation 都必须显式过滤 `receipt.deleted = false` |
+| S7 | **receivedAt 是业务自然日，不是精确时间戳** | 前端传输格式固定为 `YYYY-MM-DD`；默认值按用户本地自然日生成；后端按自然日（UTC `00:00:00`）落库，并按自然日闭区间过滤；前后端统一走 `lib/finance/date-input.ts` / `lib/finance/receipt-date.ts`，禁止业务组件直接写 `toISOString().slice(0, 10)` |
 
-这六条承诺一旦改变，需要连同 §5（写库）、§6（模型）、§7（API）、§10（UI/接入）一起修订。
+这七条承诺一旦改变，需要连同 §5（写库）、§6（模型）、§7（API）、§10（UI/接入）一起修订。
 
 ---
 

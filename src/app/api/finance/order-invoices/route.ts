@@ -146,14 +146,16 @@ export async function POST(req: NextRequest) {
   });
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
 
-  // Deduplicate and validate ALL covered orders (including the primary)
+  // Deduplicate additional covered orders (NOT including the primary orderId)
   const covIds: string[] = Array.isArray(coveredOrderIds)
-    ? (coveredOrderIds as string[])
+    ? (coveredOrderIds as string[]).filter((id) => id !== orderId)
     : [];
-  const allCovered = [orderId, ...covIds].filter((v, i, a) => a.indexOf(v) === i);
+  const uniqueCovIds = [...new Set(covIds)];
+  // Validate ALL touched orders (primary + additional covered)
+  const allTouched = [orderId, ...uniqueCovIds];
 
-  // Validate every covered order: exists, no active invoice (including primary)
-  for (const cid of allCovered) {
+  // Validate every touched order: exists, no active invoice (primary + additional)
+  for (const cid of allTouched) {
     const co = await prisma.order.findUnique({
       where: { id: cid, deleted: false },
       select: { id: true },
@@ -225,7 +227,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    for (const oid of allCovered) {
+    // Only create OrderInvoiceCoverage for additional covered orders.
+    // The primary order is already linked via invoice.orderId.
+    // Writing a self-coverage record (coverage.orderId === invoice.orderId)
+    // would make the invoice look like a multi-order covered invoice to the
+    // Phase 1 payment voucher matcher, causing incorrect exclusion.
+    for (const oid of uniqueCovIds) {
       await tx.orderInvoiceCoverage.create({
         data: { invoiceRequestId: inv.id, orderId: oid },
       });
@@ -235,7 +242,7 @@ export async function POST(req: NextRequest) {
   });
 
   // Sync legacy ExternalOrder.invoiceStatus via legacyExternalOrderId
-  for (const oid of allCovered) {
+  for (const oid of allTouched) {
     const ord = await prisma.order.findUnique({
       where: { id: oid },
       select: { legacyExternalOrderId: true },

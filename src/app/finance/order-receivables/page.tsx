@@ -3,8 +3,8 @@
 import { useState, Suspense } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2, Search, ShoppingBag, FileText, Banknote, AlertCircle, Eye, Receipt } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Search, ShoppingBag, FileText, Banknote, AlertCircle, Eye, Receipt, FileSpreadsheet } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -82,6 +82,7 @@ function OrderReceivablesContent() {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [voucherWizardOpen, setVoucherWizardOpen] = useState(false);
@@ -134,9 +135,9 @@ function OrderReceivablesContent() {
   const unpaidTotal = stats?.unpaidTotal || 0;
 
   const getPaymentStatus = (o: OrderReceivable) => {
-    const unreceived = Math.max(o.invoicedAmount - o.receivedAmount, 0);
-    if (o.invoicedAmount === 0) return "UNPAID";
-    if (unreceived <= 0) return "PAID";
+    if (o.invoicedAmount <= 0) return "UNPAID";
+    if (o.receivedAmount <= 0) return "UNPAID";
+    if (o.receivedAmount >= o.invoicedAmount) return "PAID";
     return "PARTIAL";
   };
 
@@ -177,14 +178,24 @@ function OrderReceivablesContent() {
             />
           </div>
           {(session?.user?.role === "ADMIN" || session?.user?.role === "USER") && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => setVoucherWizardOpen(true)}
-            >
-              <Receipt className="h-4 w-4 mr-1" />
-              凭证匹配
-            </Button>
+            <>
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setVoucherWizardOpen(true)}
+              >
+                <Receipt className="h-4 w-4 mr-1" />
+                凭证匹配
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push("/finance/bank-flow-import")}
+              >
+                <FileSpreadsheet className="h-4 w-4 mr-1" />
+                批量导入
+              </Button>
+            </>
           )}
         </div>
 
@@ -331,6 +342,10 @@ function OrderReceivablesContent() {
       <PaymentVoucherWizard
         open={voucherWizardOpen}
         onOpenChange={setVoucherWizardOpen}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["order-receivables"] });
+          queryClient.invalidateQueries({ queryKey: ["finance", "summary"] });
+        }}
       />
     </div>
   );
