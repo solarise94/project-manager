@@ -41,6 +41,8 @@ interface ReceiptItem {
   deletedById: string | null;
   deletedByName: string | null;
   deleteReason: string | null;
+  allocationCount: number;
+  allocations?: Array<{ id: string; invoiceId: string; amount: number }>;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -293,6 +295,17 @@ function InvoiceReceiptDetailContent() {
                   {SOURCE_LABELS[r.source] || r.source}
                 </Badge>
               ),
+            },
+            {
+              key: "allocationCount",
+              header: "核销发票",
+              align: "center",
+              render: (r) =>
+                r.allocationCount > 0 ? (
+                  <Badge variant="secondary">{r.allocationCount} 张</Badge>
+                ) : (
+                  "-"
+                ),
             },
             {
               key: "createdBy",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { assertInvoiceNotOccupied } from "@/lib/finance/order-invoices";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions);
@@ -23,6 +24,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!invoice) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (invoice.status !== "ISSUED") {
     return NextResponse.json({ error: "只有已开票的发票才能冲红" }, { status: 400 });
+  }
+
+  // §9.1: Check invoice occupation before allowing RED
+  try {
+    await assertInvoiceNotOccupied(id);
+  } catch (err: unknown) {
+    const e = err as { status?: number; body?: unknown };
+    if (e.status === 409) {
+      return NextResponse.json(e.body, { status: 409 });
+    }
+    throw err;
   }
 
   const body = await req.json();

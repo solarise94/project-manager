@@ -56,6 +56,7 @@ const INVOICE_SELECT = {
   coverage: { select: { externalOrder: { select: { id: true } } } },
   documents: { select: { id: true } },
   receipts: { where: { deleted: false }, select: { amount: true } },
+  allocations: { where: { receipt: { deleted: false } }, select: { amount: true } },
   adjustmentsAsOriginal: { select: { id: true, kind: true, reason: true, createdAt: true } },
 } as const;
 
@@ -159,6 +160,7 @@ function normalizeInvoice(
     coverage: Array<{ externalOrder: { id: string } | null }>;
     documents: Array<{ id: string }>;
     receipts: Array<{ amount: number }>;
+    allocations?: Array<{ amount: number }>;
     adjustmentsAsOriginal?: Array<{ id: string; kind: string; reason: string | null; createdAt: Date }>;
   },
   linkType: InvoiceLinkType,
@@ -188,7 +190,9 @@ function normalizeInvoice(
     coveredOrders,
     items: raw.items,
     _documentCount: raw.documents.length,
-    _receiptAmount: raw.receipts.reduce((s, r) => s + r.amount, 0),
+    _receiptAmount:
+      raw.receipts.reduce((s, r) => s + r.amount, 0) +
+      (raw.allocations || []).reduce((s, a) => s + a.amount, 0),
     adjustments: raw.adjustmentsAsOriginal,
   };
 }
@@ -203,4 +207,53 @@ export async function findBlockingInvoicesForOrder(
     const hasRed = inv.adjustments?.some((a) => a.kind === "RED");
     return !hasRed;
   });
+}
+
+/**
+ * Check if an invoice is occupied by any receipt (new allocation or legacy 1-to-1).
+ * Returns the occupied amount, or 0 if the invoice is free.
+ * Per §9.1: checks both FinanceReceiptAllocation and legacy FinanceReceipt.externalOrderInvoiceRequestId.
+ * Per §1.1 S6: always filters receipt.deleted = false.
+ */
+export async function getInvoiceOccupiedAmount(invoiceId: string): Promise<number> {
+  // New path: FinanceReceiptAllocation
+  const allocations = await prisma.financeReceiptAllocation.findMany({
+    where: {
+      invoiceId,
+      receipt: { deleted: false },
+    },
+    select: { amount: true },
+  });
+  const allocTotal = allocations.reduce((s, a) => s + a.amount, 0);
+
+  // Legacy path: FinanceReceipt.externalOrderInvoiceRequestId (only receipts WITHOUT allocations)
+  const legacyReceipts = await prisma.financeReceipt.findMany({
+    where: {
+      externalOrderInvoiceRequestId: invoiceId,
+      deleted: false,
+      allocations: { none: {} },
+    },
+    select: { amount: true },
+  });
+  const legacyTotal = legacyReceipts.reduce((s, r) => s + r.amount, 0);
+
+  return allocTotal + legacyTotal;
+}
+
+/**
+ * Assert invoice is not occupied. Throws { status: 409, body } if occupied.
+ * Used by RED / REISSUE routes per §9.1.
+ */
+export async function assertInvoiceNotOccupied(invoiceId: string): Promise<void> {
+  const occupied = await getInvoiceOccupiedAmount(invoiceId);
+  if (occupied > 0) {
+    throw Object.assign(new Error("INVOICE_OCCUPIED"), {
+      status: 409,
+      body: {
+        error: "INVOICE_OCCUPIED",
+        message: "该发票已有回款核销，请先撤销核销再冲红",
+        occupiedAmount: occupied,
+      },
+    });
+  }
 }

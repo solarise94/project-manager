@@ -141,18 +141,46 @@ export async function getGlobalInvoiceTotal(orderIds: string[]): Promise<number>
 
 /**
  * Compute receipt totals per order.
+ * Aggregates from FinanceReceiptAllocation (new path) + legacy FinanceReceipt.orderId (1-to-1).
+ * All queries filter receipt.deleted = false per §1.1 S6.
  */
 export async function getOrderReceiptTotals(orderIds: string[]): Promise<Map<string, number>> {
   if (orderIds.length === 0) return new Map();
-  const receipts = await collectByChunks(orderIds, (chunk) =>
-    prisma.financeReceipt.findMany({
-      where: { orderId: { in: chunk }, deleted: false },
+
+  const result = new Map<string, number>();
+
+  // New path: FinanceReceiptAllocation (primary source per §1.1 S1)
+  const allocations = await collectByChunks(orderIds, (chunk) =>
+    prisma.financeReceiptAllocation.findMany({
+      where: {
+        orderId: { in: chunk },
+        receipt: { deleted: false },
+      },
       select: { orderId: true, amount: true },
     })
   );
-  const result = new Map<string, number>();
-  for (const r of receipts) {
-    result.set(r.orderId!, (result.get(r.orderId!) || 0) + r.amount);
+  for (const a of allocations) {
+    if (a.orderId) {
+      result.set(a.orderId, (result.get(a.orderId) || 0) + a.amount);
+    }
   }
+
+  // Legacy path: FinanceReceipt.orderId (1-to-1, backward compatible per §4.3)
+  const legacyReceipts = await collectByChunks(orderIds, (chunk) =>
+    prisma.financeReceipt.findMany({
+      where: {
+        orderId: { in: chunk },
+        deleted: false,
+        allocations: { none: {} }, // exclude receipts that already have allocations (avoid double-count)
+      },
+      select: { orderId: true, amount: true },
+    })
+  );
+  for (const r of legacyReceipts) {
+    if (r.orderId) {
+      result.set(r.orderId, (result.get(r.orderId) || 0) + r.amount);
+    }
+  }
+
   return result;
 }

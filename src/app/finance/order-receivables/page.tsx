@@ -4,7 +4,7 @@ import { useState, Suspense } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Search, ShoppingBag, FileText, Banknote, AlertCircle, Eye } from "lucide-react";
+import { Loader2, Search, ShoppingBag, FileText, Banknote, AlertCircle, Eye, Receipt } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,6 +16,7 @@ import { MoneyText } from "@/components/finance/money-text";
 import { FinanceEmptyState } from "@/components/finance/finance-empty-state";
 import { PaymentStatusBadge } from "@/components/finance/finance-status-badge";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { PaymentVoucherWizard } from "@/components/finance/payment-voucher-wizard";
 import Link from "next/link";
 
 interface OrderReceivable {
@@ -78,10 +79,12 @@ function OrderReceivablesInner() {
 }
 
 function OrderReceivablesContent() {
+  const { data: session } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [voucherWizardOpen, setVoucherWizardOpen] = useState(false);
   const pageSize = 50;
   const isMobile = useMediaQuery("(max-width: 767px)");
 
@@ -163,14 +166,26 @@ function OrderReceivablesContent() {
       </div>
 
       <div className="space-y-3">
-        <div className="relative max-w-sm min-w-0 w-full">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="搜索订单号..."
-            className="pl-8 w-full"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          />
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative max-w-sm min-w-0 w-full">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="搜索订单号..."
+              className="pl-8 w-full"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+          </div>
+          {(session?.user?.role === "ADMIN" || session?.user?.role === "USER") && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setVoucherWizardOpen(true)}
+            >
+              <Receipt className="h-4 w-4 mr-1" />
+              凭证匹配
+            </Button>
+          )}
         </div>
 
         <Tabs value={view} onValueChange={(v) => setView(v as ViewFilter)}>
@@ -313,6 +328,10 @@ function OrderReceivablesContent() {
           )}
         </>
       )}
+      <PaymentVoucherWizard
+        open={voucherWizardOpen}
+        onOpenChange={setVoucherWizardOpen}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { isFinanceBlocked, getFinanceCustomerScopeWhere, getFinanceProjectScopeWhere } from "@/lib/finance/permissions";
+import { getOrderScopeWhere } from "@/lib/orders/permissions";
 import { prisma } from "@/lib/prisma";
 
 async function resolveReceiptCustomerId(receipt: {
@@ -11,6 +12,7 @@ async function resolveReceiptCustomerId(receipt: {
   orderId: string | null;
   projectInvoiceId: string | null;
   externalOrderInvoiceRequestId: string | null;
+  allocations?: Array<{ orderId: string | null }>;
 }): Promise<string | null> {
   if (receipt.customerId) return receipt.customerId;
   if (receipt.externalOrderId) {
@@ -20,6 +22,18 @@ async function resolveReceiptCustomerId(receipt: {
   if (receipt.orderId) {
     const order = await prisma.order.findUnique({ where: { id: receipt.orderId }, select: { customerId: true } });
     if (order?.customerId) return order.customerId;
+  }
+  // Allocations path: resolve from allocation orderIds
+  if (receipt.allocations && receipt.allocations.length > 0) {
+    const orderIds = [...new Set(receipt.allocations.map((a) => a.orderId).filter(Boolean))] as string[];
+    if (orderIds.length > 0) {
+      const orders = await prisma.order.findMany({
+        where: { id: { in: orderIds } },
+        select: { customerId: true },
+      });
+      const customerId = orders.find((o) => o.customerId)?.customerId;
+      if (customerId) return customerId;
+    }
   }
   if (receipt.projectId) {
     const proj = await prisma.project.findUnique({ where: { id: receipt.projectId }, select: { customerId: true } });
@@ -64,6 +78,15 @@ export async function GET(
       projectInvoice: { select: { id: true, totalAmount: true } },
       externalOrderInvoiceRequest: { select: { id: true, totalAmount: true } },
       createdBy: { select: { id: true, name: true } },
+      organization: { select: { id: true, canonicalName: true } },
+      allocations: {
+        include: {
+          invoice: {
+            select: { id: true, actualInvoiceNo: true, totalAmount: true, buyerOrganizationName: true },
+          },
+          order: { select: { id: true, orderNo: true } },
+        },
+      },
     },
   });
   if (!receipt) return NextResponse.json({ error: "Not Found" }, { status: 404 });
@@ -74,17 +97,42 @@ export async function GET(
   }
 
   if (session.user.role !== "ADMIN") {
-    const resolvedCustId = await resolveReceiptCustomerId(receipt);
-    if (resolvedCustId) {
-      const scope = await getFinanceCustomerScopeWhere(session.user.id, session.user.role);
-      if (scope && !scope.id.in.includes(resolvedCustId)) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Collect all order IDs this receipt touches (direct or via allocations)
+    const linkedOrderIds = new Set<string>();
+    if (receipt.orderId) linkedOrderIds.add(receipt.orderId);
+    if (receipt.allocations) {
+      for (const a of receipt.allocations) {
+        if (a.orderId) linkedOrderIds.add(a.orderId);
       }
     }
-    if (receipt.projectId) {
-      const projScope = await getFinanceProjectScopeWhere(session.user.id, session.user.role);
-      if (projScope && !projScope.id.in.includes(receipt.projectId)) {
+
+    if (linkedOrderIds.size > 0) {
+      // Use order-scope (same as list API) for order-linked receipts.
+      // This ensures consistency: a receipt visible in the list is also accessible in detail.
+      const orderScope = await getOrderScopeWhere(session.user.id, session.user.role);
+      if (!orderScope) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      const inScope = await prisma.order.count({
+        where: { id: { in: [...linkedOrderIds] }, AND: [orderScope] },
+      });
+      if (inScope !== linkedOrderIds.size) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    } else {
+      // Fallback: customer-scope for receipts without order links (e.g. project-only)
+      const resolvedCustId = await resolveReceiptCustomerId(receipt);
+      if (resolvedCustId) {
+        const scope = await getFinanceCustomerScopeWhere(session.user.id, session.user.role);
+        if (scope && !scope.id.in.includes(resolvedCustId)) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+      if (receipt.projectId) {
+        const projScope = await getFinanceProjectScopeWhere(session.user.id, session.user.role);
+        if (projScope && !projScope.id.in.includes(receipt.projectId)) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
       }
     }
   }
@@ -116,10 +164,26 @@ export async function PATCH(
     include: {
       settledAdvances: { select: { id: true, amount: true } },
       settledAdvanceRefunds: { select: { id: true, amount: true } },
+      allocations: { select: { id: true, amount: true } },
     },
   });
   if (!existing) return NextResponse.json({ error: "Not Found" }, { status: 404 });
   if (existing.deleted) return NextResponse.json({ error: "已删除的到款记录不能编辑" }, { status: 409 });
+
+  // §9.3: Block amount/orderId changes if receipt has allocations
+  const hasAllocations = existing.allocations.length > 0;
+  if (hasAllocations) {
+    if (amount !== undefined && amount !== existing.amount) {
+      return NextResponse.json({
+        error: "该回款包含发票核销分摊，不能修改金额。请先撤销核销后再修改",
+      }, { status: 409 });
+    }
+    if (orderId !== undefined) {
+      return NextResponse.json({
+        error: "该回款包含发票核销分摊，不能修改关联订单",
+      }, { status: 409 });
+    }
+  }
 
   // Validation
   if (amount !== undefined) {
@@ -148,36 +212,46 @@ export async function PATCH(
 
   // Resolve effective orderId: use new if provided, else keep existing
   const effectiveOrderId = orderId !== undefined ? orderId : existing.orderId;
-  if (!effectiveOrderId) {
+
+  // For allocation-based receipts, allow editing without orderId
+  if (!hasAllocations && !effectiveOrderId) {
     return NextResponse.json({ error: "回款必须关联订单。请先迁移此记录或设置 orderId" }, { status: 400 });
   }
 
-  // Derive customerId from order — always
-  const order = await prisma.order.findUnique({
-    where: { id: effectiveOrderId },
-    select: { id: true, customerId: true },
-  });
-  if (!order) return NextResponse.json({ error: "订单不存在" }, { status: 400 });
+  // Derive customerId from order — only for non-allocation receipts
+  let derivedCustomerId = existing.customerId;
+  if (effectiveOrderId && !hasAllocations) {
+    const order = await prisma.order.findUnique({
+      where: { id: effectiveOrderId },
+      select: { id: true, customerId: true },
+    });
+    if (!order) return NextResponse.json({ error: "订单不存在" }, { status: 400 });
+    derivedCustomerId = order.customerId;
 
-  // If changing to a different order, verify it exists (already done) and consistency
-  if (orderId !== undefined && orderId !== existing.orderId && existing.customerId && order.customerId && existing.customerId !== order.customerId) {
-    // Allow the change since new order's customer takes precedence
+    // Clear legacy fields when orderId is confirmed
+    const clearLegacy = (effectiveOrderId && (existing.projectId || existing.projectInvoiceId || existing.externalOrderId || existing.externalOrderInvoiceRequestId));
+    const receipt = await prisma.financeReceipt.update({
+      where: { id },
+      data: {
+        ...(amount !== undefined ? { amount } : {}),
+        ...(receivedAt !== undefined ? { receivedAt: new Date(receivedAt) } : {}),
+        ...(source !== undefined ? { source } : {}),
+        ...(remark !== undefined ? { remark } : {}),
+        customerId: derivedCustomerId,
+        ...(orderId !== undefined ? { orderId } : {}),
+        ...(clearLegacy ? { projectId: null, projectInvoiceId: null, externalOrderId: null, externalOrderInvoiceRequestId: null } : {}),
+      },
+    });
+    return NextResponse.json(receipt);
   }
 
-  // When orderId is confirmed, clear legacy fields to prevent scope conflicts.
-  // This covers both explicit orderId changes and editing a receipt that still has legacy refs.
-  const clearLegacy = (effectiveOrderId && (existing.projectId || existing.projectInvoiceId || existing.externalOrderId || existing.externalOrderInvoiceRequestId));
-
+  // Allocation-based receipt: only allow remark, receivedAt, source edits
   const receipt = await prisma.financeReceipt.update({
     where: { id },
     data: {
-      ...(amount !== undefined ? { amount } : {}),
       ...(receivedAt !== undefined ? { receivedAt: new Date(receivedAt) } : {}),
       ...(source !== undefined ? { source } : {}),
       ...(remark !== undefined ? { remark } : {}),
-      customerId: order.customerId,
-      ...(orderId !== undefined ? { orderId } : {}),
-      ...(clearLegacy ? { projectId: null, projectInvoiceId: null, externalOrderId: null, externalOrderInvoiceRequestId: null } : {}),
     },
   });
 
@@ -213,6 +287,15 @@ export async function DELETE(
       project: { select: { id: true } },
       projectInvoice: { select: { id: true } },
       externalOrderInvoiceRequest: { select: { id: true } },
+      allocations: {
+        select: {
+          id: true,
+          invoiceId: true,
+          orderId: true,
+          amount: true,
+          createdAt: true,
+        },
+      },
     },
   });
 
@@ -223,6 +306,7 @@ export async function DELETE(
     return NextResponse.json({ error: "该到款已用于预收款核销或垫付退款，请先解除核销关系后再删除" }, { status: 409 });
   }
 
+  // Build snapshot including allocations (§9.2)
   const snapshot = {
     id: receipt.id,
     amount: receipt.amount,
@@ -237,6 +321,13 @@ export async function DELETE(
     externalOrderId: receipt.externalOrderId,
     createdById: receipt.createdById,
     createdAt: receipt.createdAt.toISOString(),
+    allocations: receipt.allocations.map((a) => ({
+      id: a.id,
+      invoiceId: a.invoiceId,
+      orderId: a.orderId,
+      amount: a.amount,
+      createdAt: a.createdAt.toISOString(),
+    })),
   };
 
   const [deletionLog] = await prisma.$transaction([
