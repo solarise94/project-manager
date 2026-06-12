@@ -49,6 +49,11 @@ export async function GET(req: NextRequest) {
     if (repUserIds.length > 0) {
       where.submittedByUserId = { in: repUserIds };
     } else {
+      // Without managed reps, the review queue has nothing actionable.
+      // Restrict only the review queue so all/other views still show self submissions.
+      if (view === "review" || review === "PENDING") {
+        return NextResponse.json({ applications: [] });
+      }
       where.submittedByUserId = session.user.id;
     }
   } else {

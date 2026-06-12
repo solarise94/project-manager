@@ -4,7 +4,11 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { isRepresentative } from "@/lib/permissions";
 import { validateOrg, buildCustomerData, createCustomerWithRetry, findDuplicateCustomers } from "@/lib/crm/customer-application-review";
-import { getApplicationReviewerUserIds } from "@/lib/crm/supervisor";
+import {
+  canReviewApplication,
+  confirmCustomerApplicationReview,
+  rejectCustomerApplicationReview,
+} from "@/lib/crm/customer-application-review-actions";
 import { assertRepresentativeBackedSalesUser } from "@/lib/representative-user";
 import { transitionCrmStage } from "@/lib/crm/lifecycle";
 
@@ -14,19 +18,6 @@ const applicationInclude = {
   createdCustomer: { select: { id: true, name: true, customerCode: true } },
   createdCrmProfile: { select: { id: true, sourceCustomerId: true } },
 };
-
-async function canReviewApplication(
-  userId: string,
-  role: string,
-  application: { submittedByUserId: string },
-): Promise<boolean> {
-  if (role === "ADMIN") return true;
-  if (role === "REGIONAL_MANAGER") {
-    const reviewerIds = await getApplicationReviewerUserIds(application.submittedByUserId);
-    return reviewerIds.includes(userId);
-  }
-  return false;
-}
 
 function pruneCandidate(c: {
   id: string; name: string; customerCodeLast6: string;
@@ -116,101 +107,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (action === "confirm-review") {
     const reviewNote = body.reviewNote?.trim() || null;
-    const claimed = await prisma.$transaction(async (tx) => {
-      const result = await tx.crmCustomerApplication.updateMany({
-        where: {
-          id,
-          OR: [
-            { supervisorReviewStatus: "PENDING" },
-            { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
-          ],
-        },
-        data: {
-          supervisorReviewStatus: "CONFIRMED",
-          supervisorReviewedByUserId: session.user.id,
-          supervisorReviewedAt: new Date(),
-          supervisorReviewNote: reviewNote,
-          adminReviewStatus: "CONFIRMED",
-          adminReviewedByUserId: session.user.id,
-          adminReviewedAt: new Date(),
-          adminReviewNote: reviewNote,
-          reviewedByUserId: session.user.id,
-          reviewedAt: new Date(),
-          reviewNote,
-        },
-      });
-      if (result.count === 0) return { claimed: false, application: null };
-
-      const updated = await tx.crmCustomerApplication.findUnique({
-        where: { id },
-        include: applicationInclude,
-      });
-      return { claimed: true, application: updated };
-    });
-
-    if (!claimed.claimed) {
+    const result = await confirmCustomerApplicationReview(session.user.id, id, reviewNote);
+    if (!result.claimed) {
       return NextResponse.json({ error: "该申请已被处理" }, { status: 400 });
     }
-    return NextResponse.json({ application: claimed.application });
+    return NextResponse.json({ application: result.application });
   }
 
   if (action === "reject-review") {
     const reviewNote = body.reviewNote?.trim() || null;
-    const claimed = await prisma.$transaction(async (tx) => {
-      const claimResult = await tx.crmCustomerApplication.updateMany({
-        where: {
-          id,
-          OR: [
-            { supervisorReviewStatus: "PENDING" },
-            { adminReviewStatus: "PENDING", supervisorReviewStatus: "NONE" },
-          ],
-        },
-        data: {
-          supervisorReviewStatus: "REJECTED",
-          supervisorReviewedByUserId: session.user.id,
-          supervisorReviewedAt: new Date(),
-          supervisorReviewNote: reviewNote,
-          adminReviewStatus: "REJECTED",
-          adminReviewedByUserId: session.user.id,
-          adminReviewedAt: new Date(),
-          adminReviewNote: reviewNote,
-          reviewedByUserId: session.user.id,
-          reviewedAt: new Date(),
-          reviewNote,
-          status: "REJECTED",
-        },
-      });
-      if (claimResult.count === 0) return { claimed: false };
-
-      // Clean up auto-created customer/profile
-      if (application.createdCrmProfileId) {
-        await tx.crmCustomerProfile.deleteMany({
-          where: { id: application.createdCrmProfileId },
-        });
-      }
-
-      if (application.createdCustomerId) {
-        const depCounts = await Promise.all([
-          tx.project.count({ where: { customerId: application.createdCustomerId, deleted: false } }),
-          tx.order.count({ where: { customerId: application.createdCustomerId } }),
-          tx.financeCost.count({ where: { customerId: application.createdCustomerId } }),
-          tx.customerRelation.count({ where: { OR: [{ fromCustomerId: application.createdCustomerId }, { toCustomerId: application.createdCustomerId }] } }),
-        ]);
-        const hasDeps = depCounts.some((c) => c > 0);
-        if (hasDeps) {
-          await tx.customer.update({
-            where: { id: application.createdCustomerId },
-            data: { deleted: true },
-          });
-        } else {
-          await tx.customer.delete({ where: { id: application.createdCustomerId } });
-        }
-      }
-
-      return { claimed: true };
-    });
-
-    if (!claimed.claimed) {
+    const result = await rejectCustomerApplicationReview(session.user.id, id, reviewNote);
+    if (!result.claimed) {
       return NextResponse.json({ error: "该申请已被处理" }, { status: 400 });
     }
     return NextResponse.json({ success: true });

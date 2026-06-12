@@ -18,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { OrganizationAiFillPlugin, type OrganizationDraftPreview } from "@/components/organization-ai-fill-plugin";
+import { OrganizationAdminSelect } from "@/components/organization-admin-select";
 import { CRM_SITE_TYPES, SITE_TYPE_LABELS } from "@/lib/crm/constants";
 import { toast } from "sonner";
 
@@ -42,14 +43,6 @@ interface ReviewTask {
   suggestedSite: { id: string; siteName: string } | null;
   createdByUser: { id: string; name: string } | null;
   reviewedByUser: { id: string; name: string } | null;
-}
-
-interface OrgOption {
-  id: string;
-  canonicalName: string;
-  orgCode: string;
-  archived: boolean;
-  sites: Array<{ id: string; siteName: string }>;
 }
 
 const sourceLabels: Record<string, string> = {
@@ -100,16 +93,6 @@ export default function OrganizationReviewsPage() {
     }
   }, [status, session, error, router]);
 
-  const { data: orgsData } = useQuery<{ organizations: OrgOption[] }>({
-    queryKey: ["organizations"],
-    queryFn: async () => {
-      const res = await fetch("/api/organizations");
-      if (!res.ok) throw new Error("加载失败");
-      return res.json();
-    },
-    enabled: status === "authenticated" && session?.user?.role === "ADMIN",
-  });
-
   const approveMutation = useMutation({
     mutationFn: async (payload: { id: string; action: string; organizationId?: string; organizationSiteId?: string; reviewNote?: string; canonicalName?: string; address?: string; aliases?: string[]; sites?: Array<{ siteName: string; address: string; siteType?: string }>; bindSiteName?: string; siteName?: string; siteAddress?: string }) => {
       const { id, ...body } = payload;
@@ -136,8 +119,26 @@ export default function OrganizationReviewsPage() {
   });
 
   const tasks = data?.tasks || [];
-  const orgs = (orgsData?.organizations || []).filter((o) => !o.archived);
-  const selectedOrg = orgs.find((o) => o.id === selectedOrgId);
+
+  const { data: selectedOrgDetail } = useQuery<{
+    organization: {
+      id: string;
+      canonicalName: string;
+      orgCode: string;
+      address: string | null;
+      sites: Array<{ id: string; siteName: string; siteType: string }>;
+    };
+  }>({
+    queryKey: ["organization-detail-for-review", selectedOrgId],
+    queryFn: async () => {
+      const res = await fetch(`/api/organizations/${selectedOrgId}`);
+      if (!res.ok) throw new Error("加载机构详情失败");
+      return res.json();
+    },
+    enabled: !!selectedOrgId,
+  });
+
+  const selectedOrg = selectedOrgDetail?.organization || null;
 
   function applyDraftToNewOrg(draft: OrganizationDraftPreview) {
     setNewOrg({
@@ -332,17 +333,26 @@ export default function OrganizationReviewsPage() {
             )}
             <div className="space-y-2">
               <Label>选择机构</Label>
-              <Select value={selectedOrgId} onValueChange={(v) => { setSelectedOrgId(v || ""); setSelectedSiteId(""); }}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择机构...">
-                    {selectedOrgId ? orgs.find((o) => o.id === selectedOrgId)?.canonicalName || selectedOrgId : "选择机构..."}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {orgs.map((o) => <SelectItem key={o.id} value={o.id}>{o.canonicalName} ({o.orgCode})</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <OrganizationAdminSelect
+                value={selectedOrgId}
+                onChange={(org) => {
+                  setSelectedOrgId(org?.id || "");
+                  setSelectedSiteId("");
+                }}
+                placeholder="搜索并选择机构..."
+              />
             </div>
+            {selectedOrg && (
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="text-xs text-muted-foreground">已选机构摘要</p>
+                <p className="text-sm font-medium">
+                  {selectedOrg.canonicalName}{" "}
+                  <span className="text-xs text-muted-foreground font-normal">({selectedOrg.orgCode})</span>
+                </p>
+                {selectedOrg.address && <p className="text-xs text-muted-foreground">{selectedOrg.address}</p>}
+                <p className="text-xs text-muted-foreground">{selectedOrg.sites.length} 个院区/分支</p>
+              </div>
+            )}
             {selectedOrg && selectedOrg.sites.length > 0 && (
               <div className="space-y-2">
                 <Label>院区（可选）</Label>

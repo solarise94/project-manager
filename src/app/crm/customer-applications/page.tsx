@@ -127,6 +127,9 @@ function ApplicationList() {
   const [batchOwnerUserId, setBatchOwnerUserId] = useState("");
   const [batchReviewNote, setBatchReviewNote] = useState("");
 
+  // Batch review dialog
+  const [batchReviewDialogOpen, setBatchReviewDialogOpen] = useState(false);
+
   const isAdmin = session?.user?.role === "ADMIN";
   const isUser = session?.user?.role === "USER";
   const isRegionalManager = session?.user?.role === "REGIONAL_MANAGER";
@@ -355,6 +358,61 @@ function ApplicationList() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const batchConfirmReviewMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/crm/customer-applications/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "confirm-review",
+          ids: [...selectedIds],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "批量确认复核失败");
+      return data as { confirmed: number; reviewRejected: number; skipped: Array<{ id: string; reason: string }>; errors: Array<{ id: string; error: string }> };
+    },
+    onSuccess: (data) => {
+      const parts: string[] = [];
+      if (data.confirmed > 0) parts.push(`${data.confirmed} 条已确认复核`);
+      if (data.skipped.length > 0) parts.push(`${data.skipped.length} 条已跳过`);
+      if (data.errors.length > 0) parts.push(`${data.errors.length} 条失败`);
+      toast.success(parts.join("，"));
+      pendingInvalidations();
+      setSelectedIds(new Set());
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const batchRejectReviewMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/crm/customer-applications/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reject-review",
+          ids: [...selectedIds],
+          reviewNote: batchReviewNote || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "批量拒绝复核失败");
+      return data as { confirmed: number; reviewRejected: number; skipped: Array<{ id: string; reason: string }>; errors: Array<{ id: string; error: string }> };
+    },
+    onSuccess: (data) => {
+      const parts: string[] = [];
+      if (data.reviewRejected > 0) parts.push(`${data.reviewRejected} 条已拒绝复核并删除`);
+      if (data.skipped.length > 0) parts.push(`${data.skipped.length} 条已跳过`);
+      if (data.errors.length > 0) parts.push(`${data.errors.length} 条失败`);
+      toast.success(parts.join("，"));
+      pendingInvalidations();
+      setSelectedIds(new Set());
+      setBatchReviewNote("");
+      setBatchReviewDialogOpen(false);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -364,10 +422,19 @@ function ApplicationList() {
   };
 
   const toggleSelectAll = () => {
-    const pendingIds = applications.filter((a) => a.status === "PENDING").map((a) => a.id);
-    if (pendingIds.length === 0) return;
-    const allSelected = pendingIds.every((id) => selectedIds.has(id));
-    setSelectedIds(allSelected ? new Set() : new Set(pendingIds));
+    if (filterMode === "review") {
+      const reviewableIds = applications
+        .filter((a) => a.autoApproved && (a.supervisorReviewStatus === "PENDING" || (a.adminReviewStatus === "PENDING" && a.supervisorReviewStatus === "NONE")))
+        .map((a) => a.id);
+      if (reviewableIds.length === 0) return;
+      const allSelected = reviewableIds.every((id) => selectedIds.has(id));
+      setSelectedIds(allSelected ? new Set() : new Set(reviewableIds));
+    } else {
+      const pendingIds = applications.filter((a) => a.status === "PENDING").map((a) => a.id);
+      if (pendingIds.length === 0) return;
+      const allSelected = pendingIds.every((id) => selectedIds.has(id));
+      setSelectedIds(allSelected ? new Set() : new Set(pendingIds));
+    }
   };
 
   const resetReview = () => {
@@ -457,17 +524,31 @@ function ApplicationList() {
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5 rounded border-gray-300"
-                checked={applications.every((a) => selectedIds.has(a.id))}
+                checked={applications.filter((a) => a.status === "PENDING").every((a) => selectedIds.has(a.id))}
                 onChange={toggleSelectAll}
               />
               全选本页待创建
+            </label>
+          )}
+          {canSupervisorReview && filterMode === "review" && applications.length > 0 && (
+            <label className="flex items-center gap-1 text-xs text-muted-foreground mt-1 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 rounded border-gray-300"
+                checked={(() => {
+                  const reviewable = applications.filter((a) => a.autoApproved && (a.supervisorReviewStatus === "PENDING" || (a.adminReviewStatus === "PENDING" && a.supervisorReviewStatus === "NONE")));
+                  return reviewable.length > 0 && reviewable.every((a) => selectedIds.has(a.id));
+                })()}
+                onChange={toggleSelectAll}
+              />
+              全选本页待复核
             </label>
           )}
         </div>
         {isRep && <CustomerApplicationFormDialog />}
       </div>
 
-      {/* Batch action bar */}
+      {/* Batch action bar — pending (ADMIN-only) */}
       {canAdminCreate && filterMode === "pending" && selectedIds.size > 0 && (
         <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
           <div className="flex items-center gap-3 flex-wrap">
@@ -522,6 +603,40 @@ function ApplicationList() {
         </div>
       )}
 
+      {/* Batch action bar — review (ADMIN + REGIONAL_MANAGER) */}
+      {canSupervisorReview && filterMode === "review" && selectedIds.size > 0 && (
+        <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-sm font-medium">已选择 {selectedIds.size} 条待复核</span>
+            <Button
+              size="sm"
+              disabled={batchConfirmReviewMutation.isPending || batchRejectReviewMutation.isPending}
+              onClick={() => {
+                if (!confirm(`确认批量复核通过 ${selectedIds.size} 条申请？`)) return;
+                batchConfirmReviewMutation.mutate();
+              }}
+            >
+              {batchConfirmReviewMutation.isPending ? "处理中..." : `批量确认复核 (${selectedIds.size})`}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={batchConfirmReviewMutation.isPending || batchRejectReviewMutation.isPending}
+              onClick={() => {
+                setBatchReviewNote("");
+                setBatchReviewDialogOpen(true);
+              }}
+            >
+              {batchRejectReviewMutation.isPending ? "处理中..." : `批量拒绝复核并删除 (${selectedIds.size})`}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+              清空选择
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">批量确认复核将通过已选申请；批量拒绝将删除自动创建的客户数据</p>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-sm text-muted-foreground">加载中...</div>
       ) : applications.length === 0 ? (
@@ -534,6 +649,17 @@ function ApplicationList() {
                 <div className="space-y-2 flex-1">
                   <div className="flex items-center gap-2">
                     {canAdminCreate && filterMode === "pending" && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-gray-300 shrink-0"
+                        checked={selectedIds.has(app.id)}
+                        onChange={() => toggleSelect(app.id)}
+                      />
+                    )}
+                    {canSupervisorReview && filterMode === "review" && app.autoApproved && (
+                      app.supervisorReviewStatus === "PENDING" ||
+                      (app.adminReviewStatus === "PENDING" && app.supervisorReviewStatus === "NONE")
+                    ) && (
                       <input
                         type="checkbox"
                         className="h-4 w-4 rounded border-gray-300 shrink-0"
@@ -664,6 +790,7 @@ function ApplicationList() {
         </div>
       )}
 
+      {/* Single-item review dialog */}
       <Dialog open={reviewOpen} onOpenChange={(v) => { if (!v) resetReview(); }}>
         <DialogContent className="sm:max-w-lg max-h-[85dvh] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
           <DialogHeader>
@@ -821,6 +948,54 @@ function ApplicationList() {
               )}
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch review reject dialog */}
+      <Dialog open={batchReviewDialogOpen} onOpenChange={(v) => { if (!v) { setBatchReviewDialogOpen(false); setBatchReviewNote(""); } }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>批量拒绝复核并删除</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              当前共选中 <span className="font-medium text-foreground">{selectedIds.size}</span> 条申请。
+              该操作将拒绝复核并删除自动创建的客户数据，且不可撤销。
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">拒绝理由（必填）</label>
+              <Textarea
+                value={batchReviewNote}
+                onChange={(e) => setBatchReviewNote(e.target.value)}
+                placeholder="请填写拒绝理由，用于审计和后续追溯"
+                rows={3}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={batchRejectReviewMutation.isPending}
+              onClick={() => {
+                if (!batchReviewNote.trim()) {
+                  toast.error("请填写拒绝理由");
+                  return;
+                }
+                batchRejectReviewMutation.mutate();
+              }}
+            >
+              {batchRejectReviewMutation.isPending ? "处理中..." : `确认拒绝并删除 (${selectedIds.size})`}
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              disabled={batchRejectReviewMutation.isPending}
+              onClick={() => { setBatchReviewDialogOpen(false); setBatchReviewNote(""); }}
+            >
+              取消
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
